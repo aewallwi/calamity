@@ -7,23 +7,26 @@ OPTIMIZERS = {'Adadelta': tf.optimizers.Adadelta, 'Adam': tf.optimizers.Adam, 'A
               'Ftrl': tf.optimizers.Ftrl, 'Nadam':tf.optimizers.Nadam, 'SGD':tf.optimizers.SGD, 'RMSprop': tf.optimizers.RMSprop}
 
 
-def calibrate_data(uvdata, foreground_basis_vectors, fg0=None, g0=None, weights=None,
-                   foreground_coefficients=None, optimizer='Adamax', tol=1e-14, maxsteps=10000, **opt_kwargs):
-    """A foreground loss function
+def calibrate_data_per_baseline_modeling_single_pols(uvdata, foreground_basis_vectors, fg0=None, g0=None, weights=None, pol=None, freeze_model=False,
+                                                     foreground_coefficients=None, optimizer='Adamax', use_redunancy=False, tol=1e-14, maxsteps=10000, **opt_kwargs):
+    """Perform simultaneous calibration and fitting of foregrounds --per baseline--.
+
+    This approach gives up on trying to invert the wedge but can be used on practically any array.
 
     Parameters
     ----------
     uvdata: UVData object
         uvdata objet of data to be calibrated.
-    foreground_coefficients: array-like
-        Nfg foreground coefficients
-    foreground_basis_vectros: array-like
-        (Nbls x Nfrequency) x Nfg 2d tensor of foreground basis vectors.
-    fg0: array-like
-        Nfg len complex 1d array of coefficients to serve as initial values for fg
-        optimization.
-    g0: array-like
-        Nant x Nfreqs len complex 1d array of initial gain values.
+    foreground_basis_vectors: dictionary
+        dictionary containing Nfreq x Nbasis design matrices
+        describing the basis vectors being used to model each baseline with keys corresponding
+        antenna pairs.
+    fg0: dict
+
+        default is None -> use dot product of model vectors with each data baseline to kick things off.
+    g0: dict
+
+    weights: dictionary mapping to
     optimizer: string
         Name of optimizer. See OPTIMIZERS dictionary
         default is 'Adamax'
