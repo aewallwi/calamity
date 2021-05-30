@@ -2,13 +2,14 @@ import numpy as np
 from uvtools import dspec
 import tensorflow as tf
 from pyuvdata import UVData, UVCal
+from . import utils
 
 OPTIMIZERS = {'Adadelta': tf.optimizers.Adadelta, 'Adam': tf.optimizers.Adam, 'Adamax':tf.optimizers.Adamax,
               'Ftrl': tf.optimizers.Ftrl, 'Nadam':tf.optimizers.Nadam, 'SGD':tf.optimizers.SGD, 'RMSprop': tf.optimizers.RMSprop}
 
 
-def calibrate_data_per_baseline_modeling_single_pols(uvdata, foreground_basis_vectors, fg0=None, g0=None, weights=None, pol=None, freeze_model=False,
-                                                     foreground_coefficients=None, optimizer='Adamax', use_redunancy=False, tol=1e-14, maxsteps=10000, **opt_kwargs):
+def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, fg0=None, g0=None, weights=None, pol=None, freeze_model=False,
+                                      foreground_coefficients=None, optimizer='Adamax', use_redunancy=False, tol=1e-14, maxsteps=10000, **opt_kwargs):
     """Perform simultaneous calibration and fitting of foregrounds --per baseline--.
 
     This approach gives up on trying to invert the wedge but can be used on practically any array.
@@ -21,12 +22,19 @@ def calibrate_data_per_baseline_modeling_single_pols(uvdata, foreground_basis_ve
         dictionary containing Nfreq x Nbasis design matrices
         describing the basis vectors being used to model each baseline with keys corresponding
         antenna pairs.
+    g0: UVCal object
+        UVCal with initial gain estimates.
+        There many smart ways to obtain initial gain estimates
+        but this is beyond the scope of calamity (for example, firstcal, logcal, sky-based cal).
+        Users can determine initial gains with their favorite established cal algorithm.
+        default is None -> start with unity gains.
+        WARNING: At the present, the flags in g0 are not propagated/used! Make sure flags in uvdata object!
     fg0: dict
-
+        Dictionary with baseline keys pointing to foreground coefficients for each baseline.
         default is None -> use dot product of model vectors with each data baseline to kick things off.
-    g0: dict
-
-    weights: dictionary mapping to
+    weights: UVData object
+        optional UVData object containing weights in the data-array.
+        default is None -> use binary flag weights from uvdata flag array.
     optimizer: string
         Name of optimizer. See OPTIMIZERS dictionary
         default is 'Adamax'
@@ -57,3 +65,6 @@ def calibrate_data_per_baseline_modeling_single_pols(uvdata, foreground_basis_ve
             'gr': real part of gains.
             'gi': imag part of gains
     """
+    # initialize gains.
+    if g0 is None:
+        g0 = utils.blank_uvcal_from_uvdata()
