@@ -350,7 +350,8 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., **fittin
 
 
 def read_calibrate_and_model_per_baseline(infilename, incalfilename=None, refmodelname=None, residfilename=None,
-                                          modelfilename=None, filteredfilename=None, calfilename=None, modeling_basis='dpss', **cal_kwargs):
+                                          modelfilename=None, filteredfilename=None, calfilename=None, modeling_basis='dpss',
+                                          clobber=False, **cal_kwargs):
     """Driver
 
     Parameters
@@ -378,6 +379,9 @@ def read_calibrate_and_model_per_baseline(infilename, incalfilename=None, refmod
     modeling basis: str, optional
         string specifying the per-baseline basis functions to use for modeling foregrounds.
         default is 'dpss'. Currently, only 'dpss' is supported.
+    clobber: bool, optional
+        overwrite existing output files.
+        default is False.
     cal_kwargs: kwarg_dict.
         kwargs for calibrate_data_model_dpss and calibrate_and_model_per_baseline
         see the docstrings of these functions for more details.
@@ -397,8 +401,8 @@ def read_calibrate_and_model_per_baseline(infilename, incalfilename=None, refmod
     else:
         sky_model=None
     if modeling_basis == 'dpss':
-        model, resid, filtered, gains, fitted_info = calibrate_data_model_dpss(uvdata=uvdata, sky_model=sky_model, gains=gains,
-                                                                               **fitting_kwargs)
+        model, resid, filtered, gains, fitted_info = calibrate_and_model_dpss(uvdata=uvdata, sky_model=sky_model, gains=gains,
+                                                                              **cal_kwargs)
     else:
         raise NotImplementedError("only 'dpss' modeling basis is implemented.")
     if residfilename is not None:
@@ -415,7 +419,7 @@ def read_calibrate_and_model_per_baseline(infilename, incalfilename=None, refmod
 
 
 
-def red_calibrate_and_filter_data_dpss_argparser():
+def red_calibrate_and_model_dpss_argparser():
     """Get argparser for calibrating and filtering.
 
     Parameters
