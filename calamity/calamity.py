@@ -183,7 +183,11 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
             # function for computing loss to be minimized in optimization.
             # tf.function decorator -> will pre-optimize computation in graph mode.
             # lets us side-step hard-to-read and sometimes wasteful purely
-            # parallelpiped tensor computations.
+            # parallelpiped tensor computations. This leads to a x4 speedup
+            # in processing the data in test_calibrate_and_model_dpss
+            # on an i5 CPU macbook over pure python. Not sure how this scales
+            # with array size.
+            # see https://www.tensorflow.org/guide/function.
             @tf.function
             def cal_loss():
                 loss_total = 0.
