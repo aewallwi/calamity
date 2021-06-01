@@ -435,7 +435,7 @@ def red_calibrate_and_filter_data_dpss_argparser():
     io_opts.add_argument("--refmodelname", type=str, help="Path to a reference sky model that can be used to initialize foreground coefficients and set overall flux scale and phase.")
     io_opts.add_argument("--residfilename", type=str, help="Path to write output uvh5 residual.", default=None)
     io_opts.add_argument("--modelfilename", type=str, help="Path to write output uvh5 model.", default=None)
-    io_opts.add_argument("--filteredfilename", type=st, help="Path to write output uvh5 filtered and calibrated data.")
+    io_opts.add_argument("--filteredfilename", type=str, help="Path to write output uvh5 filtered and calibrated data.")
     io_opts.add_argument("--calfilename", type=str, help="path to write output calibration gains.")
     fg_opts = ap.add_argument_group(title="Options for foreground modeling.")
     fg_opts.add_argument("--horizon", type=float, default=1.0, help="Fraction of horizon delay to model with DPSS modes.")
