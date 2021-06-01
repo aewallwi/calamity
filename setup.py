@@ -58,10 +58,6 @@ setup(
                       'tqdm',
                       'uvtools @ git+git://github.com/HERA-Team/uvtools',
                       ],
-    # hera_sim GPU seems to have dependency conflicts with tensorflow.
-    #extras_require={
-    #    'gpu': ['hera_gpu @ git+git://github.com/HERA-Team/hera_gpu', 'hera_sim @ git+git://github.com/HERA-Team/hera_sim#egg=hera_sim[gpu]'],
-    #},
     include_package_data=True,
     package_data={'calamity': data_files},
     exclude = ['tests'],
