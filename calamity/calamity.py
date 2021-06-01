@@ -295,7 +295,7 @@ def calibrate_data_model_dpss(horizon=1., min_dly=0., offset=0., **fitting_kwarg
     model, resid, filtered, gains, fitted_info = calibrate_data_model_per_baseline(foreground_basis_vectors=dpss_evecs, **fitting_opts)
 
 
-def read_calibrate_and_filter_data_per_baseline(infilename, resid_file=None, model_file=None, filtered_file=None, calfile=None, sky_model=None, modeling_basis='dpss'):
+def read_calibrate_and_filter_data_per_baseline(infilename, resid_file=None, model_file=None, filtered_file=None, calfile=None, sky_model=None, modeling_basis='dpss', **cal_args):
     """Driver function
     """
 
