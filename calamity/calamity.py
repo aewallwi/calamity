@@ -5,13 +5,14 @@ from pyuvdata import UVData, UVCal
 from . import utils
 import copy
 import tqdm
+import argparse
 
 OPTIMIZERS = {'Adadelta': tf.optimizers.Adadelta, 'Adam': tf.optimizers.Adam, 'Adamax':tf.optimizers.Adamax,
               'Ftrl': tf.optimizers.Ftrl, 'Nadam':tf.optimizers.Nadam, 'SGD':tf.optimizers.SGD, 'RMSprop': tf.optimizers.RMSprop}
 
 
 def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=None, freeze_model=False,
-                                      foreground_coefficients=None, optimizer='Adamax', use_redunancy=False, tol=1e-14, maxsteps=10000,
+                                      optimizer='Adamax', tol=1e-14, maxsteps=10000,
                                       verbose=False, sky_model=None, **opt_kwargs):
     """Perform simultaneous calibration and fitting of foregrounds --per baseline--.
 
@@ -48,7 +49,11 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
     maxsteps: int, optional
         maximum number of opt.minimize calls before halting.
         default is 10000
-
+    sky_model: UVData object, optional
+        a sky-model to use for initial estimates of foreground coefficients and
+        to set overall flux scale and phases.
+        Note that this model is not used to obtain initial gain estimates.
+        These must be provided through the gains argument.
     Returns
     -------
     uvdata_model: UVData object
@@ -65,8 +70,8 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
             each of the following fields is included which points to an Nstep x Nvar array of values
             'fg_r': real part of foreground coefficients
             'fg_i': imag part of foreground coefficients
-            'gr': real part of gains.
-            'gi': imag part of gains
+            'g_r': real part of gains.
+            'g_i': imag part of gains
     """
     uvdata = uvdata.select(inplace=False, bls=[ap for ap in uvdata.get_antpairs() if ap[0] != ap[1]])
     resid = copy.deepcopy(uvdata)
@@ -99,8 +104,12 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
         # initialize foreground modeling coefficients.
         foreground_coeffs = {ap: None for ap in foreground_basis_vectors}
         for ap in foreground_basis_vectors:
-            data = uvdata.get_data(ap + (pol,))
-            foreground_coeffs[ap] = (data_dict[ap] / gain_dict[(ap[0], 'J' + pol) / np.conj(gain_dict[(ap[1], 'J' + pol)])) @ foreground_basis_vectors[ap] # gives Ntimes x Nbasis coefficients for each fg coeff.
+            if sky_model is not None:
+                foreground_coeffs[ap] = sky_model.get_data(ap + (pol,)) @ foreground_basis_vectors[ap]
+            else:
+                data = uvdata.get_data(ap + (pol,))
+                foreground_coeffs[ap] = (data_dict[ap] / gain_dict[(ap[0], 'J' + pol) / np.conj(gain_dict[(ap[1], 'J' + pol)])) @ foreground_basis_vectors[ap] # gives Ntimes x Nbasis coefficients for each fg coeff.
+
         # perform solutions on each time separately.
         ant_map = {i: ant for i, ant in enumerate(g0.ant_array)}
         ant_mapi = {ant: i for ant, i in zip(ant_map.values(), ant_map.keys())}
@@ -281,8 +290,8 @@ def calibrate_data_model_dpss(horizon=1., min_dly=0., offset=0., **fitting_kwarg
             each of the following fields is included which points to an Nstep x Nvar array of values
             'fg_r': real part of foreground coefficients
             'fg_i': imag part of foreground coefficients
-            'gr': real part of gains.
-            'gi': imag part of gains
+            'g_r': real part of gains.
+            'g_i': imag part of gains
     """
     dpss_evecs = {}
     # generate dpss modeling vectors.
@@ -293,12 +302,106 @@ def calibrate_data_model_dpss(horizon=1., min_dly=0., offset=0., **fitting_kwarg
         dly = max(min_dly, dly * horizon + offset) / 1e9
         dpss_evecs[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12])
     model, resid, filtered, gains, fitted_info = calibrate_data_model_per_baseline(foreground_basis_vectors=dpss_evecs, **fitting_opts)
+    return model, resid, filtered, gains, fitted_info
 
 
-def read_calibrate_and_filter_data_per_baseline(infilename, resid_file=None, model_file=None, filtered_file=None, calfile=None, sky_model=None, modeling_basis='dpss', **cal_args):
-    """Driver function
+def read_calibrate_and_filter_data_per_baseline(infilename, incalfilename=None, refmodelname=None, residfilename=None,
+                                                modelfilename=None, filteredfilename=None, calfilename=None, modeling_basis='dpss', **cal_kwargs):
+    """Driver
+
+    Parameters
+    ----------
+    infilename: str
+        path to the input uvh5 data file with data to calibrate and filter.
+    incalefilename: str, optional
+        path to input calfits calibration file to use as a starting point for gain solutions.
+    refmodelname: str, optional
+        path to an optional reference sky model that can be used to set initial gains and foreground coefficients.
+        default is None -> initial foreground coeffs set by
+    residfilename: str, optional
+        path to file to output uvh5 file that stores the calibrated residual file.
+        default is None -> no resid file will be written.
+    modelfilename: str, optional
+        path to output uvh5 file that stores the intrinsic foreground model.
+        default is None -> no modelfile will be writen.
+    filterfilename: str, optional
+        path to output uvh5 file that stores residual plus foreground model, this is
+        the fully calibrated data that includes both a calibrated foreground model
+        and residual.
+        default is None -> no filterfile will be written.
+    calfilename: str, optional
+        path to output calfits file to write gain estimates too.
+    modeling basis: str, optional
+        string specifying the per-baseline basis functions to use for modeling foregrounds.
+        default is 'dpss'. Currently, only 'dpss' is supported.
+    cal_kwargs: kwarg_dict.
+        kwargs for calibrate_data_model_dpss and calibrate_data_model_per_baseline
+        see the docstrings of these functions for more details.
     """
+    # initialize uvdata
+    uvdata = UVData()
+    uvdata.read_uvh5(infilename)
+    # initalize input calibration
+    if incalfilename is not None:
+        gains = UVCal()
+        gains.read_calfits(incalfilename)
+    else:
+        gains = None
+    if refmodelname is not None:
+        sky_model = UVData()
+        sky_model.read_uvh5(refmodelname)
+    else:
+        sky_model=None
+    if modeling_basis == 'dpss':
+        model, resid, filtered, gains, fitted_info = calibrate_data_model_dpss(uvdata=uvdata, sky_model=sky_model, gains=gains,
+                                                                               **fitting_kwargs)
+    else:
+        raise NotImplementedError("only 'dpss' modeling basis is implemented.")
+    if residfilename is not None:
+        resid.write_uvh5(residfilename, clobber=clobber)
+    if modelfilename is not None:
+        model.write_uvh5(modelfilename, clobber=clobber)
+    if filteredfilename is not None:
+        filtered.write_uvh5(filteredfilename, clobber=clobber)
+    if calfilename is not None:
+        gains.write_calfits(calfilename, clobber=clobber)
+    return model, resid, filtered, gains, fitted_info
 
-def red_calibrate_and_filter_data_argparser():
+
+
+
+
+def red_calibrate_and_filter_data_dpss_argparser():
     """Get argparser for calibrating and filtering.
+
+    Parameters
+    ----------
+    N/A
+
+    Returns
+    -------
+    ap: argparse.ArgumentParser object.
+        parser for running read_calibrate_and_filter_data_per_baseline with modeling_basis='dpss'
+
     """
+    ap = argparse.ArgumentParser(description="Simultaneous Gain Calibration and Filtering of Foregrounds using DPSS modes")
+    io_opts = ap.add_argument_group(title="I/O options.")
+    io_opts.add_argument("infilename", type=str, help="Path to data file to be calibrated and modeled.")
+    io_opts.add_argument("--incalfilename", type=str, help="Path to optional initial gain files.", default=None)
+    io_opts.add_argument("--refmodelname", type=str, help="Path to a reference sky model that can be used to initialize foreground coefficients and set overall flux scale and phase.")
+    io_opts.add_argument("--residfilename", type=str, help="Path to write output uvh5 residual.", default=None)
+    io_opts.add_argument("--modelfilename", type=str, help="Path to write output uvh5 model.", default=None)
+    io_opts.add_argument("--filteredfilename", type=st, help="Path to write output uvh5 filtered and calibrated data.")
+    io_opts.add_argument("--calfilename", type=str, help="path to write output calibration gains.")
+    fg_opts = ap.add_argument_group(title="Options for foreground modeling.")
+    fg_opts.add_argument("--horizon", type=float, default=1.0, help="Fraction of horizon delay to model with DPSS modes.")
+    fg_opts.add_argument("--offset", type=float, default=0.0, help="Offset off of horizon delay (in ns) to model foregrounds with DPSS modes.")
+    fg_opts.add_argument("--min_dly", type=float, default=0.0, help="minimum delay, regardless of baseline length, to model foregrounds with DPSS modes.")
+    fit_opts = ap.add_argument_group(title="Options for fitting and optimization")
+    fit_opts.add_argument("--freeze_model", default=False, action="store_true", help="Only optimize gains (freeze foreground model on existing data ore user provided sky-model file).")
+    fit_opts.add_argument("--optimizer", default="Adamax", type=str, help="Optimizer to use in gradient descent. See https://www.tensorflow.org/api_docs/python/tf/keras/optimizers")
+    fit_opts.add_argument("--tol", type=float, default=1e-14, help="Halt optimization if loss (chsq / ndata) changes by less then this amount.")
+    fit_opts.add_argument("--maxsteps", type=int, default=10000, help="Maximum number of steps to carry out optimization to")
+    fit_opts.add_argument("--verbose", default=False, action="store_true", help="Lots of outputs.")
+    fit_opts.add_argument("--learning_rate", default=1e-2, type=float, help="Initial learning rate for optimization")
+    return ap
