@@ -6,14 +6,16 @@ from . import utils
 import copy
 import tqdm
 import argparse
+import itertools
 
 OPTIMIZERS = {'Adadelta': tf.optimizers.Adadelta, 'Adam': tf.optimizers.Adam, 'Adamax':tf.optimizers.Adamax,
               'Ftrl': tf.optimizers.Ftrl, 'Nadam':tf.optimizers.Nadam, 'SGD':tf.optimizers.SGD, 'RMSprop': tf.optimizers.RMSprop}
 
 
-def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=None, freeze_model=False,
-                                      optimizer='Adamax', tol=1e-14, maxsteps=10000,
-                                      verbose=False, sky_model=None, **opt_kwargs):
+def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=None, freeze_model=False,
+                                     optimizer='Adamax', tol=1e-14, maxsteps=10000,
+                                     verbose=False, sky_model=None, dtype_opt=np.float32,
+                                     record_var_history=False, **opt_kwargs):
     """Perform simultaneous calibration and fitting of foregrounds --per baseline--.
 
     This approach gives up on trying to invert the wedge but can be used on practically any array.
@@ -33,14 +35,9 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
         Users can determine initial gains with their favorite established cal algorithm.
         default is None -> start with unity gains.
         WARNING: At the present, the flags in gains are not propagated/used! Make sure flags in uvdata object!
-    foreground_coeffs: dict
-        Dictionary with baseline keys pointing to foreground coefficients for each baseline.
-        default is None -> use dot product of model vectors with each data baseline to kick things off.
-    weights: UVData object
-        optional UVData object containing weights in the data-array.
-        default is None -> use binary flag weights from uvdata flag array.
     optimizer: string
-        Name of optimizer. See OPTIMIZERS dictionary
+        Name of optimizer. See OPTIMIZERS dictionary which contains optimizers described in
+        https://www.tensorflow.org/api_docs/python/tf/keras/optimizers
         default is 'Adamax'
     tol: float, optional
         halting condition for optimizer loop. Stop loop when the change in the cost function falls
@@ -49,11 +46,22 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
     maxsteps: int, optional
         maximum number of opt.minimize calls before halting.
         default is 10000
+    verbose: bool, optional
+        generate lots of text.
+        default is False.
     sky_model: UVData object, optional
         a sky-model to use for initial estimates of foreground coefficients and
         to set overall flux scale and phases.
         Note that this model is not used to obtain initial gain estimates.
         These must be provided through the gains argument.
+    dtype_opt: numpy dtype, optional
+        the float precision to be used in tensorflow gradient descent.
+        runtime scales roughly inversely linear with precision.
+        default is np.float32
+    record_var_history: bool, optional
+        keep detailed record of optimization history of variables.
+        default is False.
+
     Returns
     -------
     uvdata_model: UVData object
@@ -77,14 +85,22 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
     filtered = copy.deepcopy(uvdata)
-    if polarizations is None:
-        polarizations = uvdata.get_pols()
     if gains is None:
         gains = utils.blank_uvcal_from_uvdata()
+    # if sky-model is None, initialize it to be the
+    # data divided by the initial gain estimates.
+    if sky_model is None:
+        sky_model = uvdata
+        for ap in sky_model.get_antpairs():
+            for pnum, pol in enumerate(sky_model.get_pols()):
+                blinds = sky_model.antpair2ind(ap)
+                sky_model.data_array[blinds, 0, :, pnum] = sky_model.data_array[blinds, 0, :, pnum] / (gains.get_gains(ap[0], 'J' + pol) * np.conj(gains.get_gains(ap[1], 'J' + pol))).T
+
+
     fitting_info = {}
-    for pol, polnum in enumerate():
+    for polnum, pol in enumerate(uvdata.get_pols()):
         fitting_info_p = {}
-        rmsdata = np.sqrt(np.mean(np.abs(uvdata.data_array[:, :, :, polnum][~uvdata.flag_array][:, :, :, polnum]) ** 2.))
+        rmsdata = np.sqrt(np.mean(np.abs(uvdata.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]]) ** 2.))
         # pull data out of uvdata object and into a dict (to avoid slicing operations)
         data_dict = {}
         model_dict = {}
@@ -92,53 +108,67 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
         flag_dict = {}
         nsample_dict = {}
         gain_dict = {}
-        for ap in uvdata.get_antpairs():
-            bl = ap + (pol,)
-            data_dict[ap] = uvdata.get_data(bl)
-            model_dict[ap] = uvdata.get_data(bl)
-            resid_dict[ap] = uvdata.get_data(bl)
-            flag_dict[ap] = uvdata.get_flags(bl)
-            nsample_dict[ap] = uvdata.get_nsamples(bl)
         for ant in gains.antenna_numbers:
             gain_dict[ant] = gains.get_gains(ant, 'J' + pol)
+        # extract raveled data into dictionaries of numpy arrays for fast access.
+        for ap in uvdata.get_antpairs():
+            bl = ap + (pol,)
+            data_dict[ap] = copy.copy(uvdata.get_data(bl))
+            model_dict[ap] = copy.copy(sky_model.get_data(bl))
+            resid_dict[ap] = copy.copy(uvdata.get_data(bl))
+            flag_dict[ap] = copy.copy(uvdata.get_flags(bl))
+            nsample_dict[ap] = copy.copy(uvdata.get_nsamples(bl))
+
         # initialize foreground modeling coefficients.
         foreground_coeffs = {ap: None for ap in foreground_basis_vectors}
         for ap in foreground_basis_vectors:
-            if sky_model is not None:
-                foreground_coeffs[ap] = sky_model.get_data(ap + (pol,)) @ foreground_basis_vectors[ap]
-            else:
-                data = uvdata.get_data(ap + (pol,))
-                foreground_coeffs[ap] = (data_dict[ap] / gain_dict[(ap[0], 'J' + pol) / np.conj(gain_dict[(ap[1], 'J' + pol)])) @ foreground_basis_vectors[ap] # gives Ntimes x Nbasis coefficients for each fg coeff.
+            # gives Ntimes x Nbasis coefficients for each fg coeff.
+            foreground_coeffs[ap] = model_dict[ap] @ foreground_basis_vectors[ap]
 
-        # perform solutions on each time separately.
-        ant_map = {i: ant for i, ant in enumerate(g0.ant_array)}
+        # generate maps between antenna numbers and correlation indices that are
+        # natural numbers (starting at zero).
+        ant_map = {i: ant for i, ant in enumerate(gains.ant_array)}
         ant_mapi = {ant: i for ant, i in zip(ant_map.values(), ant_map.keys())}
-        evec_map = {(i, j): foreground_basis_vectors[(ant_map[i], ant_map[j])] for i, j in itertools.combinations(ant_map.keys(), 2)}
+        evec_map = {}
+        for i, j in itertools.combinations(ant_map.keys(), 2):
+            ap = (ant_map[i], ant_map[j])
+            # conjugation does not apply to purely real fg basis vectors.
+            if ap not in foreground_basis_vectors:
+                ap = ap[::-1]
+            evec_map[(i, j)] = tf.convert_to_tensor(foreground_basis_vectors[ap], dtype=dtype_opt)
         # map i, j to start-end indices of foreground vector.
         fgrange_map = {}
         startind = 0
         for i, j in evec_map.keys():
-            fgrange_map[(i, j)] = (startind, startind + len(evec_map[(i, j)]))
-            startind += len(evec_map[(i, j)])
+            fgrange_map[(i, j)] = (startind, startind + evec_map[(i, j)].shape[1])
+            startind += evec_map[(i, j)].shape[1]
 
-        for tnum in uvdata.Ntimes:
+        # perform solutions on each time separately.
+        for tnum in range(uvdata.Ntimes):
             data_map_r = {}
             data_map_i = {}
+            weights_map = {}
+            fg_r = []
+            fg_i = []
+            # map data and gains from particular time into correlation indexed
+            # tensor arrays to be used in optimization.
             for i, j in itertools.combinations(ant_map.keys(), 2):
-                data_map_r[(i, j)] = tf.convert_to_tensor(data_dict[(ant_map[i], ant_map[j])][tnum].real / rmsdata, dtype=np.float32)
-                if (ant_map[i], ant_map[j]) in data_dict:
-                    data_map_i[(i, j)] = tf.convert_to_tensor(data_dict[(ant_map[i], ant_map[j])][tnum].imag / rmsdata, dtype=np.float32)
-                # store negative of imag (complex conj) if ant-pair is reversed.
-                elif (ant_map[j], ant_map[i]) in data_dict:
-                    data_map_i[(i, j)] = tf.convert_to_tensor(-data_dict[(ant_map[i], ant_map[j])][tnum].imag / rmsdata, dtype=np.float32)
-
-            weights_map = {(i, j): tf.convert_to_tensor((~flag_dict[ap]).astype(np.float32)[tnum] * nsample_dict[ap][tnum], dtype=np.float32) for i, j in data_map_r.keys()}
+                ap = (ant_map[i], ant_map[j])
+                isign = 1.
+                # need to conjugate data.
+                if ap not in data_dict:
+                    ap = ap[::-1]
+                    isign = -1.
+                data_map_r[(i, j)] = tf.convert_to_tensor(data_dict[ap][tnum].real / rmsdata, dtype=dtype_opt)
+                data_map_i[(i, j)] = tf.convert_to_tensor(isign * data_dict[ap][tnum].imag / rmsdata, dtype=dtype_opt)
+                weights_map[(i, j)] = tf.convert_to_tensor((~flag_dict[ap]).astype(dtype_opt)[tnum] * nsample_dict[ap][tnum], dtype=dtype_opt)
+                fg_r.append(foreground_coeffs[ap][tnum].real.squeeze() / rmsdata)
+                fg_i.append(isign * foreground_coeffs[ap][tnum].imag.squeeze() / rmsdata)
             # initialize fg_coeffs to optimize
-            fg = np.hstack([foreground_coeffs[(ant_map[i], ant_map[j]))][tnum].squeeze() / rmsdata])
-            fg_r = tf.Variable(tf.convert_to_tensor(fg.real, dtype=np.float32))
-            fg_i = tf.Variable(tf.convert_to_tensor(fg.imag, dtype=np.float32))
-            g_r = tf.Variable(tf.convert_to_tensor(np.vstack([gain_dict[ant_map[i]][tnum].real for i in ant_map.keys()), dtype=np.float32))
-            g_i = tf.Variable(tf.convert_to_tensor(np.vstack([gain_dict[ant_map[i]][tnum].imag for i in ant_map.keys()), dtype=np.float32))
+            fg_r = tf.Variable(tf.convert_to_tensor(np.hstack(fg_r), dtype=dtype_opt))
+            fg_i = tf.Variable(tf.convert_to_tensor(np.hstack(fg_i), dtype=dtype_opt))
+            g_r = tf.Variable(tf.convert_to_tensor(np.vstack([gain_dict[ant_map[i]][tnum].real for i in ant_map.keys()]), dtype=dtype_opt))
+            g_i = tf.Variable(tf.convert_to_tensor(np.vstack([gain_dict[ant_map[i]][tnum].imag for i in ant_map.keys()]), dtype=dtype_opt))
             # get the foreground model.
             def yield_fg_model(i, j):
                 vr = tf.reduce_sum(evec_map[i, j] * fg_r[fgrange_map[i, j][0]:fgrange_map[i, j][1]], axis=1) # real part of fg model.
@@ -151,14 +181,18 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
                 model_i = (g_r[i] * g_r[j] + g_i[i] * g_i[j]) * vi + (g_i[i] * g_r[j] - g_r[i] * g_i[j]) * vr # imag part of model with gains
                 return model_r, model_i
             # function for computing loss to be minimized in optimization.
+            # tf.function decorator -> will pre-optimize computation in graph mode.
+            # lets us side-step hard-to-read and sometimes wasteful purely
+            # parallelpiped tensor computations.
+            @tf.function
             def cal_loss():
                 loss_total = 0.
                 wsum = 0.
                 for i, j in data_map_r.keys():
                     model_r, model_i = yield_model(i, j)
-                    loss_total += tf.reduce_sum(tf.square(model_r  - data_map[i, j].real) * weights_map[i, j])
+                    loss_total += tf.reduce_sum(tf.square(model_r  - data_map_r[i, j]) * weights_map[i, j])
                     # imag part of loss
-                    loss_total += tf.reduce_sum(tf.square(model_i - data_map[i, j].imag) * weights_map[i, j])
+                    loss_total += tf.reduce_sum(tf.square(model_i - data_map_i[i, j]) * weights_map[i, j])
                     wsum += 2 * tf.reduce_sum(weights_map[i, j])
                 return loss_total / wsum
             # initialize the optimizer.
@@ -172,7 +206,7 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
                     fitting_info_t['fg_r'] = []
                     fitting_info_t['fg_i'] = []
             # perform optimization loop.
-            for step in tqdm.tqdm(range(max_steps)):
+            for step in tqdm.tqdm(range(maxsteps)):
                 with tf.GradientTape() as tape:
                     loss = cal_loss()
                 if freeze_model:
@@ -188,58 +222,64 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
                     if not freeze_model:
                         fitting_info_t['fg_r'].append(fg_r.numpy())
                         fitting_info_t['fg_i'].append(fg_i.numpy())
+                if step >= 1 and np.abs(fitting_info_t['loss_history'][-1] - fitting_info_t['loss_history'][-2]) < tol:
+                    break
 
             ants_visited = set({})
+            # insert calibrated / model subtracted data / gains
+            # into antenna keyed dictionaries.
             for ap in data_dict:
                 i, j = ant_mapi[ap[0]], ant_mapi[ap[1]]
-                model_r, model_i = calculate_model(i, j)
-                model_fg_r, model_fg_i = calculate_fg_model(i, j)
+                apg = (ap[0], ap[1])
+                if i > j:
+                    i, j = j, i
+                    isign = -1.
+                    apg = apg[::-1]
+                model_r, model_i = yield_model(i, j)
+                model_fg_r, model_fg_i = yield_fg_model(i, j)
 
-                if ap[0] not in ants_visited:
-                    gain_dict[ap[0]] = g_r[i].numpy() + 1j * g_i[i].numpy()
-                    ants_visited.add(ap[0])
-                if ap[1] not in ants_visited:
-                    gain_dict[ap[1]] = g_r[j].numpy() + 1j * g_i[j].numpy()
-                    ants_visited.add(ap[1])
+                if apg[0] not in ants_visited:
+                    gain_dict[apg[0]] = g_r[i].numpy() + 1j * g_i[i].numpy()
+                    ants_visited.add(apg[0])
+                if apg[1] not in ants_visited:
+                    gain_dict[apg[1]] = g_r[j].numpy() + 1j * g_i[j].numpy()
+                    ants_visited.add(apg[1])
 
-                if i, j in data_map_r:
-                    model = model_r.numpy() + 1j * model_i.numpy()
-                    model_fg = model_fg_r.numpy() + 1j * model_fg_i.numpy()
-                else:
-                    model = model_r.numpy() - 1j * model_i.numpy()
-                    model_fg = model_fg_r.numpy() + 1j * model_fg_i.numpy()
+                model_cal = model_r.numpy() + isign * 1j * model_i.numpy()
+                model_fg = model_fg_r.numpy() + isign * 1j * model_fg_i.numpy()
+
 
                 # set foreground model. Flux scale and overall phase will be off.
                 # we will fix this at the end.
                 model_dict[ap][tnum] = model_fg * rmsdata
                 # subtract model
-                resid_dict[ap][tnum] -= model * rmsdata
+                resid_dict[ap][tnum] -= model_cal * rmsdata
                 # divide by cal solution flux and phase scales will be off. We will fix this at the end.
-                resid_dict[ap][tnum] = resid_dict[ap][tnum] / (gain_dict[ap[0]][tnum] * np.conj(gain_dict[ap[1]][tnum])
+                resid_dict[ap][tnum] = resid_dict[ap][tnum] / (gain_dict[ap[0]][tnum] * np.conj(gain_dict[ap[1]][tnum]))
+
             fitting_info_p[tnum] = fitting_info_t
 
-        # now fill in the resid data_array and the model data_array
+        # now transfer antenna keyed dictionaries to uvdata/uvcal objects for
+        # i/o
         ants_visited = set({})
         for ap in resid_dict:
             dinds = resid.antpair2ind(ap)
             resid.data_array[dinds, 0, :, polnum] = resid_dict[ap]
-            model.data_array[dinds, 0, :, polnum] = resid_dict[ap]
-            model.flag_array[dinds, 0, :, polnum] = np.zeros_like(model.flag_array[dinds, 0, :, :, polnum])
+            model.data_array[dinds, 0, :, polnum] = model_dict[ap]
+            model.flag_array[dinds, 0, :, polnum] = np.zeros_like(model.flag_array[dinds, 0, :, polnum])
             filtered.data_array[dinds, 0, :, polnum] = resid.data_array[dinds, 0, :, polnum] + model.data_array[dinds, 0, :, polnum]
             filtered.flag_array[dinds, 0, :, polnum] = model.flag_array[dinds, 0, :, polnum]
             if ap[0] not in ants_visited:
-                gind = gains.antpair2ind(ap[0])
+                gind = gains.ant2ind(ap[0])
                 gains.gain_array[gind, 0, :, :, polnum] = gain_dict[ap[0]].T
                 ants_visited.add(ap[0])
             if ap[1] not in ants_visited:
-                gind = gains.antpair2ind(ap[1])
-                gains.gain_array[gind, 0, :, :, polnum] = gains_dict[ap[1]].T
+                gind = gains.ant2ind(ap[1])
+                gains.gain_array[gind, 0, :, :, polnum] = gain_dict[ap[1]].T
         # free up memory
         del resid_dict, model_dict, data_dict, gain_dict
         # rescale by the abs rms of the data and an overall phase.
-        if sky_model is None:
-            sky_model = uvdata
-        scale_factor_phase = np.angle(np.mean(sky_model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]] / model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]])))
+        scale_factor_phase = np.angle(np.mean(sky_model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]] / model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]]))
         scale_factor_abs = np.sqrt(np.mean(np.abs(sky_model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]] / model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]]) ** 2.))
         scale_factor = scale_factor_abs * np.exp(1j * scale_factor_phase)
         model.data_array[:, :, :, polnum] *= scale_factor
@@ -250,7 +290,7 @@ def calibrate_data_model_per_baseline(uvdata, foreground_basis_vectors, gains=No
     return model, resid, filtered, gains, fitting_info
 
 
-def calibrate_data_model_dpss(horizon=1., min_dly=0., offset=0., **fitting_kwargs):
+def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., **fitting_kwargs):
     """Simultaneously solve for gains and model foregrounds with DPSS vectors.
 
     Parameters
@@ -270,8 +310,8 @@ def calibrate_data_model_dpss(horizon=1., min_dly=0., offset=0., **fitting_kwarg
         in units of ns.
         default is 0.
     fitting_kwargs: kwarg dict
-        additional kwargs for calibrate_data_model_per_baseline.
-        see docstring of calibrate_data_model_per_baseline.
+        additional kwargs for calibrate_and_model_per_baseline.
+        see docstring of calibrate_and_model_per_baseline.
 
     Returns
     -------
@@ -296,17 +336,17 @@ def calibrate_data_model_dpss(horizon=1., min_dly=0., offset=0., **fitting_kwarg
     dpss_evecs = {}
     # generate dpss modeling vectors.
     for ap in uvdata.get_antpairs():
-        i = np.argmin(np.abs(ap[0] - uvdata.ant_array))
-        j = np.argmin(np.abs(ap[1] - uvdata.ant_array))
+        i = np.argmin(np.abs(ap[0] - uvdata.antenna_numbers))
+        j = np.argmin(np.abs(ap[1] - uvdata.antenna_numbers))
         dly = np.linalg.norm(uvdata.antenna_positions[i] - uvdata.antenna_positions[j]) / .3
         dly = max(min_dly, dly * horizon + offset) / 1e9
-        dpss_evecs[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12])
-    model, resid, filtered, gains, fitted_info = calibrate_data_model_per_baseline(foreground_basis_vectors=dpss_evecs, **fitting_opts)
+        dpss_evecs[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12])[0]
+    model, resid, filtered, gains, fitted_info = calibrate_and_model_per_baseline(uvdata=uvdata, foreground_basis_vectors=dpss_evecs, **fitting_kwargs)
     return model, resid, filtered, gains, fitted_info
 
 
-def read_calibrate_and_filter_data_per_baseline(infilename, incalfilename=None, refmodelname=None, residfilename=None,
-                                                modelfilename=None, filteredfilename=None, calfilename=None, modeling_basis='dpss', **cal_kwargs):
+def read_calibrate_and_model_per_baseline(infilename, incalfilename=None, refmodelname=None, residfilename=None,
+                                          modelfilename=None, filteredfilename=None, calfilename=None, modeling_basis='dpss', **cal_kwargs):
     """Driver
 
     Parameters
@@ -335,7 +375,7 @@ def read_calibrate_and_filter_data_per_baseline(infilename, incalfilename=None, 
         string specifying the per-baseline basis functions to use for modeling foregrounds.
         default is 'dpss'. Currently, only 'dpss' is supported.
     cal_kwargs: kwarg_dict.
-        kwargs for calibrate_data_model_dpss and calibrate_data_model_per_baseline
+        kwargs for calibrate_data_model_dpss and calibrate_and_model_per_baseline
         see the docstrings of these functions for more details.
     """
     # initialize uvdata

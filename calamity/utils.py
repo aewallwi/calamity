@@ -1,7 +1,7 @@
-from pyuvdata import UVData, UVCal
+from pyuvdata import UVCal
+import numpy as np
 
-
-def blank_uvcal_from_uvdata(uvdata]):
+def blank_uvcal_from_uvdata(uvdata):
     """initialize UVCal object with same times, antennas, and frequencies as uvdata.
 
     Parameters
@@ -38,9 +38,10 @@ def blank_uvcal_from_uvdata(uvdata]):
     uvcal.integration_time = np.mean(uvdata.integration_time)
     uvcal.lst_array = np.unique(uvdata.lst_array)
     uvcal.gain_convention = 'divide' # always use divide for this package.
-    uvcal.flag_array = np.zeros((uvcal.Nants_data, uvca.Nspws, uvcal.Nfreqs, uvcal.Ntimes), dtype=bool)
+    uvcal.flag_array = np.zeros((uvcal.Nants_data, uvcal.Nspws, uvcal.Nfreqs, uvcal.Ntimes, uvcal.Njones), dtype=np.bool)
     uvcal.quality_array = np.zeros_like(uvcal.flag_array, dtype=np.float64)
     uvcal.x_orientation = uvdata.x_orientation
     uvcal.gain_array = np.ones_like(uvcal.flag_array, dtype=np.complex128)
     uvcal.cal_style = "redundant"
+    uvcal.cal_type = "gain"
     return uvcal

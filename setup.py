@@ -50,10 +50,12 @@ setup(
     package_dir={'calamity': 'calamity'},
     packages=['calamity'],
     python_requires='>=3.6, <4',
-    install_requires=['pyuvdata',
+    install_requires=[
+                      'pyuvdata',
                       'numpy',
                       'tensorflow',
                       'scipy',
+                      'tqdm',
                       'uvtools @ git+git://github.com/HERA-Team/uvtools',
                       ],
     # hera_sim GPU seems to have dependency conflicts with tensorflow.
