@@ -344,7 +344,7 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., **fittin
         i = np.argmin(np.abs(ap[0] - uvdata.antenna_numbers))
         j = np.argmin(np.abs(ap[1] - uvdata.antenna_numbers))
         dly = np.linalg.norm(uvdata.antenna_positions[i] - uvdata.antenna_positions[j]) / .3
-        dly = max(min_dly, dly * horizon + offset) / 1e9
+        dly = np.ceil(max(min_dly, dly * horizon + offset)) / 1e9 # round to nearest nsec
         dpss_evecs[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12], cache=operator_cache)[0]
     model, resid, filtered, gains, fitted_info = calibrate_and_model_per_baseline(uvdata=uvdata, foreground_basis_vectors=dpss_evecs, **fitting_kwargs)
     return model, resid, filtered, gains, fitted_info
