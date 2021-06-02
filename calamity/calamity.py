@@ -13,7 +13,7 @@ OPTIMIZERS = {'Adadelta': tf.optimizers.Adadelta, 'Adam': tf.optimizers.Adam, 'A
 
 
 def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=None, freeze_model=False,
-                                     optimizer='Adamax', tol=1e-14, maxsteps=10000,
+                                     optimizer='Adamax', tol=1e-14, maxsteps=10000, include_autos=False,
                                      verbose=False, sky_model=None, dtype_opt=np.float32,
                                      record_var_history=False, use_redundancy=False, **opt_kwargs):
     """Perform simultaneous calibration and fitting of foregrounds --per baseline--.
@@ -81,8 +81,11 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
             'g_r': real part of gains.
             'g_i': imag part of gains
     """
-    antpairs_data = set(uvdata.get_antpairs())
-    uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data if ap[0] != ap[1]])
+    antpairs_data = uvdata.get_antpairs()
+    if not include_autos:
+        antpairs_data = set([ap for ap in antpairs_data if ap[0] != ap[1]])
+
+    uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
     filtered = copy.deepcopy(uvdata)
@@ -91,7 +94,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     # if sky-model is None, initialize it to be the
     # data divided by the initial gain estimates.
 
-    antpairs, red_grps, antpair_red_index, _ = utils.get_redundant_groups_conjugated(uvdata, remove_redundancy=not(use_redundancy))
+    antpairs, red_grps, antpair_red_index, _ = utils.get_redundant_groups_conjugated(uvdata, remove_redundancy=not(use_redundancy) include_autos=include_autos)
 
     if sky_model is None:
         sky_model = uvdata
@@ -342,7 +345,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     return model, resid, filtered, gains, fitting_info
 
 
-def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., use_redundancy=False, **fitting_kwargs):
+def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., use_redundancy=False, include_autos=False, **fitting_kwargs):
     """Simultaneously solve for gains and model foregrounds with DPSS vectors.
 
     Parameters
@@ -388,7 +391,7 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., use_redu
     dpss_evecs = {}
     operator_cache = {}
     # generate dpss modeling vectors.
-    antpairs, red_grps, red_grp_map, lengths = utils.get_redundant_groups_conjugated(uvdata)
+    antpairs, red_grps, red_grp_map, lengths = utils.get_redundant_groups_conjugated(uvdata, include_autos=include_autos)
     for red_grp, length in zip(red_grps, lengths):
         for apnum, ap in enumerate(red_grp):
             if apnum == 0:
@@ -398,7 +401,7 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., use_redu
                 dpss_evecs[ap] = dpss_evecs[red_grp[0]]
 
     model, resid, filtered, gains, fitted_info = calibrate_and_model_per_baseline(uvdata=uvdata, foreground_basis_vectors=dpss_evecs,
-                                                                                  use_redundancy=use_redundancy, **fitting_kwargs)
+                                                                                  use_redundancy=use_redundancy, include_autos=include_autos, **fitting_kwargs)
     return model, resid, filtered, gains, fitted_info
 
 

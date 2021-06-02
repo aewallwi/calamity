@@ -48,7 +48,7 @@ def blank_uvcal_from_uvdata(uvdata):
     return uvcal
 
 
-def get_redundant_groups_conjugated(uvdata, remove_redundancy=False, tol=1.0):
+def get_redundant_groups_conjugated(uvdata, remove_redundancy=False, tol=1.0, include_autos=False):
         """Get lists of antenna pairs and redundancies in a uvdata set.
 
         Provides list of antenna pairs and ant-pairs organized in redundant groups
@@ -80,7 +80,7 @@ def get_redundant_groups_conjugated(uvdata, remove_redundancy=False, tol=1.0):
         """
         antpairs = []
         # set up maps between antenna pairs and redundant groups.
-        red_grps, _, lengths, conjugates = uvdata.get_redundancies(include_conjugates=True, include_autos=False, tol=tol)
+        red_grps, _, lengths, conjugates = uvdata.get_redundancies(include_conjugates=True, include_autos=include_autos, tol=tol)
         # convert to ant pairs
         red_grps = [[uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps]
         conjugates = [uvdata.baseline_to_antnums(bl) for bl in conjugates]
