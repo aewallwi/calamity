@@ -15,7 +15,7 @@ OPTIMIZERS = {'Adadelta': tf.optimizers.Adadelta, 'Adam': tf.optimizers.Adam, 'A
 def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=None, freeze_model=False,
                                      optimizer='Adamax', tol=1e-14, maxsteps=10000,
                                      verbose=False, sky_model=None, dtype_opt=np.float32,
-                                     record_var_history=False, **opt_kwargs):
+                                     record_var_history=False, use_redundancy=False, **opt_kwargs):
     """Perform simultaneous calibration and fitting of foregrounds --per baseline--.
 
     This approach gives up on trying to invert the wedge but can be used on practically any array.
@@ -86,24 +86,84 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     model = copy.deepcopy(uvdata)
     filtered = copy.deepcopy(uvdata)
     if gains is None:
-        gains = utils.blank_uvcal_from_uvdata()
+        gains = utils.blank_uvcal_from_uvdata(uvdata)
     # if sky-model is None, initialize it to be the
     # data divided by the initial gain estimates.
+    antpairs = set(uvdata.get_antpairs())
+
     if sky_model is None:
         sky_model = uvdata
-        for ap in sky_model.get_antpairs():
+        for ap in antpairs:
             for pnum, pol in enumerate(sky_model.get_pols()):
-                blinds = sky_model.antpair2ind(ap)
-                sky_model.data_array[blinds, 0, :, pnum] = sky_model.data_array[blinds, 0, :, pnum] / (gains.get_gains(ap[0], 'J' + pol) * np.conj(gains.get_gains(ap[1], 'J' + pol))).T
+                dinds = sky_model.antpair2ind(ap)
+                sky_model.data_array[dinds, 0, :, pnum] = sky_model.data_array[dinds, 0, :, pnum] / (gains.get_gains(ap[0], 'J' + pol) * np.conj(gains.get_gains(ap[1], 'J' + pol))).T
 
 
     fitting_info = {}
+
+    # set up maps between antenna pairs and redundant groups.
+    red_grps, _, lengths, conjugates = uvdata.get_redundancies(include_conjugates=True, include_autos=False)
+    # convert to ant pairs
+    red_grps = [[uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps]
+    conjugates = [uvdata.baseline_to_antnums(bl) for bl in conjugates]
+
+
+    if not use_redundancy:
+        # if we don't use redundancy, set conjugates to be an empty list and break up red_grps
+        red_grps_t = []
+        for red_grp in red_grps:
+            for ap in red_grp:
+                red_grps_t.append([ap])
+        red_grps = red_grps_t
+        del red_grps_t
+        conjugates = []
+
+    antpair_red_index = {}
+    for ap in antpairs:
+        antpair_red_index[ap] = np.where([ap in red_grp for red_grp in red_grps])[0][0]
+    # generate maps between antenna numbers and correlation indices that are
+    # natural numbers (starting at zero).
+    ant_map = {i: ant for i, ant in enumerate(gains.ant_array)}
+    ant_mapi = {ant: i for ant, i in zip(ant_map.values(), ant_map.keys())}
+    evec_map_red = {}
+    evec_map = {} # evec map is a map from (i, j) -> red_index -> basis vector
+    fgrange_map = {}
+    fgisign_map = {}
+    blinds = set([(i, j) for (i, j) in itertools.combinations(ant_map.keys(), 2)])
+    blind_red_index = {}
+
+    for (i, j) in blinds:
+        ap = (ant_map[i], ant_map[j])
+        if ap not in antpair_red_index:
+            ap = ap[::-1]
+        blind_red_index[(i, j)] = antpair_red_index[ap]
+        if blind_red_index[(i, j)] not in evec_map_red:
+            evec_map_red[blind_red_index[(i, j)]] = tf.convert_to_tensor(foreground_basis_vectors[ap], dtype=dtype_opt)
+        evec_map[(i, j)] = evec_map_red[blind_red_index[(i, j)]]
+
+    for (i, j) in blinds:
+        ap = (ant_map[i], ant_map[j])
+        if ap not in antpair_red_index:
+            ap = ap[::-1]
+            fgisign_map[(i, j)] = -1.
+        else:
+            fgisign_map[(i, j)] = 1.
+        fgisign_map[(i, j)] *= -1 ** np.float(ap in conjugates)
+
+    startind = 0
+    fg_range_map_red = {}
+    for grpnum in range(len(red_grps)):
+        fg_range_map_red[grpnum] = (startind, startind + evec_map_red[grpnum].shape[1])
+        startind += evec_map_red[grpnum].shape[1]
+
+    for (i, j) in blinds:
+        fgrange_map[(i, j)] = fg_range_map_red[blind_red_index[(i, j)]]
+
     for polnum, pol in enumerate(uvdata.get_pols()):
         fitting_info_p = {}
         rmsdata = np.sqrt(np.mean(np.abs(uvdata.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]]) ** 2.))
         # pull data out of uvdata object and into a dict (to avoid slicing operations)
         data_dict = {}
-        model_dict = {}
         resid_dict = {}
         flag_dict = {}
         nsample_dict = {}
@@ -111,37 +171,24 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
         for ant in gains.antenna_numbers:
             gain_dict[ant] = gains.get_gains(ant, 'J' + pol)
         # extract raveled data into dictionaries of numpy arrays for fast access.
-        for ap in uvdata.get_antpairs():
+        for ap in antpairs:
             bl = ap + (pol,)
             data_dict[ap] = copy.copy(uvdata.get_data(bl))
-            model_dict[ap] = copy.copy(sky_model.get_data(bl))
             resid_dict[ap] = copy.copy(uvdata.get_data(bl))
             flag_dict[ap] = copy.copy(uvdata.get_flags(bl))
             nsample_dict[ap] = copy.copy(uvdata.get_nsamples(bl))
 
         # initialize foreground modeling coefficients.
-        foreground_coeffs = {ap: None for ap in foreground_basis_vectors}
-        for ap in foreground_basis_vectors:
-            # gives Ntimes x Nbasis coefficients for each fg coeff.
-            foreground_coeffs[ap] = model_dict[ap] @ foreground_basis_vectors[ap]
+        # these coefficients are mapped from (a1, a2) -> redundant_index -> fg_evecs
+        foreground_coeffs = {}
 
-        # generate maps between antenna numbers and correlation indices that are
-        # natural numbers (starting at zero).
-        ant_map = {i: ant for i, ant in enumerate(gains.ant_array)}
-        ant_mapi = {ant: i for ant, i in zip(ant_map.values(), ant_map.keys())}
-        evec_map = {}
-        for i, j in itertools.combinations(ant_map.keys(), 2):
-            ap = (ant_map[i], ant_map[j])
-            # conjugation does not apply to purely real fg basis vectors.
-            if ap not in foreground_basis_vectors:
-                ap = ap[::-1]
-            evec_map[(i, j)] = tf.convert_to_tensor(foreground_basis_vectors[ap], dtype=dtype_opt)
-        # map i, j to start-end indices of foreground vector.
-        fgrange_map = {}
-        startind = 0
-        for i, j in evec_map.keys():
-            fgrange_map[(i, j)] = (startind, startind + evec_map[(i, j)].shape[1])
-            startind += evec_map[(i, j)].shape[1]
+        # model_dict follows (a1, a2) -> red_index -> model waterfall.
+        model_dict = {}
+        for red_grp in red_grps:
+            model_dict[antpair_red_index[red_grp[0]]] = copy.copy(sky_model.get_data(red_grp[0] + (pol,)))
+            if red_grp[0] in conjugates:
+                model_dict[antpair_red_index[red_grp[0]]] = np.conj(model_dict[antpair_red_index[red_grp[0]]])
+            foreground_coeffs[antpair_red_index[red_grp[0]]] =  model_dict[antpair_red_index[red_grp[0]]] @ foreground_basis_vectors[red_grp[0]]
 
         # perform solutions on each time separately.
         for tnum in range(uvdata.Ntimes):
@@ -152,7 +199,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
             fg_i = []
             # map data and gains from particular time into correlation indexed
             # tensor arrays to be used in optimization.
-            for i, j in itertools.combinations(ant_map.keys(), 2):
+            for i, j in blinds:
                 ap = (ant_map[i], ant_map[j])
                 isign = 1.
                 # need to conjugate data.
@@ -162,8 +209,12 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
                 data_map_r[(i, j)] = tf.convert_to_tensor(data_dict[ap][tnum].real / rmsdata, dtype=dtype_opt)
                 data_map_i[(i, j)] = tf.convert_to_tensor(isign * data_dict[ap][tnum].imag / rmsdata, dtype=dtype_opt)
                 weights_map[(i, j)] = tf.convert_to_tensor((~flag_dict[ap]).astype(dtype_opt)[tnum] * nsample_dict[ap][tnum], dtype=dtype_opt)
-                fg_r.append(foreground_coeffs[ap][tnum].real.squeeze() / rmsdata)
-                fg_i.append(isign * foreground_coeffs[ap][tnum].imag.squeeze() / rmsdata)
+
+            # order the foreground_coeffs by redundant group.
+            for ap_index in range(len(red_grps)):
+                fg_r.append(foreground_coeffs[ap_index][tnum].real.squeeze() / rmsdata)
+                fg_i.append(foreground_coeffs[ap_index][tnum].imag.squeeze() / rmsdata)
+
             # initialize fg_coeffs to optimize
             fg_r = tf.Variable(tf.convert_to_tensor(np.hstack(fg_r), dtype=dtype_opt))
             fg_i = tf.Variable(tf.convert_to_tensor(np.hstack(fg_i), dtype=dtype_opt))
@@ -171,9 +222,9 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
             g_i = tf.Variable(tf.convert_to_tensor(np.vstack([gain_dict[ant_map[i]][tnum].imag for i in ant_map.keys()]), dtype=dtype_opt))
             # get the foreground model.
             def yield_fg_model(i, j):
-                vr = tf.reduce_sum(evec_map[i, j] * fg_r[fgrange_map[i, j][0]:fgrange_map[i, j][1]], axis=1) # real part of fg model.
-                vi = tf.reduce_sum(evec_map[i, j] * fg_i[fgrange_map[i, j][0]:fgrange_map[i, j][1]], axis=1) # imag part of fg model.
-                return vr, vi
+                vr = tf.reduce_sum(evec_map[i, j] * fg_r[fgrange_map[(i, j)][0]:fgrange_map[(i, j)][1]], axis=1) # real part of fg model.
+                vi = tf.reduce_sum(evec_map[i, j] * fg_i[fgrange_map[(i, j)][0]:fgrange_map[(i, j)][1]], axis=1) # imag part of fg model.
+                return vr, vi * fgisign_map[(i, j)]
             # get the calibrated model
             def yield_model(i, j):
                 vr, vi = yield_fg_model(i, j)
@@ -185,14 +236,14 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
             # lets us side-step hard-to-read and sometimes wasteful purely
             # parallelpiped tensor computations. This leads to a x4 speedup
             # in processing the data in test_calibrate_and_model_dpss
-            # on an i5 CPU macbook over pure python. Not sure how this scales
-            # with array size.
+            # on an i5 CPU macbook over pure python.
+            # TODO: See how this scales with array size.
             # see https://www.tensorflow.org/guide/function.
             @tf.function
             def cal_loss():
                 loss_total = 0.
                 wsum = 0.
-                for i, j in data_map_r.keys():
+                for i, j in blinds:
                     model_r, model_i = yield_model(i, j)
                     loss_total += tf.reduce_sum(tf.square(model_r  - data_map_r[i, j]) * weights_map[i, j])
                     # imag part of loss
@@ -230,6 +281,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
                     break
 
             ants_visited = set({})
+            red_grps_visited = set({})
             # insert calibrated / model subtracted data / gains
             # into antenna keyed dictionaries.
             for ap in data_dict:
@@ -255,7 +307,9 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
 
                 # set foreground model. Flux scale and overall phase will be off.
                 # we will fix this at the end.
-                model_dict[ap][tnum] = model_fg * rmsdata
+                if antpair_red_index[ap] not in red_grps_visited:
+                    model_dict[antpair_red_index[ap]][tnum] = model_fg * rmsdata
+                    red_grps_visited.add(antpair_red_index[ap])
                 # subtract model
                 resid_dict[ap][tnum] -= model_cal * rmsdata
                 # divide by cal solution flux and phase scales will be off. We will fix this at the end.
@@ -269,7 +323,10 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
         for ap in resid_dict:
             dinds = resid.antpair2ind(ap)
             resid.data_array[dinds, 0, :, polnum] = resid_dict[ap]
-            model.data_array[dinds, 0, :, polnum] = model_dict[ap]
+            if ap in conjugates:
+                model.data_array[dinds, 0, :, polnum] = np.conj(model_dict[antpair_red_index[ap]])
+            else:
+                model.data_array[dinds, 0, :, polnum] = model_dict[antpair_red_index[ap]]
             model.flag_array[dinds, 0, :, polnum] = np.zeros_like(model.flag_array[dinds, 0, :, polnum])
             filtered.data_array[dinds, 0, :, polnum] = resid.data_array[dinds, 0, :, polnum] + model.data_array[dinds, 0, :, polnum]
             filtered.flag_array[dinds, 0, :, polnum] = model.flag_array[dinds, 0, :, polnum]
@@ -289,12 +346,12 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
         model.data_array[:, :, :, polnum] *= scale_factor
         resid.data_array[:, :, :, polnum] *= scale_factor
         filtered.data_array[:, :, :, polnum] *= scale_factor
-        gains.gain_array[:, :, :, polnum]  = gains.gain_array[:, :, :, polnum] / np.sqrt(scale_factor)
+        gains.gain_array[:, :, :, polnum]  = gains.gain_array[:, :, :, polnum]# / np.sqrt(scale_factor)
 
     return model, resid, filtered, gains, fitting_info
 
 
-def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., **fitting_kwargs):
+def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., use_redundancy=False, **fitting_kwargs):
     """Simultaneously solve for gains and model foregrounds with DPSS vectors.
 
     Parameters
@@ -340,13 +397,31 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., **fittin
     dpss_evecs = {}
     operator_cache = {}
     # generate dpss modeling vectors.
-    for ap in uvdata.get_antpairs():
-        i = np.argmin(np.abs(ap[0] - uvdata.antenna_numbers))
-        j = np.argmin(np.abs(ap[1] - uvdata.antenna_numbers))
-        dly = np.linalg.norm(uvdata.antenna_positions[i] - uvdata.antenna_positions[j]) / .3
-        dly = np.ceil(max(min_dly, dly * horizon + offset)) / 1e9 # round to nearest nsec
-        dpss_evecs[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12], cache=operator_cache)[0]
-    model, resid, filtered, gains, fitted_info = calibrate_and_model_per_baseline(uvdata=uvdata, foreground_basis_vectors=dpss_evecs, **fitting_kwargs)
+    if not use_redundancy:
+        for ap in tqdm.tqdm(uvdata.get_antpairs()):
+            if ap[0] != ap[1]:
+                i = np.argmin(np.abs(ap[0] - uvdata.antenna_numbers))
+                j = np.argmin(np.abs(ap[1] - uvdata.antenna_numbers))
+                dly = np.linalg.norm(uvdata.antenna_positions[i] - uvdata.antenna_positions[j]) / .3
+                dly = np.ceil(max(min_dly, dly * horizon + offset)) / 1e9 # round to nearest nsec
+                dpss_evecs[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12], cache=operator_cache)[0]
+    # if use_redundancy is True, then do not generate unique eigenvectors
+    else:
+         red_grps, _, lengths, conjugates = uvdata.get_redundancies(include_conjugates=True)
+         red_grps = [[uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps]
+         for red_grp, length in zip(red_grps, lengths):
+             for apnum, ap in enumerate(red_grp):
+                if apnum == 0:
+                    dly = np.ceil(max(min_dly, length / .3 * horizon + offset)) / 1e9
+                    dpss_evecs[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12], cache=operator_cache)[0]
+                else:
+                    dpss_evecs[ap] = dpss_evecs[red_grp[0]]
+
+
+
+
+    model, resid, filtered, gains, fitted_info = calibrate_and_model_per_baseline(uvdata=uvdata, foreground_basis_vectors=dpss_evecs,
+                                                                                  use_redundancy=use_redundancy, **fitting_kwargs)
     return model, resid, filtered, gains, fitted_info
 
 
