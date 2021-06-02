@@ -1,5 +1,6 @@
 from pyuvdata import UVCal
 import numpy as np
+import copy
 
 def blank_uvcal_from_uvdata(uvdata):
     """initialize UVCal object with same times, antennas, and frequencies as uvdata.
@@ -45,3 +46,74 @@ def blank_uvcal_from_uvdata(uvdata):
     uvcal.cal_style = "redundant"
     uvcal.cal_type = "gain"
     return uvcal
+
+
+def get_redundant_groups_conjugated(uvdata, remove_redundancy=False, tol=1.0):
+        """Get lists of antenna pairs and redundancies in a uvdata set.
+
+        Provides list of antenna pairs and ant-pairs organized in redundant groups
+        with the proper ordering of the antenna numbers so that there are no
+        non-redundancies by conjugation only.
+
+        Parameters
+        ----------
+        uvdata: UVData object.
+            uvdata to get antpairs and redundant groups from.
+        remove_redundancy: bool, optional
+            if True, split all baselines into their own redundant groups, effectively
+            removeing redundancy but allowing us to handle redundant and non-redundant
+            modeling under the same framework.
+
+        Returns
+        -------
+        antpairs: list of 2-tuples
+            list of ant-pairs with tuples ordered to remove conjugation effects.
+        red_grps: list of lists of 2-tuples.
+            list of list where each list contains antpair tuples that are ordered
+            so that there are no conjugates.
+        red_grp_map: dict
+            dictionary with ant-pairs in antpairs as keys mapping to the index of the redundant group
+            that they are a memeber of.
+        lengths: list
+            list of float lengths of redundant baselines in meters.
+
+        """
+        antpairs = []
+        # set up maps between antenna pairs and redundant groups.
+        red_grps, _, lengths, conjugates = uvdata.get_redundancies(include_conjugates=True, include_autos=False, tol=tol)
+        # convert to ant pairs
+        red_grps = [[uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps]
+        conjugates = [uvdata.baseline_to_antnums(bl) for bl in conjugates]
+
+        # modeify red_grp lists to have conjugated antpairs ordered consistently.
+        red_grps_t = []
+        for red_grp in red_grps:
+            red_grps_t.append([])
+            for ap in red_grp:
+                if ap in conjugates:
+                    red_grps_t[-1].append(ap[::-1])
+                    antpairs.append(ap[::-1])
+                else:
+                    red_grps_t[-1].append(ap)
+                    antpairs.append(ap)
+
+        red_grps = red_grps_t
+        del red_grps_t
+
+        antpairs = set(antpairs)
+
+        # convert all redundancies to redunant groups with length one if
+        # remove_redundancy is True.
+        if remove_redundancy:
+            red_grps_t = []
+            for red_grp in red_grps:
+                for ap in red_grp:
+                    red_grps_t.append([ap])
+            red_grps = red_grps_t
+            del red_grps_t
+
+        red_grp_map = {}
+        for ap in antpairs:
+            red_grp_map[ap] = np.where([ap in red_grp for red_grp in red_grps])[0][0]
+
+        return antpairs, red_grps, red_grp_map, lengths
