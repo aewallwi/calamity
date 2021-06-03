@@ -158,6 +158,7 @@ def yield_dpss_evecs(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include_autos
     Returns
     -------
     dpss_evecs: dict
+        dictionary with antenna-pair keys pointing to dpss operators.
 
     """
     dpss_evecs = {}
