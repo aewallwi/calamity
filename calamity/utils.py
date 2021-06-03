@@ -85,6 +85,11 @@ def get_redundant_groups_conjugated(uvdata, remove_redundancy=False, tol=1.0, in
         red_grps = [[uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps]
         conjugates = [uvdata.baseline_to_antnums(bl) for bl in conjugates]
 
+        ap_data = set(uvdata.get_antpairs())
+        # make sure all red_grps in data and all conjugates in data
+        red_grps = [[ap for ap in red_grp if ap in ap_data or ap[::-1] in ap_data] for red_grp in red_grps]
+        red_grps = [red_grp for red_grp in red_grps if len(red_grp) > 0]
+        conjugates = [ap for ap in conjugates if ap in ap_data or ap[::-1] in ap_data]
         # modeify red_grp lists to have conjugated antpairs ordered consistently.
         red_grps_t = []
         for red_grp in red_grps:
@@ -117,3 +122,8 @@ def get_redundant_groups_conjugated(uvdata, remove_redundancy=False, tol=1.0, in
             red_grp_map[ap] = np.where([ap in red_grp for red_grp in red_grps])[0][0]
 
         return antpairs, red_grps, red_grp_map, lengths
+
+
+def echo(message, verbose=True):
+    if verbose:
+        print(message)
