@@ -268,13 +268,13 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
             cal_loss()
             echo(f'{datetime.datetime.now()} Performing Gradient Descent...\n', verbose=verbose)
             # perform optimization loop.
+            if freeze_model:
+                vars = [g_r, g_i]
+            else:
+                vars = [g_r, g_i, fg_r, fg_i]
             for step in tqdm.tqdm(range(maxsteps)):
                 with tf.GradientTape() as tape:
                     loss = cal_loss()
-                if freeze_model:
-                    vars = [g_r, g_i]
-                else:
-                    vars = [g_r, g_i, fg_r, fg_i]
                 grads = tape.gradient(loss, vars)
                 opt.apply_gradients(zip(grads, vars))
                 fitting_info_t['loss_history'].append(loss.numpy())
