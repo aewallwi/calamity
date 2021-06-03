@@ -95,7 +95,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     model = copy.deepcopy(uvdata)
     filtered = copy.deepcopy(uvdata)
     if gains is None:
-        echo(f'{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...', verbose=verbose)
+        echo(f'{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n', verbose=verbose)
         gains = utils.blank_uvcal_from_uvdata(uvdata)
     # if sky-model is None, initialize it to be the
     # data divided by the initial gain estimates.
@@ -103,7 +103,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     antpairs, red_grps, antpair_red_index, _ = utils.get_redundant_groups_conjugated(uvdata, remove_redundancy=not(use_redundancy), include_autos=include_autos)
 
     if sky_model is None:
-        echo(f'{datetime.datetime.now()} Sky model is None. Initializing from data...', verbose=verbose)
+        echo(f'{datetime.datetime.now()} Sky model is None. Initializing from data...\n', verbose=verbose)
         sky_model = uvdata
         for ap in antpairs:
             for pnum, pol in enumerate(sky_model.get_pols()):
@@ -124,7 +124,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     corrinds = set([(i, j) for (i, j) in itertools.combinations(ant_map.keys(), 2)])
     blind_red_index = {}
 
-    echo(f'{datetime.datetime.now()} Generating map between correlation indices and modeling vectors...', verbose=verbose)
+    echo(f'{datetime.datetime.now()} Generating map between correlation indices and modeling vectors...\n', verbose=verbose)
     # generate map from (i, j) correlation indices to eigenvectors based on redudnant group.
     for (i, j) in corrinds:
         ap = (ant_map[i], ant_map[j])
@@ -154,7 +154,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     del fg_range_map_red
     # We do fitting per time and per polarization.
     for polnum, pol in enumerate(uvdata.get_pols()):
-        echo(f'{datetime.datetime.now()} Starting on pol {pol}, {polnum + 1} of {uvdata.Npols}...', verbose=verbose)
+        echo(f'{datetime.datetime.now()} Starting on pol {pol}, {polnum + 1} of {uvdata.Npols}...\n', verbose=verbose)
         fitting_info_p = {}
         rmsdata = np.sqrt(np.mean(np.abs(uvdata.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]]) ** 2.))
         # pull data for pol out of raveled uvdata object and into dicts of numpy waterfalls.
@@ -164,7 +164,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
         flag_dict = {}
         nsample_dict = {}
         gain_dict = {}
-        echo(f'{datetime.datetime.now()} Unraveling data...', verbose=verbose)
+        echo(f'{datetime.datetime.now()} Unraveling data...\n', verbose=verbose)
         for ant in gains.antenna_numbers:
             gain_dict[ant] = gains.get_gains(ant, 'J' + pol)
 
@@ -179,15 +179,15 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
         # these coefficients are mapped from (a1, a2) -> redundant_index -> fg_evecs
         foreground_coeffs = {}
         # model_dict follows (a1, a2) -> red_index -> model waterfall.
-        echo(f'{datetime.datetime.now()} Generating initial foreground coefficients...', verbose=verbose)
+        echo(f'{datetime.datetime.now()} Generating initial foreground coefficients...\n', verbose=verbose)
         model_dict = {}
         for red_grp in red_grps:
             model_dict[antpair_red_index[red_grp[0]]] = copy.copy(sky_model.get_data(red_grp[0] + (pol,)))
-            foreground_coeffs[antpair_red_index[red_grp[0]]] =  model_dict[antpair_red_index[red_grp[0]]] @ foreground_basis_vectors[red_grp[0]]
+            foreground_coeffs[antpair_red_index[red_grp[0]]] =  model_dict[antpair_red_index[red_grp[0]]] @ foreground_basis_vectors[red_grp[0]].astype(np.complex128)
 
         # perform solutions on each time separately.
         for tnum in range(uvdata.Ntimes):
-            echo(f'{datetime.datetime.now()} Starting on time {tnum + 1} of {uvdata.Ntimes}...', verbose=verbose)
+            echo(f'{datetime.datetime.now()} Starting on time {tnum + 1} of {uvdata.Ntimes}...\n', verbose=verbose)
             data_map_r = {}
             data_map_i = {}
             weights_map = {}
@@ -195,7 +195,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
             fg_i = []
             # map data and gains from particular time into correlation indexed
             # tensor arrays to be used in optimization.
-            echo(f'{datetime.datetime.now()} Building corr index maps...', verbose=verbose)
+            echo(f'{datetime.datetime.now()} Building corr index maps...\n', verbose=verbose)
             for i, j in corrinds:
                 ap = (ant_map[i], ant_map[j])
                 isign = 1.
@@ -263,10 +263,10 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
                 if not freeze_model:
                     fitting_info_t['fg_r'] = []
                     fitting_info_t['fg_i'] = []
-            echo(f'{datetime.datetime.now()} Building Comuptational Graph...', verbose=(verbose and tnum == 0 and polnum == 0))
+            echo(f'{datetime.datetime.now()} Building Computational Graph...\n', verbose=(verbose and tnum == 0 and polnum == 0))
             # evaluate loss once to build graph.
             cal_loss()
-            echo(f'{datetime.datetime.now()} Performing Gradient Descent...', verbose=verbose)
+            echo(f'{datetime.datetime.now()} Performing Gradient Descent...\n', verbose=verbose)
             # perform optimization loop.
             for step in tqdm.tqdm(range(maxsteps)):
                 with tf.GradientTape() as tape:
@@ -287,9 +287,9 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
                 if step >= 1 and np.abs(fitting_info_t['loss_history'][-1] - fitting_info_t['loss_history'][-2]) < tol:
                     break
 
-            echo(f"{datetime.datetime.now()} Finished Optimization. Delta Loss is {np.abs(fitting_info_t['loss_history'][-1] - fitting_info_t['loss_history'][-2]):.2e}.", verbose=verbose)
+            echo(f"\n{datetime.datetime.now()} Finished Optimization. Delta Loss is {np.abs(fitting_info_t['loss_history'][-1] - fitting_info_t['loss_history'][-2]):.2e}.", verbose=verbose)
             echo(f"Initial loss was {fitting_info_t['loss_history'][0]}. Final Loss is {fitting_info_t['loss_history'][-1]}.", verbose=verbose)
-            echo(f"Transferring fitted model and gains to dictionaries...", verbose=verbose)
+            echo(f"Transferring fitted model and gains to dictionaries...\n", verbose=verbose)
             ants_visited = set({})
             red_grps_visited = set({})
             # insert calibrated / model subtracted data / gains
@@ -330,7 +330,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
         # now transfer antenna keyed dictionaries to uvdata/uvcal objects for
         # i/o
         ants_visited = set({})
-        echo(f'{datetime.datetime.now()} Raveling data from polarization {pol}...')
+        echo(f'{datetime.datetime.now()} Raveling data from polarization {pol}...\n')
         for ap in antpairs_data:
             dinds = resid.antpair2ind(ap)
             if ap in resid_dict:
@@ -361,6 +361,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
         resid.data_array[:, :, :, polnum] *= scale_factor
         filtered.data_array[:, :, :, polnum] *= scale_factor
         gains.gain_array[:, :, :, polnum]  = gains.gain_array[:, :, :, polnum] / np.sqrt(scale_factor)
+        fitting_info[polnum] = fitting_info_p
 
     return model, resid, filtered, gains, fitting_info
 
@@ -418,7 +419,7 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., include_
     operator_cache = {}
     # generate dpss modeling vectors.
     antpairs, red_grps, red_grp_map, lengths = utils.get_redundant_groups_conjugated(uvdata, include_autos=include_autos)
-    echo(f'{datetime.datetime.now()} Building DPSS modeling vectors...', verbose=verbose)
+    echo(f'{datetime.datetime.now()} Building DPSS modeling vectors...\n', verbose=verbose)
     for red_grp, length in zip(red_grps, lengths):
         for apnum, ap in enumerate(red_grp):
             if apnum == 0:

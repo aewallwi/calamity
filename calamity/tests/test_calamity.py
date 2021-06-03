@@ -38,4 +38,3 @@ def test_calibrate_and_model_dpss(uvdata, sky_model, gains):
                                                                                         freeze_model=True, maxsteps=300)
         assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.))
         assert np.allclose(gains.gain_array, 1., rtol=0., atol=1e-4)
-        assert False
