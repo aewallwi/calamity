@@ -154,7 +154,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     del fg_range_map_red
     # We do fitting per time and per polarization.
     for polnum, pol in enumerate(uvdata.get_pols()):
-        echo(f'{datetime.datetime.now()} Starting on pol {pol}, {polnum} of {uvdata.Npols}...', verbose=verbose)
+        echo(f'{datetime.datetime.now()} Starting on pol {pol}, {polnum + 1} of {uvdata.Npols}...', verbose=verbose)
         fitting_info_p = {}
         rmsdata = np.sqrt(np.mean(np.abs(uvdata.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]]) ** 2.))
         # pull data for pol out of raveled uvdata object and into dicts of numpy waterfalls.
@@ -187,7 +187,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
 
         # perform solutions on each time separately.
         for tnum in range(uvdata.Ntimes):
-            echo(f'{datetime.datetime.now()} Starting on time {tnum} of {uvdata.Ntimes}...', verbose=verbose)
+            echo(f'{datetime.datetime.now()} Starting on time {tnum + 1} of {uvdata.Ntimes}...', verbose=verbose)
             data_map_r = {}
             data_map_i = {}
             weights_map = {}
@@ -263,7 +263,10 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
                 if not freeze_model:
                     fitting_info_t['fg_r'] = []
                     fitting_info_t['fg_i'] = []
-            echo(f'{datetime.datetime.now()} Performing Optimization...', verbose=verbose)
+            echo(f'{datetime.datetime.now()} Building Comuptational Graph...', verbose=(verbose and tnum == 0 and polnum == 0))
+            # evaluate loss once to build graph.
+            cal_loss()
+            echo(f'{datetime.datetime.now()} Performing Gradient Descent...', verbose=verbose)
             # perform optimization loop.
             for step in tqdm.tqdm(range(maxsteps)):
                 with tf.GradientTape() as tape:
