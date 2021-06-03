@@ -1,6 +1,8 @@
 from pyuvdata import UVCal
 import numpy as np
 import copy
+from uvtools import dspec
+import datetime
 
 def blank_uvcal_from_uvdata(uvdata):
     """initialize UVCal object with same times, antennas, and frequencies as uvdata.
@@ -127,3 +129,48 @@ def get_redundant_groups_conjugated(uvdata, remove_redundancy=False, tol=1.0, in
 def echo(message, verbose=True):
     if verbose:
         print(message)
+
+
+def yield_dpss_evecs(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include_autos=False, verbose=False):
+    """Get dictionary of DPSS vectors for modeling 21cm foregrounds.
+
+    Parameters
+    ----------
+    horizon: float, optional
+        fraction of baseline delay length to model with dpss modes
+        unitless.
+        default is 1.
+    min_dly: float, optional
+        minimum delay to model with dpss models.
+        in units of ns.
+        default is 0.
+    offset: float optional
+        offset off of horizon wedge to include in dpss delay range.
+        in units of ns.
+        default is 0.
+    include_autos: bool, optional
+        if true, include autocorrelations in fitting.
+        default is False.
+    verbose: bool, optional
+        lots of text output
+        default is False.
+
+    Returns
+    -------
+    dpss_evecs: dict
+
+    """
+    dpss_evecs = {}
+    operator_cache = {}
+    # generate dpss modeling vectors.
+    antpairs, red_grps, red_grp_map, lengths = get_redundant_groups_conjugated(uvdata, include_autos=include_autos)
+    echo(f'{datetime.datetime.now()} Building DPSS modeling vectors...\n', verbose=verbose)
+    for red_grp, length in zip(red_grps, lengths):
+        for apnum, ap in enumerate(red_grp):
+            if apnum == 0:
+                dly = np.ceil(max(min_dly, length / .3 * horizon + offset)) / 1e9
+                dpss_evecs[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12], cache=operator_cache)[0]
+            else:
+                dpss_evecs[ap] = dpss_evecs[red_grp[0]]
+
+    return dpss_evecs

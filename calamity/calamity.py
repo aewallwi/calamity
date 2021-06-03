@@ -1,10 +1,8 @@
 import numpy as np
-from uvtools import dspec
 import tensorflow as tf
 from pyuvdata import UVData, UVCal
 from . import utils
 import copy
-import tqdm
 import argparse
 import itertools
 from .utils import echo
@@ -17,7 +15,7 @@ OPTIMIZERS = {'Adadelta': tf.optimizers.Adadelta, 'Adam': tf.optimizers.Adam, 'A
 def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=None, freeze_model=False,
                                      optimizer='Adamax', tol=1e-14, maxsteps=10000, include_autos=False,
                                      verbose=False, sky_model=None, dtype_opt=np.float32,
-                                     record_var_history=False, use_redundancy=False, **opt_kwargs):
+                                     record_var_history=False, use_redundancy=False, notebook_progressbar=False, **opt_kwargs):
     """Perform simultaneous calibration and fitting of foregrounds --per baseline--.
 
     This approach gives up on trying to invert the wedge but can be used on practically any array.
@@ -37,6 +35,10 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
         Users can determine initial gains with their favorite established cal algorithm.
         default is None -> start with unity gains.
         WARNING: At the present, the flags in gains are not propagated/used! Make sure flags in uvdata object!
+    freeze_model: bool, optional
+        Only optimize loss function wrt gain variables. This is effectively traditional model-based calibration
+        with sky_model as the model (but projected onto the foreground basis vectors).
+        default is False.
     optimizer: string
         Name of optimizer. See OPTIMIZERS dictionary which contains optimizers described in
         https://www.tensorflow.org/api_docs/python/tf/keras/optimizers
@@ -65,6 +67,12 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
         default is np.float32
     record_var_history: bool, optional
         keep detailed record of optimization history of variables.
+        default is False.
+    use_redundancy: bool, optional
+        if true, solve for one set of foreground coefficients per redundant baseline group
+        instead of per baseline.
+    notebook_progressbar: bool, optional
+        use progress bar optimized for notebook output.
         default is False.
 
     Returns
@@ -225,8 +233,8 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
             g_i = tf.Variable(tf.convert_to_tensor(np.vstack([gain_dict[ant_map[i]][tnum].imag for i in ant_map.keys()]), dtype=dtype_opt))
             # get the foreground model.
             def yield_fg_model(i, j):
-                vr = tf.reduce_sum(evec_map[i, j] * fg_r[fgrange_map[(i, j)][0]:fgrange_map[(i, j)][1]], axis=1) # real part of fg model.
-                vi = tf.reduce_sum(evec_map[i, j] * fg_i[fgrange_map[(i, j)][0]:fgrange_map[(i, j)][1]], axis=1) # imag part of fg model.
+                vr = tf.reduce_sum(evec_map[i, j] * fg_r[fgrange_map[(i, j)][0]: fgrange_map[(i, j)][1]], axis=1) # real part of fg model.
+                vi = tf.reduce_sum(evec_map[i, j] * fg_i[fgrange_map[(i, j)][0]: fgrange_map[(i, j)][1]], axis=1) # imag part of fg model.
                 return vr, vi
             # get the calibrated model
             def yield_model(i, j):
@@ -272,7 +280,11 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
                 vars = [g_r, g_i]
             else:
                 vars = [g_r, g_i, fg_r, fg_i]
-            for step in tqdm.tqdm(range(maxsteps)):
+            if notebook_progressbar:
+                from tqdm.notebook import tqdm
+            else:
+                from tqdm import tqdm
+            for step in tqdm(range(maxsteps)):
                 with tf.GradientTape() as tape:
                     loss = cal_loss()
                 grads = tape.gradient(loss, vars)
@@ -415,18 +427,7 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., include_
             'g_r': real part of gains.
             'g_i': imag part of gains
     """
-    dpss_evecs = {}
-    operator_cache = {}
-    # generate dpss modeling vectors.
-    antpairs, red_grps, red_grp_map, lengths = utils.get_redundant_groups_conjugated(uvdata, include_autos=include_autos)
-    echo(f'{datetime.datetime.now()} Building DPSS modeling vectors...\n', verbose=verbose)
-    for red_grp, length in zip(red_grps, lengths):
-        for apnum, ap in enumerate(red_grp):
-            if apnum == 0:
-                dly = np.ceil(max(min_dly, length / .3 * horizon + offset)) / 1e9
-                dpss_evecs[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12], cache=operator_cache)[0]
-            else:
-                dpss_evecs[ap] = dpss_evecs[red_grp[0]]
+    dpss_evecs = utils.yield_dpss_evecs(uvdata, horizon=horizon, min_dly=min_dly, offset=offset, include_autos=include_autos)
     model, resid, filtered, gains, fitted_info = calibrate_and_model_per_baseline(uvdata=uvdata, foreground_basis_vectors=dpss_evecs,
                                                                                   include_autos=include_autos, verbose=verbose, **fitting_kwargs)
     return model, resid, filtered, gains, fitted_info
