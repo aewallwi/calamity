@@ -48,6 +48,9 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     maxsteps: int, optional
         maximum number of opt.minimize calls before halting.
         default is 10000
+    include_autos: bool, optional
+        include autocorrelations in fitting.
+        default is False.
     verbose: bool, optional
         generate lots of text.
         default is False.
@@ -381,7 +384,9 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., include_
     include_autos: bool, optional
         if true, include autocorrelations in fitting.
         default is False.
-
+    verbose: bool, optional
+        lots of text output
+        default is False.
     fitting_kwargs: kwarg dict
         additional kwargs for calibrate_and_model_per_baseline.
         see docstring of calibrate_and_model_per_baseline.
@@ -419,7 +424,7 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., include_
             else:
                 dpss_evecs[ap] = dpss_evecs[red_grp[0]]
     model, resid, filtered, gains, fitted_info = calibrate_and_model_per_baseline(uvdata=uvdata, foreground_basis_vectors=dpss_evecs,
-                                                                                  include_autos=include_autos, **fitting_kwargs)
+                                                                                  include_autos=include_autos, verbose=verbose, **fitting_kwargs)
     return model, resid, filtered, gains, fitted_info
 
 
