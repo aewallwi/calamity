@@ -280,10 +280,10 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
                         fitting_info_t['fg_i'].append(fg_i.numpy())
                 if step >= 1 and np.abs(fitting_info_t['loss_history'][-1] - fitting_info_t['loss_history'][-2]) < tol:
                     break
-            echo(f'', verbose=verbose)
-            echo(f'{datetime.datetime.now()} Finished Optimization. Initial loss was {fitting_info_t['loss_history'][0]}. Final Loss is {fitting_info_t['loss_history'][-1]}.',
-            echo(f'Transferring fitted model and gains to dictionaries...')
-                verbose=verbose)
+
+            echo(f"{datetime.datetime.now()} Finished Optimization. Delta Loss is {np.abs(fitting_info_t['loss_history'][-1] - fitting_info_t['loss_history'][-2]):.2e}.", verbose=verbose)
+            echo(f"Initial loss was {fitting_info_t['loss_history'][0]}. Final Loss is {fitting_info_t['loss_history'][-1]}.", verbose=verbose)
+            echo(f"Transferring fitted model and gains to dictionaries...", verbose=verbose)
             ants_visited = set({})
             red_grps_visited = set({})
             # insert calibrated / model subtracted data / gains
@@ -359,7 +359,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     return model, resid, filtered, gains, fitting_info
 
 
-def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., use_redundancy=False, include_autos=False, **fitting_kwargs):
+def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., include_autos=False, verbose=False, **fitting_kwargs):
     """Simultaneously solve for gains and model foregrounds with DPSS vectors.
 
     Parameters
@@ -378,6 +378,10 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., use_redu
         offset off of horizon wedge to include in dpss delay range.
         in units of ns.
         default is 0.
+    include_autos: bool, optional
+        if true, include autocorrelations in fitting.
+        default is False.
+
     fitting_kwargs: kwarg dict
         additional kwargs for calibrate_and_model_per_baseline.
         see docstring of calibrate_and_model_per_baseline.
@@ -415,7 +419,7 @@ def calibrate_and_model_dpss(uvdata, horizon=1., min_dly=0., offset=0., use_redu
             else:
                 dpss_evecs[ap] = dpss_evecs[red_grp[0]]
     model, resid, filtered, gains, fitted_info = calibrate_and_model_per_baseline(uvdata=uvdata, foreground_basis_vectors=dpss_evecs,
-                                                                                  use_redundancy=use_redundancy, include_autos=include_autos, **fitting_kwargs)
+                                                                                  include_autos=include_autos, **fitting_kwargs)
     return model, resid, filtered, gains, fitted_info
 
 
