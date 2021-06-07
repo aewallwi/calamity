@@ -8,14 +8,151 @@ import itertools
 from .utils import echo
 import datetime
 
-OPTIMIZERS = {'Adadelta': tf.optimizers.Adadelta, 'Adam': tf.optimizers.Adam, 'Adamax':tf.optimizers.Adamax,
-              'Ftrl': tf.optimizers.Ftrl, 'Nadam':tf.optimizers.Nadam, 'SGD':tf.optimizers.SGD, 'RMSprop': tf.optimizers.RMSprop}
+OPTIMIZERS = {'Adadelta': tf.optimizers.Adadelta, 'Adam': tf.optimizers.Adam, 'Adamax': tf.optimizers.Adamax, 'AMSGrad': tf.optimizers.AMSGrad,
+              'Ftrl': tf.optimizers.Ftrl, 'Nadam':tf.optimizers.Nadam, 'SGD': tf.optimizers.SGD, 'RMSprop': tf.optimizers.RMSprop}
+
+
+
+
+def tensorize_per_baseline_evecs(antpair_red_indices, foreground_basis_vectors, dtype=dtype_opt):
+    """Helper function generating mappings for per-baseline foreground modeling.
+
+    Generates mappings between antenna pairs and foreground basis vectors accounting for redundancies.
+
+    Parameters
+    ----------
+
+    Returns
+    -------
+
+
+    """
+
+    echo(f'{datetime.datetime.now()} Generating map between antenna pairs and modeling vectors...\n', verbose=verbose)
+    # generate map from (i, j) correlation indices to eigenvectors based on redudnant group.
+    for (i, j) in corrinds:
+        ap = (ant_map[i], ant_map[j])
+        if ap not in antpair_red_index:
+            ap = ap[::-1]
+        blind_red_index[(i, j)] = antpair_red_index[ap]
+        if blind_red_index[(i, j)] not in evec_map_red:
+            if ap not in foreground_basis_vectors:
+                ap = ap[::-1]
+            evec_map_red[blind_red_index[(i, j)]] = tf.convert_to_tensor(foreground_basis_vectors[ap], dtype=dtype_opt)
+        evec_map[(i, j)] = evec_map_red[blind_red_index[(i, j)]]
+
+
+        # fg_range_map  maps (i, j) -> redundant_group -> indices of foreground coefficients
+        # when use_redundancy is False each baseline is in its own redundant group
+        # so this setup works equally well in redundant and non-redundant situations.
+        startind = 0
+        # start with intermediate map from redundant_group -> indices
+        fg_range_map_red = {}
+        for grpnum in range(len(red_grps)):
+            fg_range_map_red[grpnum] = (startind, startind + evec_map_red[grpnum].shape[1])
+            startind += evec_map_red[grpnum].shape[1]
+        # complete mapping from (i, j) -> fg coeff indices via intermediate map.
+        for (i, j) in corrinds:
+            fgrange_map[(i, j)] = fg_range_map_red[blind_red_index[(i, j)]]
+
+        del evec_map_red
+        del fg_range_map_red
+
+
+def yield_foreground_model_per_baseline_dictionary_method(i, j, foreground_coeffs_real, foreground_coeffs_imag, foregroud_range_map, components_map):
+    """Helper function for retrieving a per-baseline foreground model using the dictionary mapping technique
+
+    From empirical experimentation, this technique works best in graph mode on CPUs. We recommend
+    the array method if working with GPUs.
+
+    Parameters
+    ----------
+    i: int
+        i correlation index
+    j: int
+        j correlation index
+    foreground_coeffs_real: tf.Tensor object
+        an Nforegrounds tensorflow tensor
+        storing the real components of coefficients multiplying foreground
+        basis vectors.
+    foreground_coeffs_imag: tf.Tensor object
+        an Nforegrounds tensorflow tensor
+        storing the imaginary components of coefficients multiplying foreground
+        basis vectors.
+    foreground_range_map: dict with 2-tuple int keys and 2-int tuple values
+        dictionary with keys that are (i, j) pairs of correlation indices which map to
+        integer 2-tuples (index_low, index_high) representing the lower and upper indices of
+        the foreground_coeffs tensor. Lower index is inclusive, upper index is exclusive
+        (consistent with python indexing convention).
+    components_map: dict of 2-tuple int keys and tf.Tensor object values.
+        dictionary with keys that are (i, j) integer pairs of correlation indices which map to
+        Nfreq x Nforeground tensorflow tensor where each column is a separate per-baseline
+        foreground basis component.
+
+    Returns
+    -------
+    foreground_model_real: tf.Tensor object
+        Nfreq 1d tensorflow tensor model of the real part of the (i, j) correlation.
+    foreground_model_imag: tf.Tensor object
+        Nfreq 1d tensorflow tensor model of the imag part of the (i, j) correlation
+
+    """
+    foreground_model_real = tf.reduce_sum(components_map[i, j] * foreground_coeffs_real[foreground_range_map[(i, j)][0]: foreground_range_map[(i, j)][1]], axis=1) # real part of fg model.
+    foreground_model_imag = tf.reduce_sum(components_map[i, j] * foreground_coeffs_imag[foreground_range_map[(i, j)][0]: foreground_range_map[(i, j)][1]], axis=1) # imag part of fg model.
+    return foreground_model_real, foreground_model_imag
+
+
+# get the calibrated model
+def yield_data_model_per_baseline_dictionary_method(i, j, gains_real, gains_imag, **foreground_model_kwargs):
+    """Helper function for retrieving a per-baseline uncalibrted foreground model using the dictionary mapping technique
+
+    From empirical experimentation, this technique works best in graph mode on CPUs. We recommend
+    the array method if working with GPUs.
+
+    Parameters
+    ----------
+    i: int
+        i correlation index
+    j: int
+        j correlation index
+    gains_real: dict with int keys and tf.Tensor object values
+        dictionary mapping i antenna numbers to Nfreq 1d tf.Tensor object
+        representing the real component of the complex gain for antenna i.
+    gains_imag: dict with int keys and tf.Tensor object values
+        dictionary mapping j antenna numbers to Nfreq 1d tf.Tensor object
+        representing the imag component of the complex gain for antenna j.
+    **foreground_model_kwargs: kwargs dict
+        kwargs for yield_foreground_model_per_baseline_dictionary_method (excluding i, and j)
+        see yield_foreground_model_per_baseline_dictionary_method docstring.
+
+    Returns
+    -------
+    uncal_model_real: tf.Tensor object
+        Nfreq 1d tensorflow tensor model of the real part of the uncalibrated (i, j) correlation
+        Real(V_{ij}^{true} \times g_i \times conj(g_j))
+    uncal_model_imag: tf.Tensor object
+        Nfreq 1d tensorflow tensor model of the imag part of the uncalibrated (i, j) correlation
+        Real(V_{ij}^{true} \times g_i \times conj(g_j))
+    """
+    foreground_model_real, foreground_model_imag = yield_foreground_model_per_baseline_dictionary_method(i, j, **foreground_model_kwargs)
+    uncal_model_real = (gains_real[i] * gains_real[j] + gains_imag[i] * gains_imag[j]) *  foreground_model_real + (gains_real[i] * gains_imag[j] - gains_imag[i] * gains_real[j]) * foreground_model_imag # real part of model with gains
+    uncal_model_imag = (gains_real[i] * gains_real[j] + gains_imag[i] * gains_imag[j]) * foreground_model_imag + (gains_imag[i] * gains_real[j] - gains_real[i] * gains_imag[j]) * foreground_model_real # imag part of model with gains
+    return uncal_model_real, uncal_model_imag
+
+
+def yield_foreground_model_per_baseline_tensor_method():
+    return
+
+
+def yield_data_model_per_baseline_tensor_method():
+    return
 
 
 def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=None, freeze_model=False,
                                      optimizer='Adamax', tol=1e-14, maxsteps=10000, include_autos=False,
                                      verbose=False, sky_model=None, dtype_opt=np.float32,
-                                     record_var_history=False, use_redundancy=False, notebook_progressbar=False, **opt_kwargs):
+                                     record_var_history=False, use_redundancy=False, notebook_progressbar=False,
+                                     break_if_loss_increases=True, **opt_kwargs):
     """Perform simultaneous calibration and fitting of foregrounds --per baseline--.
 
     This approach gives up on trying to invert the wedge but can be used on practically any array.
@@ -74,6 +211,9 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     notebook_progressbar: bool, optional
         use progress bar optimized for notebook output.
         default is False.
+    break_if_loss_increases: bool, optional
+        halt optimization loop if loss function increases.
+        default is True.
 
     Returns
     -------
@@ -108,7 +248,7 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
     # if sky-model is None, initialize it to be the
     # data divided by the initial gain estimates.
 
-    antpairs, red_grps, antpair_red_index, _ = utils.get_redundant_groups_conjugated(uvdata, remove_redundancy=not(use_redundancy), include_autos=include_autos)
+    antpairs, red_grps, antpair_red_indices, _ = utils.get_redundant_groups_conjugated(uvdata, remove_redundancy=not(use_redundancy), include_autos=include_autos)
 
     if sky_model is None:
         echo(f'{datetime.datetime.now()} Sky model is None. Initializing from data...\n', verbose=verbose)
@@ -122,44 +262,11 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
 
     fitting_info = {}
 
-    # generate maps between antenna numbers and correlation indices that are
-    # natural numbers (starting at zero).
-    ant_map = {i: ant for i, ant in enumerate(gains.ant_array)}
-    ant_mapi = {ant: i for ant, i in zip(ant_map.values(), ant_map.keys())}
-    evec_map_red = {}
-    evec_map = {} # evec map is a map from (i, j) -> red_index -> basis vector
-    fgrange_map = {}
-    corrinds = set([(i, j) for (i, j) in itertools.combinations(ant_map.keys(), 2)])
-    blind_red_index = {}
+    if method == 'dict':
+        foreground_range_map, evecs_map = tensorize_per_baseline_evecs(antpair_red_indices, foreground_basis_vectors, dtype=dtype_opt)
 
-    echo(f'{datetime.datetime.now()} Generating map between correlation indices and modeling vectors...\n', verbose=verbose)
-    # generate map from (i, j) correlation indices to eigenvectors based on redudnant group.
-    for (i, j) in corrinds:
-        ap = (ant_map[i], ant_map[j])
-        if ap not in antpair_red_index:
-            ap = ap[::-1]
-        blind_red_index[(i, j)] = antpair_red_index[ap]
-        if blind_red_index[(i, j)] not in evec_map_red:
-            if ap not in foreground_basis_vectors:
-                ap = ap[::-1]
-            evec_map_red[blind_red_index[(i, j)]] = tf.convert_to_tensor(foreground_basis_vectors[ap], dtype=dtype_opt)
-        evec_map[(i, j)] = evec_map_red[blind_red_index[(i, j)]]
 
-    # fg_range_map  maps (i, j) -> redundant_group -> indices of foreground coefficients
-    # when use_redundancy is False each baseline is in its own redundant group
-    # so this setup works equally well in redundant and non-redundant situations.
-    startind = 0
-    # start with intermediate map from redundant_group -> indices
-    fg_range_map_red = {}
-    for grpnum in range(len(red_grps)):
-        fg_range_map_red[grpnum] = (startind, startind + evec_map_red[grpnum].shape[1])
-        startind += evec_map_red[grpnum].shape[1]
-    # complete mapping from (i, j) -> fg coeff indices via intermediate map.
-    for (i, j) in corrinds:
-        fgrange_map[(i, j)] = fg_range_map_red[blind_red_index[(i, j)]]
 
-    del evec_map_red
-    del fg_range_map_red
     # We do fitting per time and per polarization.
     for polnum, pol in enumerate(uvdata.get_pols()):
         echo(f'{datetime.datetime.now()} Starting on pol {pol}, {polnum + 1} of {uvdata.Npols}...\n', verbose=verbose)
@@ -297,6 +404,8 @@ def calibrate_and_model_per_baseline(uvdata, foreground_basis_vectors, gains=Non
                         fitting_info_t['fg_r'].append(fg_r.numpy())
                         fitting_info_t['fg_i'].append(fg_i.numpy())
                 if step >= 1 and np.abs(fitting_info_t['loss_history'][-1] - fitting_info_t['loss_history'][-2]) < tol:
+                    break
+                if break_if_loss_increases and step >= 1 and fitting_info_t['loss_history'][-1] > fitting_info_t['loss_history'][-2]:
                     break
 
             echo(f"\n{datetime.datetime.now()} Finished Optimization. Delta Loss is {np.abs(fitting_info_t['loss_history'][-1] - fitting_info_t['loss_history'][-2]):.2e}.", verbose=verbose)
