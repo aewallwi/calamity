@@ -131,7 +131,7 @@ def echo(message, verbose=True):
         print(message)
 
 
-def yield_dpss_evecs(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include_autos=False, verbose=False):
+def yield_dpss_model_components(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include_autos=False, verbose=False):
     """Get dictionary of DPSS vectors for modeling 21cm foregrounds.
 
     Parameters
@@ -157,11 +157,11 @@ def yield_dpss_evecs(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include_autos
 
     Returns
     -------
-    dpss_evecs: dict
+    dpss_model_components: dict
         dictionary with antenna-pair keys pointing to dpss operators.
 
     """
-    dpss_evecs = {}
+    dpss_model_components = {}
     operator_cache = {}
     # generate dpss modeling vectors.
     antpairs, red_grps, red_grp_map, lengths = get_redundant_groups_conjugated(uvdata, include_autos=include_autos)
@@ -170,8 +170,32 @@ def yield_dpss_evecs(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include_autos
         for apnum, ap in enumerate(red_grp):
             if apnum == 0:
                 dly = np.ceil(max(min_dly, length / .3 * horizon + offset)) / 1e9
-                dpss_evecs[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12], cache=operator_cache)[0]
+                dpss_model_components[ap] = dspec.dpss_operator(uvdata.freq_array[0], filter_centers=[0.0], filter_half_widths=[dly], eigenval_cutoff=[1e-12], cache=operator_cache)[0]
             else:
-                dpss_evecs[ap] = dpss_evecs[red_grp[0]]
+                dpss_model_components[ap] = dpss_model_components[red_grp[0]]
 
-    return dpss_evecs
+    return dpss_model_components
+
+
+def apply_gains(uvdata, gains):
+    """apply gains to a uvdata object.
+
+    Parameters
+    ----------
+    uvdata: UVData object.
+        UVData for data to have gains applied.
+    gains: UVCal object.
+        UVCal object containing gains to be applied.
+
+    Returns
+    -------
+    calibrated: UVData object.
+        UVData object containing calibrated data.
+    """
+    calibrated = copy.deepcopy(uvdata)
+    for ap in calibrated.get_antpairs():
+        for pnum, pol in enumerate(sky_model.get_pols()):
+            dinds = calibrated.antpair2ind(ap)
+            calibrated.data_array[dinds, 0, :, pnum] = calibrated.data_array[dinds, 0, :, pnum] / (gains.get_gains(ap[0], 'J' + pol) * np.conj(gains.get_gains(ap[1], 'J' + pol))).T
+            calibrated.flag_array[dinds, 0, :, pnum] = calibrated.flag_array[dinds, 0, :, pnum] | (gains.get_flags(ap[0], 'J' + pol) | gains.get_flags(ap[1], 'J' + pol)).T
+    return calibrated
