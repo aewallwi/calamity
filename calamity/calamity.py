@@ -580,8 +580,8 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
                 opt.apply_gradients(zip(grads, vars))
                 fitting_info_t['loss_history'].append(loss.numpy())
                 if record_var_history:
-                    fitting_info_t['g_r'].append(g_r.numpy())
-                    fitting_info_t['g_i'].append(g_i.numpy())
+                    fitting_info_t['g_r'].append(gain_r.numpy())
+                    fitting_info_t['g_i'].append(gain_i.numpy())
                     if not freeze_model:
                         fitting_info_t['fg_r'].append(fg_r.numpy())
                         fitting_info_t['fg_i'].append(fg_i.numpy())
