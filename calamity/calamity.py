@@ -561,7 +561,7 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
                                            foreground_coeffs_real=fg_r, foreground_coeffs_imag=fg_i,
                                            data_real=data_r, data_imag=data_i, wgts=wgts, foreground_range_map=foreground_range_map,
                                            components_map=model_components_map)
-            cal_loss_i = cal_loss().numpy()
+            loss_i = cal_loss().numpy()
             echo(f'{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss_i:.2e}...\n', verbose=verbose)
             # perform optimization loop.
             if freeze_model:
