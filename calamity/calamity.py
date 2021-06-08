@@ -606,7 +606,7 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
                                                 foreground_coeffs_real=fg_r_ml, foreground_coeffs_imag=fg_i_ml, scale_factor=rmsdata, foreground_range_map=foreground_range_map)
             insert_gains_into_uvcal_dictionary(uvcal=gains, time_index=time_index, polarization=pol, gains_real=gain_r, gains_imag=gain_i, ants_map=ants_map)
 
-            fitting_info_p[time_index] = fitting_info_p
+            fitting_info_p[time_index] = fitting_info_t
         fitting_info[polnum] = fitting_info_p
         # compute and multiply out scale-factor accounting for overall amplitude and phase degeneracy.
         scale_factor_phase = np.angle(np.mean(sky_model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]] / model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]]))
