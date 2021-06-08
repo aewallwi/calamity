@@ -360,7 +360,7 @@ def tensorize_per_baseline_data_dictionary(uvdata, polarization, time_index, red
             bl = ap + (polarization, )
             data_real[ap] = tf.convert_to_tensor(uvdata.get_data(bl)[time_index].real / scale_factor, dtype=dtype)
             data_imag[ap] = tf.convert_to_tensor(uvdata.get_data(bl)[time_index].imag / scale_factor, dtype=dtype)
-            wgts[ap] = tf.convert_to_tensor(~uvdata.get_flags(bl)[time_index] * uvdata.get_nsamples(bl)[time_index] / wgts_scale_factor)
+            wgts[ap] = tf.convert_to_tensor(~uvdata.get_flags(bl)[time_index] * uvdata.get_nsamples(bl)[time_index] / wgts_scale_factor, dtype=dtype)
     return data_real, data_imag, wgts
 
 
