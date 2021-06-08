@@ -254,14 +254,6 @@ def yield_data_model_per_baseline_dictionary(i, j, gains_real, gains_imag, ants_
     return uncal_model_real, uncal_model_imag
 
 
-# tf.function decorator -> will pre-optimize computation in graph mode.
-# lets us side-step hard-to-read and sometimes wasteful purely
-# parallelpiped tensor computations. This leads to a x4 speedup
-# in processing the data in test_calibrate_and_model_dpss
-# on an i5 CPU macbook over pure python.
-# TODO: See how this scales with array size.
-# see https://www.tensorflow.org/guide/function.
-@tf.function
 def cal_loss_dictionary(gains_real, gains_imag, foreground_coeffs_real, foreground_coeffs_imag, data_real, data_imag, wgts, ants_map, foreground_range_map, components_map):
     """MSE loss-function for dictionary method of computing data model.
 
@@ -555,10 +547,21 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
                     fitting_info_t['fg_i'] = []
             echo(f'{datetime.datetime.now()} Building Computational Graph...\n', verbose=(verbose and time_index == 0 and polnum == 0))
             # evaluate loss once to build graph.
-            loss_i = cal_loss_dictionary(gains_real=gain_r, gains_imag=gain_i, ants_map=ants_map,
-                                         foreground_coeffs_real=fg_r, foreground_coeffs_imag=fg_i,
-                                         data_real=data_r, data_imag=data_i, wgts=wgts, foreground_range_map=foreground_range_map,
-                                         components_map=model_components_map).numpy()
+
+            # tf.function decorator -> will pre-optimize computation in graph mode.
+            # lets us side-step hard-to-read and sometimes wasteful purely
+            # parallelpiped tensor computations. This leads to a x4 speedup
+            # in processing the data in test_calibrate_and_model_dpss
+            # on an i5 CPU macbook over pure python.
+            # TODO: See how this scales with array size.
+            # see https://www.tensorflow.org/guide/function.
+            @tf.function
+            def cal_loss():
+                return cal_loss_dictionary(gains_real=gain_r, gains_imag=gain_i, ants_map=ants_map,
+                                           foreground_coeffs_real=fg_r, foreground_coeffs_imag=fg_i,
+                                           data_real=data_r, data_imag=data_i, wgts=wgts, foreground_range_map=foreground_range_map,
+                                           components_map=model_components_map)
+            cal_loss_i = cal_loss().numpy()
             echo(f'{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss_i:.2e}...\n', verbose=verbose)
             # perform optimization loop.
             if freeze_model:
@@ -572,10 +575,7 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
             min_loss = 9e99
             for step in tqdm(range(maxsteps)):
                 with tf.GradientTape() as tape:
-                    loss = cal_loss_dictionary(gains_real=gain_r, gains_imag=gain_i, ants_map=ants_map,
-                                                 foreground_coeffs_real=fg_r, foreground_coeffs_imag=fg_i,
-                                                 data_real=data_r, data_imag=data_i, wgts=wgts, foreground_range_map=foreground_range_map,
-                                                 components_map=model_components_map)
+                    loss = cal_loss()
                 grads = tape.gradient(loss, vars)
                 opt.apply_gradients(zip(grads, vars))
                 fitting_info_t['loss_history'].append(loss.numpy())
