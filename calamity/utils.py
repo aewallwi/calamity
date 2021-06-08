@@ -177,7 +177,7 @@ def yield_dpss_model_components(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, in
     return dpss_model_components
 
 
-def apply_gains(uvdata, gains):
+def apply_gains(uvdata, gains, inverse=False):
     """apply gains to a uvdata object.
 
     Parameters
@@ -186,7 +186,8 @@ def apply_gains(uvdata, gains):
         UVData for data to have gains applied.
     gains: UVCal object.
         UVCal object containing gains to be applied.
-
+    inverse: bool, optional
+        Multiply gains instead of dividing.
     Returns
     -------
     calibrated: UVData object.
@@ -194,8 +195,11 @@ def apply_gains(uvdata, gains):
     """
     calibrated = copy.deepcopy(uvdata)
     for ap in calibrated.get_antpairs():
-        for pnum, pol in enumerate(sky_model.get_pols()):
+        for pnum, pol in enumerate(uvdata.get_pols()):
             dinds = calibrated.antpair2ind(ap)
-            calibrated.data_array[dinds, 0, :, pnum] = calibrated.data_array[dinds, 0, :, pnum] / (gains.get_gains(ap[0], 'J' + pol) * np.conj(gains.get_gains(ap[1], 'J' + pol))).T
+            if not inverse:
+                calibrated.data_array[dinds, 0, :, pnum] = calibrated.data_array[dinds, 0, :, pnum] / (gains.get_gains(ap[0], 'J' + pol) * np.conj(gains.get_gains(ap[1], 'J' + pol))).T
+            else:
+                calibrated.data_array[dinds, 0, :, pnum] = calibrated.data_array[dinds, 0, :, pnum] * (gains.get_gains(ap[0], 'J' + pol) * np.conj(gains.get_gains(ap[1], 'J' + pol))).T
             calibrated.flag_array[dinds, 0, :, pnum] = calibrated.flag_array[dinds, 0, :, pnum] | (gains.get_flags(ap[0], 'J' + pol) | gains.get_flags(ap[1], 'J' + pol)).T
     return calibrated
