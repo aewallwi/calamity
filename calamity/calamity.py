@@ -13,6 +13,44 @@ OPTIMIZERS = {'Adadelta': tf.optimizers.Adadelta, 'Adam': tf.optimizers.Adam, 'A
               'Ftrl': tf.optimizers.Ftrl, 'Nadam':tf.optimizers.Nadam, 'SGD': tf.optimizers.SGD, 'RMSprop': tf.optimizers.RMSprop}
 
 
+def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, uvdata_flags=None):
+    """Remove arbitrary phase and amplitude from deconvolved model and gains.
+
+    Parameters
+    ----------
+    uvdata_reference_model: UVData object
+        Reference model for "true" visibilities.
+    uvdata_deconv: UVData object
+        "Deconvolved" data solved for in self-cal loop.
+    gains: UVCal object
+        Gains solved for in self-cal loop.
+    polarization: str
+        Polarization string to compute phase and amplitude correction for.
+    uvdata_flags: optional
+        UVData object storing flags.
+        Default is None -> use flags from uvdata_reference_model.
+    Returns
+    -------
+    N/A: Modifies uvdata_deconv and gains in-place.
+    """
+    # compute and multiply out scale-factor accounting for overall amplitude and phase degeneracy.
+    polnum_data = np.where(uvdata_deconv.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation))[0][0]
+
+    if uvdata_flags is None:
+        uvdata_flags = uvdata_reference_model
+
+    selection = ~uvdata_flags.flag_array[:, :, :, polnum_data]
+
+    scale_factor_phase = np.angle(np.mean(uvdata_reference_model.data_array[:, :, :, polnum_data][selection] / uvdata_deconv.data_array[:, :, :, polnum_data][selection]))
+    scale_factor_abs = np.sqrt(np.mean(np.abs(uvdata_reference_model.data_array[:, :, :, polnum_data][selection] / uvdata_deconv.data_array[:, :, :, polnum_data][selection]) ** 2.))
+    scale_factor = scale_factor_abs * np.exp(1j * scale_factor_phase)
+    uvdata_deconv.data_array[:, :, :, polnum_data] *= scale_factor
+
+    polnum_gains = np.where(gains.jones_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation))[0][0]
+    gains.gain_array[:, :, :, :, polnum_data] *= (scale_factor) ** -.5
+
+
+
 def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
     """Helper function to extract gains into fitting tensors.
 
@@ -405,8 +443,9 @@ def tensorize_foreground_coeffs(uvdata, modeling_component_dict, red_grps, time_
 
 def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeling_components, gains=None, freeze_model=False,
                                                        optimizer='Adamax', tol=1e-14, maxsteps=10000, include_autos=False,
-                                                       verbose=False, sky_model=None, dtype=np.float32,
-                                                       record_var_history=False, use_redundancy=False, notebook_progressbar=False,
+                                                       verbose=False, sky_model=None, dtype=np.float32, use_min=False,
+                                                       record_var_history=False, record_var_history_interval=1,
+                                                       use_redundancy=False, notebook_progressbar=False,
                                                        **opt_kwargs):
     """Perform simultaneous calibration and fitting of foregrounds --per baseline--.
 
@@ -457,9 +496,15 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
         the float precision to be used in tensorflow gradient descent.
         runtime scales roughly inversely linear with precision.
         default is np.float32
+    use_min: bool, optional
+        If True, use the set of parameters that determine minimum as the ML params
+        If False, use the last set of parameters visited by the optimization loop.
     record_var_history: bool, optional
         keep detailed record of optimization history of variables.
         default is False.
+    record_var_history_interval: int optional
+        store var history in detailed record every record_var_history_interval steps.
+        default is 1.
     use_redundancy: bool, optional
         if true, solve for one set of foreground coefficients per redundant baseline group
         instead of per baseline.
@@ -577,13 +622,13 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
                 grads = tape.gradient(loss, vars)
                 opt.apply_gradients(zip(grads, vars))
                 fitting_info_t['loss_history'].append(loss.numpy())
-                if record_var_history:
+                if record_var_history and step % record_var_history_interval == 0:
                     fitting_info_t['g_r'].append(gain_r.numpy())
                     fitting_info_t['g_i'].append(gain_i.numpy())
                     if not freeze_model:
                         fitting_info_t['fg_r'].append(fg_r.numpy())
                         fitting_info_t['fg_i'].append(fg_i.numpy())
-                if fitting_info_t['loss_history'][-1] < min_loss:
+                if use_min and fitting_info_t['loss_history'][-1] < min_loss:
                     # store the g_r, g_i, fg_r, fg_i values that minimize loss
                     # in case of overshoot.
                     min_loss = fitting_info_t['loss_history'][-1]
@@ -598,6 +643,19 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
 
                 if step >= 1 and np.abs(fitting_info_t['loss_history'][-1] - fitting_info_t['loss_history'][-2]) < tol:
                     break
+            # if we dont use use_min, then the last
+            # visited set of parameters will be used
+            # to set the ML params.
+            if not use_min:
+                min_loss = fitting_info_t['loss_history'][-1]
+                g_r_ml = gain_r.value()
+                g_i_ml = gain_i.value()
+                if not freeze_model:
+                    fg_r_ml = fg_r.value()
+                    fg_i_ml = fg_i.value()
+                else:
+                    fg_r_ml = fg_r
+                    fg_i_ml = fg_i
             # insert model values.
             echo(f'{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n', verbose=verbose)
             insert_model_into_uvdata_dictionary(uvdata=model, time_index=time_index, polarization=pol, model_components_map=model_components_map,
@@ -606,12 +664,8 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
 
             fitting_info_p[time_index] = fitting_info_t
         fitting_info[polnum] = fitting_info_p
-        # compute and multiply out scale-factor accounting for overall amplitude and phase degeneracy.
-        scale_factor_phase = np.angle(np.mean(sky_model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]] / model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]]))
-        scale_factor_abs = np.sqrt(np.mean(np.abs(sky_model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]] / model.data_array[:, :, :, polnum][~uvdata.flag_array[:, :, :, polnum]]) ** 2.))
-        scale_factor = scale_factor_abs * np.exp(1j * scale_factor_phase)
-        model.data_array[:, :, :, polnum] *= scale_factor
-        gains.gain_array[:, :, :, :, polnum] *= (scale_factor) ** -.5
+        renormalize(uvdata_reference_model=sky_model, uvdata_deconv=model, gains=gains,
+                    polarization=pol, uvdata_flags=uvdata)
 
     model_with_gains = utils.apply_gains(model, gains, inverse=True)
     resid.data_array -= model_with_gains.data_array
