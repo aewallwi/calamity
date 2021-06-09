@@ -168,7 +168,7 @@ def insert_model_into_uvdata_dictionary(uvdata, time_index, polarization, foregr
         uvdata.data_array[dinds, 0, :, polnum] = model
 
 
-def insert_gains_into_uvcal_dictionary(uvcal, time_index, polarization, gains_real, gains_imag, ants_map):
+def insert_gains_into_uvcal_dictionary(uvcal, time_index, polarization, gains_real, gains_imag):
     """Insert tensorized gains back into uvcal object
 
     Parameters
@@ -185,16 +185,14 @@ def insert_gains_into_uvcal_dictionary(uvcal, time_index, polarization, gains_re
     gains_imag: dict with int keys and tf.Tensor object values
         dictionary mapping j antenna numbers to Nfreq 1d tf.Tensor object
         representing the imag component of the complex gain for antenna j.
-    ants_map: dict mapping integer keys to integer values.
-        dictionary mapping antenna number to antenna index in gain array to antenna number.
 
     Returns
     -------
     N/A: Modifies uvcal inplace.
     """
     polnum = np.where(uvcal.jones_array == uvutils.polstr2num(polarization, x_orientation=uvcal.x_orientation))[0][0]
-    for ant in ants_map:
-        uvcal.gain_array[ants_map[ant], 0, :, time_index, polnum] == gains_real[ants_map[ant]].numpy() + 1j * gains_imag[ants_map[ant]].numpy()
+    for ant_index in range(uvcal.Nants_data)
+        uvcal.gain_array[ant_index, 0, :, time_index, polnum] == gains_real[ant_index].numpy() + 1j * gains_imag[ant_index].numpy()
 
 
 # get the calibrated model
@@ -604,7 +602,7 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
             echo(f'{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n', verbose=verbose)
             insert_model_into_uvdata_dictionary(uvdata=model, time_index=time_index, polarization=pol, model_components_map=model_components_map,
                                                 foreground_coeffs_real=fg_r_ml, foreground_coeffs_imag=fg_i_ml, scale_factor=rmsdata, foreground_range_map=foreground_range_map)
-            insert_gains_into_uvcal_dictionary(uvcal=gains, time_index=time_index, polarization=pol, gains_real=gain_r, gains_imag=gain_i, ants_map=ants_map)
+            insert_gains_into_uvcal_dictionary(uvcal=gains, time_index=time_index, polarization=pol, gains_real=gain_r, gains_imag=gain_i)
 
             fitting_info_p[time_index] = fitting_info_t
         fitting_info[polnum] = fitting_info_p
