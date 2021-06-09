@@ -664,8 +664,9 @@ def calibrate_and_model_per_baseline_dictionary_method(uvdata, foreground_modeli
 
             fitting_info_p[time_index] = fitting_info_t
         fitting_info[polnum] = fitting_info_p
-        renormalize(uvdata_reference_model=sky_model, uvdata_deconv=model, gains=gains,
-                    polarization=pol, uvdata_flags=uvdata)
+        if not freeze_model:
+            renormalize(uvdata_reference_model=sky_model, uvdata_deconv=model, gains=gains,
+                        polarization=pol, uvdata_flags=uvdata)
 
     model_with_gains = utils.apply_gains(model, gains, inverse=True)
     resid.data_array -= model_with_gains.data_array
