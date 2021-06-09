@@ -192,7 +192,7 @@ def insert_gains_into_uvcal_dictionary(uvcal, time_index, polarization, gains_re
     """
     polnum = np.where(uvcal.jones_array == uvutils.polstr2num(polarization, x_orientation=uvcal.x_orientation))[0][0]
     for ant_index in range(uvcal.Nants_data):
-        uvcal.gain_array[ant_index, 0, :, time_index, polnum] == gains_real[ant_index].numpy() + 1j * gains_imag[ant_index].numpy()
+        uvcal.gain_array[ant_index, 0, :, time_index, polnum] = gains_real[ant_index].numpy() + 1j * gains_imag[ant_index].numpy()
 
 
 # get the calibrated model
