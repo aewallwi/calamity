@@ -21,8 +21,8 @@ def gains(sky_model):
 
 @pytest.fixture
 def gains_randomized(gains):
-    gains.gain_array += 1e-1 * np.random.randn(*gains.gain_array.shape) + 1e-1j * np.random.randn(*gains.gain_array.shape)
-
+    gains.gain_array += 1e-2 * np.random.randn(*gains.gain_array.shape) + 1e-2j * np.random.randn(*gains.gain_array.shape)
+    return gains
 
 @pytest.fixture
 def gains_antscale(gains):
@@ -34,7 +34,7 @@ def gains_antscale(gains):
 def gains_antscale_randomized(gains_randomized):
     for i, antnum in enumerate(gains_randomized.ant_array):
         gains_randomized.gain_array[i] *= (antnum + 1.)
-    return gains
+    return gains_randomized
 
 
 @pytest.fixture
@@ -109,8 +109,6 @@ def test_yield_foreground_model_and_foreground_coeffs(dpss_vectors, redundant_gr
 
         assert np.allclose(model, data, rtol=0., atol=1e-5 * rmsdata)
 
-#def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky_model):
-
 
 def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky_model_projected):
     foreground_range_map, component_tensor_map = calamity.tensorize_per_baseline_model_components_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
@@ -124,22 +122,62 @@ def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky
     assert np.allclose(inserted_model.data_array, sky_model_projected.data_array)
 
 
+def test_tensorize_per_baseline_data_dictionary(sky_model_projected, redundant_groups):
+    for tnum in range(sky_model_projected.Ntimes):
+        data_real, data_imag, wgts = calamity.tensorize_per_baseline_data_dictionary(sky_model_projected, 'xx', tnum, redundant_groups, dtype=np.float64)
+        for red_grp in redundant_groups:
+            for ap in red_grp:
+                data = sky_model_projected.get_data(ap + ('xx',))[tnum]
+                assert np.allclose(data, data_real[ap].numpy() + 1j * data_imag[ap].numpy())
+                assert np.allclose(wgts[ap], 1.0)
+
+
+def test_yield_data_model_per_baseline_dictionary(sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized):
+    calibrated = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
+    ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
+    for tnum in range(sky_model_projected.Ntimes):
+        gains_real, gains_imag = calamity.tensorize_gains(gains_antscale_randomized, 'xx', tnum, dtype=np.float64)
+        foreground_range_map, component_tensor_map = calamity.tensorize_per_baseline_model_components_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
+        foreground_coeffs_real, foreground_coeffs_imag = calamity.tensorize_foreground_coeffs(sky_model_projected, component_tensor_map, redundant_groups, time_index=tnum,
+                                                                                                          polarization='xx', dtype=np.float64)
+        data_real, data_imag, wgts = calamity.tensorize_per_baseline_data_dictionary(calibrated, 'xx', tnum, redundant_groups, dtype=np.float64)
+        for red_grp in redundant_groups:
+            for ap in red_grp:
+                model_r, model_i = calamity.yield_data_model_per_baseline_dictionary(ap[0], ap[1], gains_real, gains_imag, ants_map, foreground_coeffs_real, foreground_coeffs_imag, foreground_range_map, component_tensor_map)
+                assert np.allclose(model_r.numpy(), data_real[ap].numpy())
+                assert np.allclose(model_i.numpy(), data_imag[ap].numpy())
+
+
+
+def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized):
+    calibrated = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
+    ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
+    for tnum in range(sky_model_projected.Ntimes):
+        gains_real, gains_imag = calamity.tensorize_gains(gains_antscale_randomized, 'xx', tnum, dtype=np.float64)
+        foreground_range_map, component_tensor_map = calamity.tensorize_per_baseline_model_components_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
+        foreground_coeffs_real, foreground_coeffs_imag = calamity.tensorize_foreground_coeffs(sky_model_projected, component_tensor_map, redundant_groups, time_index=tnum,
+                                                                                                          polarization='xx', dtype=np.float64)
+        data_real, data_imag, wgts = calamity.tensorize_per_baseline_data_dictionary(calibrated, 'xx', tnum, redundant_groups, dtype=np.float64)
+
+        cal_loss = calamity.cal_loss_dictionary(gains_real, gains_imag, foreground_coeffs_real, foreground_coeffs_imag, data_real, data_imag, wgts, ants_map, foreground_range_map, component_tensor_map).numpy()
+        assert np.isclose(cal_loss, 0.)
+
 def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized):
     for use_redundancy in [True, False]:
         # check that resid is much smaller then model and original data.
         model, resid, filtered, gains, fitting_info = calamity.calibrate_and_model_dpss(min_dly=2.0/.3, offset=2. / .3, uvdata=uvdata, gains=gains_randomized, verbose=True,
-                                                                                        use_redundancy=use_redundancy, sky_model=sky_model_projected, maxsteps=300)
+                                                                                        use_redundancy=use_redundancy, sky_model=sky_model_projected, maxsteps=3000)
         assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.))
         assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.))
         assert len(fitting_info) == 1
         assert len(fitting_info[0]) == 1
 
-        # test that calibrating with a perfect sky model and only optimizing gains yields gains that are nearly unity.
+        # test that calibrating with a perfect sky model and only optimizing gains yields nearly perfect solutions for the gains.
         model, resid, filtered, gains, fitting_info = calamity.calibrate_and_model_dpss(min_dly=2.0/.3, offset=2. / .3, uvdata=sky_model_projected, gains=gains_randomized, verbose=True,
                                                                                         use_redundancy=use_redundancy, sky_model=sky_model_projected,
-                                                                                        freeze_model=True, maxsteps=300)
+                                                                                        freeze_model=True, maxsteps=3000)
         assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.))
         assert np.allclose(model.data_array, sky_model_projected.data_array, atol=1e-5 * np.mean(np.abs(model.data_array) ** 2.) ** .5)
-        assert np.allclose(gains.gain_array, 1., rtol=0., atol=1e-4)
+        assert np.allclose(gains.gain_array, gains_randomized.gain_array, rtol=0., atol=1e-4)
         assert len(fitting_info) == 1
         assert len(fitting_info[0]) == 1
