@@ -602,6 +602,113 @@ def tensorize_foreground_coeffs(
     return foreground_coefficients_real, foreground_coefficients_imag
 
 
+def calibrate_and_model_per_baseline_sparse_method(
+    uvdata,
+    foreground_modeling_components,
+    gains=None,
+    freeze_model=False,
+    optimizer="Adamax",
+    tol=1e-14,
+    maxsteps=10000
+    include_autos=False,
+    verbose=False,
+    sky_model=None,
+    dtype=np.float32,
+    use_min=False,
+    record_var_history=False,
+    record_var_history_interval=1,
+    use_redundancy=False,
+    notebook_progressbar=False,
+    **opt_kwargs,
+):
+"""Perform simultaneous calibration and foreground fitting using sparse tensors.
+
+This method should be used in place of calibrate_and_model_per_baseline_dictionary_method
+when using GPUs while the latter tends to perform better on CPUs.
+
+Parameters
+----------
+uvdata: UVData object
+    uvdata objet of data to be calibrated.
+foreground_modeling_components: dictionary
+    dictionary containing Nfreq x Nbasis design matrices
+    describing the basis vectors being used to model each baseline with keys corresponding
+    antenna pairs.
+gains: UVCal object
+    UVCal with initial gain estimates.
+    There many smart ways to obtain initial gain estimates
+    but this is beyond the scope of calamity (for example, firstcal, logcal, sky-based cal).
+    Users can determine initial gains with their favorite established cal algorithm.
+    default is None -> start with unity gains.
+    WARNING: At the present, the flags in gains are not propagated/used! Make sure flags in uvdata object!
+freeze_model: bool, optional
+    Only optimize loss function wrt gain variables. This is effectively traditional model-based calibration
+    with sky_model as the model (but projected onto the foreground basis vectors).
+    default is False.
+optimizer: string
+    Name of optimizer. See OPTIMIZERS dictionary which contains optimizers described in
+    https://www.tensorflow.org/api_docs/python/tf/keras/optimizers
+    default is 'Adamax'
+tol: float, optional
+    halting condition for optimizer loop. Stop loop when the change in the cost function falls
+    below tol.
+    default is 1e-14
+maxsteps: int, optional
+    maximum number of opt.minimize calls before halting.
+    default is 10000
+include_autos: bool, optional
+    include autocorrelations in fitting.
+    default is False.
+verbose: bool, optional
+    generate lots of text.
+    default is False.
+sky_model: UVData object, optional
+    a sky-model to use for initial estimates of foreground coefficients and
+    to set overall flux scale and phases.
+    Note that this model is not used to obtain initial gain estimates.
+    These must be provided through the gains argument.
+dtype: numpy dtype, optional
+    the float precision to be used in tensorflow gradient descent.
+    runtime scales roughly inversely linear with precision.
+    default is np.float32
+use_min: bool, optional
+    If True, use the set of parameters that determine minimum as the ML params
+    If False, use the last set of parameters visited by the optimization loop.
+record_var_history: bool, optional
+    keep detailed record of optimization history of variables.
+    default is False.
+record_var_history_interval: int optional
+    store var history in detailed record every record_var_history_interval steps.
+    default is 1.
+use_redundancy: bool, optional
+    if true, solve for one set of foreground coefficients per redundant baseline group
+    instead of per baseline.
+notebook_progressbar: bool, optional
+    use progress bar optimized for notebook output.
+    default is False.
+
+Returns
+-------
+model: UVData object
+    uvdata object containing model of the foregrounds
+resid: UVData object
+    uvdata object containing resids which are the data minus
+    the model with gains multiplied and then with the gains divided out.
+gains: UVCal object
+    uvcal object containing estimates of the gain solutions. These solutions
+    are not referenced to any sky model and are likely orders of
+fitting_info:
+    dictionary containing fit history with fields:
+    'loss_history': list of values of the loss function in each minimization iteration.
+    if record_var_history is True:
+        each of the following fields is included which points to an Nstep x Nvar array of values
+        'fg_r': real part of foreground coefficients
+        'fg_i': imag part of foreground coefficients
+        'g_r': real part of gains.
+        'g_i': imag part of gains
+"""
+return
+
 def calibrate_and_model_per_baseline_dictionary_method(
     uvdata,
     foreground_modeling_components,
@@ -621,9 +728,11 @@ def calibrate_and_model_per_baseline_dictionary_method(
     notebook_progressbar=False,
     **opt_kwargs,
 ):
-    """Perform simultaneous calibration and fitting of foregrounds --per baseline--.
+    """Perform simultaneous calibration and fitting of foregrounds using method that loops over baselines.
 
     This approach gives up on trying to invert the wedge but can be used on practically any array.
+    Use this in place of calibrate_and_model_per_baseline_sparse_method when working on CPUs but
+    use the latter with GPUs.
 
     Parameters
     ----------
