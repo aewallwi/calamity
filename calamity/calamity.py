@@ -274,32 +274,29 @@ def tensorize_per_baseline_model_comps_dictionary(
     return fg_range_map, model_component_tensor_map
 
 
-def yield_fg_model_tensor_sparse(fg_comps, fg_r, fg_i, nants, nfreqs, sparse_model=True):
-    if sparse_model:
-        vr = tf.reshape(
-            tf.sparse.sparse_dense_matmul(fg_comps, fg_r), (nants, nants, nfreqs)
-        )
-        vi = tf.reshape(
-            tf.sparse.sparse_dense_matmul(fg_comps, fg_i), (nants, nants, nfreqs)
-        )
-    return v_r, v_i
+def yield_fg_model_sparse_tensor(fg_comps, fg_coeffs, nants, nfreqs):
+    model = tf.reshape(
+        tf.sparse.sparse_dense_matmul(fg_comps, fg_r), (nants, nants, nfreqs)
+    )
+    return model
 
 
-def yield_data_model_tensor_sparse(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs):
+def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs):
     grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
     gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
     grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
     gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
-    v_r, v_i = yield_fg_model_tensor_sparse(fg_r, fg_i, nants, nfreqs)
+    v_r = yield_fg_model_sparse_tensor(fg_r, nants, nfreqs)
+    v_i = yield_fg_model_sparse_tensor(fg_i, nants, nfreqs)
     model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
     model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
     return model_r, model_i
 
 
-def cal_loss_tensor(
+def cal_loss_sparse_tensor(
     data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs
 ):
-    model_r, model_i = yield_data_model_tensor_sparse(
+    model_r, model_i = yield_data_model_sparse_tensor(
         g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs
     )
     return tf.reduce_sum(
@@ -536,6 +533,61 @@ def yield_fg_model_per_baseline_dictionary_method(
     return fg_model_real, fg_model_imag
 
 
+def insert_model_into_uvdata_tensor(
+    uvdata,
+    time_index,
+    polarization,
+    ants_map,
+    red_grps,
+    model_r,
+    model_i,
+    scale_factor=1.0,
+):
+    """Insert fitted tensor values back into uvdata object for sparse tensor mode.
+
+    Parameters
+    ----------
+    uvdata: UVData object
+        uvdata object to insert model data into.
+    time_index: int
+        time index to insert model data at.
+    polarization: str
+        polarization to insert.
+    ants_map: dict mapping integers to integers
+        map between each antenna number to a unique index between 0 and Nants_data
+        (typically the index of each antenna in ants_map)
+    red_grps: list of lists of int 2-tuples
+        a list of lists of 2-tuples where all antenna pairs within each sublist
+        are redundant with eachother. Assumes that conjugates are correctly taken.
+    model_tensor_r: tf.Tensor object
+        an Nants_data x Nants_data x Nfreqs tf.Tensor object with real parts of data
+    model_tensor_i: tf.Tensor object
+        an Nants_data x Nants_data x Nfreqs tf.Tensor object with imag parts of model
+    scale_factor: float, optional
+        overall scaling factor to divide tensorized data by.
+        default is 1.0
+
+    Returns
+    -------
+    N/A: Modifies uvdata inplace.
+
+    """
+    antpairs_data = uvdata.get_antpairs()
+    polnum = np.where(uvdata.polarization_array == uvutils.polstr2num(polarization))[0][
+        0
+    ]
+    for red_grp in red_grps:
+        for ap in red_grp:
+            i, j = ants_map[ap[0]], ants_map[ap[1]]
+            if ap in antpairs_data:
+                dinds = uvdata.antpair2ind(ap)[time_index]
+                model = model_tensor_r[i, j].numpy() + 1j * model_tensor_i[i, j].numpy()
+            else:
+                dinds = uvdata.antpair2ind(ap[::-1])[time_index]
+                model = model_tensor_r[i, j].numpy() - 1j * model_tensor_i[i, j].numpy()
+            uvdata.data_array[dinds, 0, :, polnum] = model * scale_factor
+
+
 def insert_model_into_uvdata_dictionary(
     uvdata,
     time_index,
@@ -546,7 +598,7 @@ def insert_model_into_uvdata_dictionary(
     fg_coeffs_imag,
     scale_factor=1.0,
 ):
-    """Insert tensor values back into uvdata object.
+    """Insert tensor values back into uvdata object for dictionary mode.
 
     Parameters
     ----------
@@ -597,9 +649,7 @@ def insert_model_into_uvdata_dictionary(
         uvdata.data_array[dinds, 0, :, polnum] = model
 
 
-def insert_gains_into_uvcal_dictionary(
-    uvcal, time_index, polarization, gains_real, gains_imag
-):
+def insert_gains_into_uvcal(uvcal, time_index, polarization, gains_real, gains_imag):
     """Insert tensorized gains back into uvcal object
 
     Parameters
@@ -1097,58 +1147,105 @@ def calibrate_and_model_per_baseline_sparse_method(
                 f"{datetime.datetime.now()} Working on time {time_index + 1} of {uvdata.Ntimes}...\n",
                 verbose=verbose,
             )
-        echo(f"{datetime.datetime.now()} Tensorizing data...\n", verbose=verbose)
-        data_r, data_i, wgts = tensorize_data(
-            uvdata,
-            red_grps=red_grps,
-            ants_map=ants_map,
-            polarization=pol,
-            time_index=time_index,
-            data_scale_factor=rmsdata,
-            wgts_scale_factor=wgtsum,
-        )
-        echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
-        gain_r, gain_i = tensorize_gains(
-            gains, dtype=dtype, time_index=time_index, polarization=pol
-        )
-        # generate initial guess for foreground coefficients.
-        echo(
-            f"{datetime.datetime.now()} Tensorizing Foreground Coefficients...\n",
-            verbose=verbose,
-        )
-        fg_r, fg_i = tensorize_fg_coeffs(
-            uvdata=sky_model,
-            red_grps=red_grps,
-            model_component_dict=fg_model_comps,
-            dtype=dtype,
-            time_index=time_index,
-            polarization=pol,
-            scale_factor=rmsdata,
-        )
+            echo(f"{datetime.datetime.now()} Tensorizing data...\n", verbose=verbose)
+            data_r, data_i, wgts = tensorize_data(
+                uvdata,
+                red_grps=red_grps,
+                ants_map=ants_map,
+                polarization=pol,
+                time_index=time_index,
+                data_scale_factor=rmsdata,
+                wgts_scale_factor=wgtsum,
+            )
+            echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
+            gain_r, gain_i = tensorize_gains(
+                gains, dtype=dtype, time_index=time_index, polarization=pol
+            )
+            # generate initial guess for foreground coefficients.
+            echo(
+                f"{datetime.datetime.now()} Tensorizing Foreground Coefficients...\n",
+                verbose=verbose,
+            )
+            fg_r, fg_i = tensorize_fg_coeffs(
+                uvdata=sky_model,
+                red_grps=red_grps,
+                model_component_dict=fg_model_comps,
+                dtype=dtype,
+                time_index=time_index,
+                polarization=pol,
+                scale_factor=rmsdata,
+            )
 
-        cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_tensor(
-            data_r=data_r, gata_i=data_i, wgts=wgts, g_r=g_r, g_i=g_i,
-            fg_model_comps=fg_vec_tensor
+            cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_sparse_tensor(
+                data_r=data_r,
+                gata_i=data_i,
+                wgts=wgts,
+                g_r=g_r,
+                g_i=g_i,
+                fg_model_comps=fg_vec_tensor,
+            )
+            # derive optimal gains and foregrounds
+            (
+                gains_r,
+                gains_i,
+                fg_r,
+                fg_i,
+                fit_history_p[time_index],
+            ) = fit_gains_and_foregrounds(
+                g_r=gains_r,
+                g_i=gains_i,
+                fg_r=fg_r,
+                fg_i=fg_i,
+                loss_function=cal_loss,
+                record_var_history=record_var_history,
+                record_var_history_interval=record_var_history_interval,
+                optimizer=optimizer,
+                use_min=use_min,
+                freeze_model=freeze_model,
+                notebook_progressbar=notebook_progressbar,
+                verbose=verbose,
+                tol=tol,
+                **opt_kwargs,
+            )
+            # insert into model uvdata.
+            insert_model_into_uvdata_tensor(
+                uvdata=model,
+                time_index=time_index,
+                polarization=polarization,
+                ants_map=ants_map,
+                red_grps=red_grps,
+                model_r=yield_fg_model_sparse_tensor(
+                    fg_vec_tensor, fg_r, uvdata.Nants_data, uvdata.Nfreqs
+                ),
+                model_i=yield_fg_model_sparse_tensor(
+                    fg_vec_tensor, fg_i, uvdata.Nants_data, uvdata.Nfreqs
+                ),
+                scale_factor=rmsdata,
+            )
+            # insert gains into uvcal
+            insert_gains_into_uvcal(
+                uvcal=gains,
+                time_index=time_index,
+                polarization=pol,
+                gains_real=g_r,
+                gains_imag=g_i,
+            )
+        fit_history[polnum] = fit_history_p
+        if not freeze_model:
+            renormalize(
+                uvdata_reference_model=sky_model,
+                uvdata_deconv=model,
+                gains=gains,
+                polarization=pol,
+                uvdata_flags=uvdata,
+            )
+    model_with_gains = utils.apply_gains(model, gains, inverse=True)
+    resid.data_array -= model_with_gains.data_array
+    resid = utils.apply_gains(resid, gains)
+    filtered = copy.deepcopy(model)
+    filtered.data_array += resid.data_array
 
-        )
-        gains_r, gains_i, fg_r, fg_i, fit_history_t = fit_gains_and_foregrounds(
-            g_r=gains_r,
-            g_i=gains_i,
-            fg_r=fg_r,
-            fg_i=fg_i,
-            loss_function=cal_loss,
-            record_var_history=record_var_history,
-            record_var_history_interval=record_var_history_interval,
-            optimizer=optimizer,
-            use_min=use_min,
-            freeze_model=freeze_model,
-            notebook_progressbar=notebook_progressbar,
-            verbose=verbose,
-            tol=tol,
-            **opt_kwargs,
-        )
-
-    return
+    return model, resid, filtered, gains, fit_history
 
 
 def calibrate_and_model_per_baseline_dictionary_method(
@@ -1365,7 +1462,13 @@ def calibrate_and_model_per_baseline_dictionary_method(
                 components_map=model_comps_map,
             )
 
-            gains_r, gains_i, fg_r, fg_i, fit_history_t = fit_gains_and_foregrounds(
+            (
+                gains_r,
+                gains_i,
+                fg_r,
+                fg_i,
+                fit_history_p[time_index],
+            ) = fit_gains_and_foregrounds(
                 g_r=gains_r,
                 g_i=gains_i,
                 fg_r=fg_r,
@@ -1393,7 +1496,7 @@ def calibrate_and_model_per_baseline_dictionary_method(
                 scale_factor=rmsdata,
                 fg_range_map=fg_range_map,
             )
-            insert_gains_into_uvcal_dictionary(
+            insert_gains_into_uvcal(
                 uvcal=gains,
                 time_index=time_index,
                 polarization=pol,
@@ -1401,7 +1504,6 @@ def calibrate_and_model_per_baseline_dictionary_method(
                 gains_imag=gain_i,
             )
 
-            fit_history_p[time_index] = fit_history_t
         fit_history[polnum] = fit_history_p
         if not freeze_model:
             renormalize(
