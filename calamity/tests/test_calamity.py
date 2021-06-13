@@ -137,6 +137,7 @@ def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_grou
         redundant_groups,
         time_index=0,
         polarization="xx",
+        force2d=True,
         dtype=np.float64,
     )
     # now retrieve Nants x Nants x Nfreq complex visibility cube from representation.

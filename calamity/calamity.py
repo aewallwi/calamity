@@ -869,6 +869,7 @@ def tensorize_fg_coeffs(
     time_index,
     polarization,
     scale_factor=1.0,
+    force2d=False,
     dtype=np.float32,
 ):
     """Initialize foreground coefficient tensors from uvdata and modeling component dictionaries.
@@ -890,6 +891,10 @@ def tensorize_fg_coeffs(
     scale_factor: float, optional
         factor to scale data by.
         default is 1.
+    force2d: bool, optional
+        if True, add additional dummy dimension to make 2d
+        this is necessary for sparse matrix representation.
+        default is False.
     dtype: numpy.dtype
         data type to store tensors.
 
@@ -921,10 +926,13 @@ def tensorize_fg_coeffs(
             * ~uvdata.get_flags(bl)[time_index]
             @ model_component_dict[ap]
         )
-    fg_coeffs_re = np.asarray(fg_coeffs_re).reshape((len(fg_coeffs_re), 1)) / scale_factor
-    fg_coeffs_im = np.asarray(fg_coeffs_im).reshape((len(fg_coeffs_im), 1)) / scale_factor
-    fg_coeffs_re = tf.convert_to_tensor(fg_coeffs_re, dtype=dtype)
-    fg_coeffs_im = tf.convert_to_tensor(fg_coeffs_im, dtype=dtype)
+    fg_coeffs_re = np.asarray(fg_coeffs_re) / scale_factor
+    fg_coeffs_im = np.asarray(fg_coeffs_im) / scale_factor
+    if force2d:
+        fg_coeffs_re = fg_coeffs_re.reshape((len(fg_coeffs_re), 1))
+        fg_coeffs_im = fg_coeffs_im.reshape((len(fg_coeffs_im), 1))
+    fg_coeffs_re = tf.convert_to_tensor(fg_coeffs_re / scale_factor, dtype=dtype)
+    fg_coeffs_im = tf.convert_to_tensor(fg_coeffs_im / scale_factor, dtype=dtype)
 
     return fg_coeffs_re, fg_coeffs_im
 
