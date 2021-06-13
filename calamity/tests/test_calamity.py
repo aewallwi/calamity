@@ -107,12 +107,12 @@ def test_tensorize_gains(gains_antscale):
 def test_tensorize_pbl_model_comps_dictionary(sky_model_projected, dpss_vectors, redundant_groups):
     (
         fg_range_map,
-        component_tensor_map,
+        comp_tensor_map,
     ) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
     for grp in redundant_groups:
         for ap in grp:
             tdata = sky_model_projected.get_data(ap[0], ap[1], "xx").T
-            comps = component_tensor_map[ap].numpy()
+            comps = comp_tensor_map[ap].numpy()
             model = comps @ (tdata.T @ comps).T
             # check that dpss compoments accurately describe sky-model data to
             # the 1e-5 level.
@@ -143,10 +143,10 @@ def test_sparse_tensorize_pbl_fg_model_comps(sky_model_projected, dpss_vectors, 
         start_index = end_index
 
 
-def test_yield_fg_model_and_fg_coeffs(dpss_vectors, redundant_groups, sky_model_projected):
+def test_yield_fg_model_and_fg_coeffs_dictionary(dpss_vectors, redundant_groups, sky_model_projected):
     (
         fg_range_map,
-        _,
+        comp_tensor_map,
     ) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
     (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
         sky_model_projected,
@@ -164,7 +164,7 @@ def test_yield_fg_model_and_fg_coeffs(dpss_vectors, redundant_groups, sky_model_
             fg_coeffs_re,
             fg_coeffs_im,
             fg_range_map,
-            component_tensor_map,
+            comp_tensor_map,
         )
         model = model_r.numpy() + 1j * model_i.numpy()
         data = sky_model_projected.get_data(ap + ("xx",))
@@ -218,7 +218,9 @@ def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_grou
 
 
 def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky_model_projected):
-    (fg_range_map, _) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
+    (fg_range_map, comp_tensor_map) = calamity.tensorize_pbl_model_comps_dictionary(
+        redundant_groups, dpss_vectors, dtype=np.float64
+    )
     (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
         sky_model_projected,
         dpss_vectors,
@@ -237,7 +239,7 @@ def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky
         0,
         "xx",
         fg_range_map,
-        component_tensor_map,
+        comp_tensor_map,
         fg_coeffs_re,
         fg_coeffs_im,
     )
@@ -298,16 +300,30 @@ def test_tensorize_pbl_data_dictionary(sky_model_projected, redundant_groups):
                 assert np.allclose(wgts[ap], 1.0)
 
 
+def test_tensorize_data(sky_model_projected, redundant_groups, gains):
+    ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
+    for tnum in range(sky_model_projected.Ntimes):
+        data_re, data_im, wgts = calamity.tensorize_data(
+            sky_model_projected, redundant_groups, ants_map, "xx", 0, dtype=np.float64
+        )
+        for red_grp in redundant_groups:
+            for ap in red_grp:
+                i, j = ants_map[ap[0]], ants_map[ap[1]]
+                data = sky_model_projected.get_data(ap + ("xx",))[tnum]
+                assert np.allclose(data, data_re[i, j].numpy() + 1j * data_im[i, j].numpy())
+                assert np.allclose(wgts[i, j], 1.0)
+
+
 def test_yield_data_model_pbl_dictionary(
     sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized
 ):
-    calibrated = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
+    corrupted = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
     ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
     for tnum in range(sky_model_projected.Ntimes):
         gains_re, gains_im = calamity.tensorize_gains(gains_antscale_randomized, "xx", tnum, dtype=np.float64)
         (
             fg_range_map,
-            component_tensor_map,
+            comp_tensor_map,
         ) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
         (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
             sky_model_projected,
@@ -318,7 +334,7 @@ def test_yield_data_model_pbl_dictionary(
             dtype=np.float64,
         )
         data_re, data_im, wgts = calamity.tensorize_pbl_data_dictionary(
-            calibrated, "xx", tnum, redundant_groups, dtype=np.float64
+            corrupted, "xx", tnum, redundant_groups, dtype=np.float64
         )
         for red_grp in redundant_groups:
             for ap in red_grp:
@@ -331,21 +347,114 @@ def test_yield_data_model_pbl_dictionary(
                     fg_coeffs_re,
                     fg_coeffs_im,
                     fg_range_map,
-                    component_tensor_map,
+                    comp_tensor_map,
                 )
                 assert np.allclose(model_r.numpy(), data_re[ap].numpy())
                 assert np.allclose(model_i.numpy(), data_im[ap].numpy())
 
 
-def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized):
-    calibrated = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
+def test_yield_data_model_pbl_sparse_tensor(
+    sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized
+):
+    corrupted = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
     ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
+    fg_comp_tensor = calamity.sparse_tensorize_pbl_fg_model_comps(
+        red_grps=redundant_groups,
+        fg_model_comps=dpss_vectors,
+        ants_map=ants_map,
+        dtype=np.float64,
+    )
+    nants = corrupted.Nants_data
+    nfreqs = corrupted.Nfreqs
     for tnum in range(sky_model_projected.Ntimes):
         gains_re, gains_im = calamity.tensorize_gains(gains_antscale_randomized, "xx", tnum, dtype=np.float64)
-        (
-            fg_range_map,
-            component_tensor_map,
-        ) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
+        (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
+            sky_model_projected,
+            dpss_vectors,
+            redundant_groups,
+            time_index=tnum,
+            polarization="xx",
+            force2d=True,
+            dtype=np.float64,
+        )
+        data_re, data_im, wgts = calamity.tensorize_data(
+            corrupted, redundant_groups, ants_map, "xx", tnum, dtype=np.float64
+        )
+        model_r, model_i = calamity.yield_data_model_sparse_tensor(
+            gains_re,
+            gains_im,
+            fg_comp_tensor,
+            fg_coeffs_re,
+            fg_coeffs_im,
+            nants,
+            nfreqs,
+        )
+        for red_grp in redundant_groups:
+            for ap in red_grp:
+                i, j = ants_map[ap[0]], ants_map[ap[1]]
+                assert np.allclose(model_r[i, j].numpy(), data_re[ap].numpy())
+                assert np.allclose(model_i[i, j].numpy(), data_im[ap].numpy())
+
+
+def test_cal_loss_sparse_tensor(sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized):
+    corrupted = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
+    ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
+    fg_comp_tensor = calamity.sparse_tensorize_pbl_fg_model_comps(
+        red_grps=redundant_groups,
+        fg_model_comps=dpss_vectors,
+        ants_map=ants_map,
+        dtype=np.float64,
+    )
+    nants = corrupted.Nants_data
+    nfreqs = corrupted.Nfreqs
+    for tnum in range(sky_model_projected.Ntimes):
+        gains_re, gains_im = calamity.tensorize_gains(gains_antscale_randomized, "xx", tnum, dtype=np.float64)
+        (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
+            sky_model_projected,
+            dpss_vectors,
+            redundant_groups,
+            time_index=tnum,
+            polarization="xx",
+            force2d=True,
+            dtype=np.float64,
+        )
+        data_re, data_im, wgts = calamity.tensorize_data(
+            corrupted, redundant_groups, ants_map, "xx", tnum, dtype=np.float64
+        )
+        model_r, model_i = calamity.yield_data_model_sparse_tensor(
+            gains_re,
+            gains_im,
+            fg_comp_tensor,
+            fg_coeffs_re,
+            fg_coeffs_im,
+            nants,
+            nfreqs,
+        )
+        cal_loss = calamity.cal_loss_sparse_tensor(
+            data_re,
+            data_im,
+            wgts,
+            gains_re,
+            gains_im,
+            fg_comp_tensor,
+            fg_coeffs_re,
+            fg_coeffs_im,
+            nants,
+            nfreqs,
+        ).numpy()
+
+        assert np.isclose(cal_loss, 0.0)
+
+
+def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized):
+    corrupted = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
+    ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
+    (
+        fg_range_map,
+        comp_tensor_map,
+    ) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
+    for tnum in range(sky_model_projected.Ntimes):
+        gains_re, gains_im = calamity.tensorize_gains(gains_antscale_randomized, "xx", tnum, dtype=np.float64)
         (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
             sky_model_projected,
             dpss_vectors,
@@ -355,7 +464,7 @@ def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups
             dtype=np.float64,
         )
         data_re, data_im, wgts = calamity.tensorize_pbl_data_dictionary(
-            calibrated, "xx", tnum, redundant_groups, dtype=np.float64
+            corrupted, "xx", tnum, redundant_groups, dtype=np.float64
         )
 
         cal_loss = calamity.cal_loss_dictionary(
@@ -368,7 +477,7 @@ def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups
             wgts,
             ants_map,
             fg_range_map,
-            component_tensor_map,
+            comp_tensor_map,
         ).numpy()
         assert np.isclose(cal_loss, 0.0)
 

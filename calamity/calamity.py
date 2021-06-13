@@ -124,12 +124,12 @@ def tensorize_data(
     for red_grp in red_grps:
         for ap in red_grp:
             bl = ap + (polarization,)
-            data = (uvdata.get_data(bl) / data_scale_factor).astype(dtype)
+            data = uvdata.get_data(bl) / data_scale_factor
             iflags = (~uvdata.get_flags(bl)).astype(dtype)
             nsamples = (uvdata.get_nsamples(bl) / wgts_scale_factor).astype(dtype)
             i, j = ants_map[ap[0]], ants_map[ap[1]]
-            data_r[i, j] = data.real
-            data_i[i, j] = data.imag
+            data_r[i, j] = data.real.astype(dtype)
+            data_i[i, j] = data.imag.astype(dtype)
             wgts[i, j] = iflags * nsamples
     data_r = tf.convert_to_tensor(data_r, dtype=dtype)
     data_i = tf.convert_to_tensor(data_i, dtype=dtype)
@@ -241,10 +241,10 @@ def tensorize_pbl_model_comps_dictionary(red_grps, fg_model_comps, dtype=np.floa
     -------
     fg_range_map: dict with int 2-tuples as keys and int 2-tuples as values.
         dictionary mapping antenna pairs to index ranges of a foreground coefficient vector raveled by baseline and baseline eigenvector number.
-    model_component_tensor_map: diction with 2-tuples as keys an tf.Tensor objects as values.
+    model_comp_tensor_map: diction with 2-tuples as keys an tf.Tensor objects as values.
         dictionary mapping antenna pairs to
     """
-    model_component_tensor_map = {}
+    model_comp_tensor_map = {}
     fg_range_map = {}
     startind = 0
     for grpnum, red_grp in enumerate(red_grps):
@@ -253,9 +253,9 @@ def tensorize_pbl_model_comps_dictionary(red_grps, fg_model_comps, dtype=np.floa
         fg_range_map[red_grp[0]] = (startind, startind + ncomponents)
         startind += ncomponents
         for ap in red_grp:
-            model_component_tensor_map[ap] = tf.convert_to_tensor(fg_model_comps[ap], dtype=dtype)
+            model_comp_tensor_map[ap] = tf.convert_to_tensor(fg_model_comps[ap], dtype=dtype)
             fg_range_map[ap] = fg_range_map[red_grp[0]]
-    return fg_range_map, model_component_tensor_map
+    return fg_range_map, model_comp_tensor_map
 
 
 def yield_fg_pbl_model_sparse_tensor(fg_comps, fg_coeffs, nants, nfreqs):
@@ -268,8 +268,8 @@ def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs
     gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
     grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
     gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
-    vr = yield_fg_pbl_model_sparse_tensor(fg_r, nants, nfreqs)
-    vi = yield_fg_pbl_model_sparse_tensor(fg_i, nants, nfreqs)
+    vr = yield_fg_pbl_model_sparse_tensor(fg_comps, fg_r, nants, nfreqs)
+    vi = yield_fg_pbl_model_sparse_tensor(fg_comps, fg_i, nants, nfreqs)
     model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
     model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
     return model_r, model_i
