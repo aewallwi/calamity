@@ -20,9 +20,7 @@ OPTIMIZERS = {
 }
 
 
-def sparse_tensorize_per_baseline_fg_model_comps(
-    red_grps, fg_model_comps, ants_map, dtype=np.float32
-):
+def sparse_tensorize_per_baseline_fg_model_comps(red_grps, fg_model_comps, ants_map, dtype=np.float32):
     """Convert per-baseline model components into a sparse Ndata x Ncomponent tensor
 
     Parameters
@@ -68,7 +66,7 @@ def sparse_tensorize_per_baseline_fg_model_comps(
     sort_order = sorted(range(len(comp_inds)), key=comp_inds.__getitem__)
     comp_vals = [comp_vals[ind] for ind in sort_order]
     comp_inds = [comp_inds[ind] for ind in sort_order]
-    dense_shape = (int(nants_data ** 2. * nfreqs), fgvind)
+    dense_shape = (int(nants_data ** 2.0 * nfreqs), fgvind)
     sparse_fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
     return sparse_fg_model_mat
 
@@ -515,7 +513,7 @@ def yield_fg_model_per_baseline_dictionary_method(
     return fg_model_re, fg_model_im
 
 
-def insert_model_into_uvdata_tensor(
+def insert_model_into_uvdata_sparse_tensor(
     uvdata,
     time_index,
     polarization,
@@ -916,13 +914,11 @@ def tensorize_fg_coeffs(
         bl = ap + (polarization,)
         fg_coeffs_re.extend(
             uvdata.get_data(bl).real[time_index]
-
             * ~uvdata.get_flags(bl)[time_index]
             @ model_component_dict[ap]
         )
         fg_coeffs_im.extend(
             uvdata.get_data(bl).imag[time_index]
-            / scale_factor
             * ~uvdata.get_flags(bl)[time_index]
             @ model_component_dict[ap]
         )
@@ -931,8 +927,8 @@ def tensorize_fg_coeffs(
     if force2d:
         fg_coeffs_re = fg_coeffs_re.reshape((len(fg_coeffs_re), 1))
         fg_coeffs_im = fg_coeffs_im.reshape((len(fg_coeffs_im), 1))
-    fg_coeffs_re = tf.convert_to_tensor(fg_coeffs_re / scale_factor, dtype=dtype)
-    fg_coeffs_im = tf.convert_to_tensor(fg_coeffs_im / scale_factor, dtype=dtype)
+    fg_coeffs_re = tf.convert_to_tensor(fg_coeffs_re, dtype=dtype)
+    fg_coeffs_im = tf.convert_to_tensor(fg_coeffs_im, dtype=dtype)
 
     return fg_coeffs_re, fg_coeffs_im
 
@@ -1168,7 +1164,7 @@ def calibrate_and_model_per_baseline_sparse_method(
                 **opt_kwargs,
             )
             # insert into model uvdata.
-            insert_model_into_uvdata_tensor(
+            insert_model_into_uvdata_sparse_tensor(
                 uvdata=model,
                 time_index=time_index,
                 polarization=pol,
@@ -1429,6 +1425,7 @@ def calibrate_and_model_per_baseline_dictionary_method(
                 notebook_progressbar=notebook_progressbar,
                 verbose=verbose,
                 tol=tol,
+                maxsteps=maxsteps,
                 **opt_kwargs,
             )
 
