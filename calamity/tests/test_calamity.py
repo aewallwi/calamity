@@ -7,7 +7,7 @@ from .. import utils
 import os
 import numpy as np
 import copy
-
+import tensorflow as tf
 
 @pytest.fixture
 def sky_model():
@@ -101,6 +101,34 @@ def test_tensorize_gains(gains_antscale):
     for i, ant in enumerate(gains_antscale.ant_array):
         assert np.allclose(gains_r.numpy()[ant], ant + 1)
         assert np.allclose(gains_i.numpy()[ant], 0.0)
+
+
+def test_sparse_tensorize_per_baseline_fg_model_comps(sky_model_projected, dpss_vectors, redundant_groups, gains):
+    ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
+    fg_vec_tensor = calamity.sparse_tensorize_per_baseline_fg_model_comps(
+        red_grps=redundant_groups, fg_model_comps=dpss_vectors, ants_map=ants_map, dtype=np.float64,
+    )
+    # retrieve dense numpy array from sparse tensor.
+    # check whether values agree with original dpss vectors.
+    fg_vec_tensor = tf.sparse.to_dense(fg_vec_tensor).numpy()
+    # iterate through and select out nonzero elements and check that they are close to dpss_vectors
+    start_index = 0
+    for vnum, red_grp in enumerate(redundant_groups):
+        vdpss = dpss_vectors[red_grp[0]]
+        end_index = start_index + vdpss.shape[1]
+        for i, j in enumerate(range(start_index, end_index)):
+            vreduced = fg_vec_tensor[:, j]
+            vreduced = vreduced[np.abs(vreduced) > 0]
+        assert np.allclose(vreduced, vdpss[:, i])
+        start_index = end_index
+
+"""
+def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_groups, sky_model_projected, gains):
+    ants_map = {ant, i for i, ant in enumerage(gains.ant_array)}
+    fg_vec_tensor = calamity.sparse_tensorize_per_baseline_fg_model_comps(
+        red_grps=redundant_groups, fg_model_comps=dpss_vectors, ants_map=ants_map, dtype=np.float64
+    )
+"""
 
 
 def test_tensorize_per_baseline_model_comps_dictionary(sky_model_projected, dpss_vectors, redundant_groups):
