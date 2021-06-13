@@ -104,11 +104,11 @@ def test_tensorize_gains(gains_antscale):
         assert np.allclose(gains_i.numpy()[ant], 0.0)
 
 
-def test_tensorize_per_baseline_model_comps_dictionary(sky_model_projected, dpss_vectors, redundant_groups):
+def test_tensorize_pbl_model_comps_dictionary(sky_model_projected, dpss_vectors, redundant_groups):
     (
         fg_range_map,
         component_tensor_map,
-    ) = calamity.tensorize_per_baseline_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
+    ) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
     for grp in redundant_groups:
         for ap in grp:
             tdata = sky_model_projected.get_data(ap[0], ap[1], "xx").T
@@ -120,9 +120,9 @@ def test_tensorize_per_baseline_model_comps_dictionary(sky_model_projected, dpss
             assert np.allclose(model, tdata, rtol=0.0, atol=1e-5 * rmsdata)
 
 
-def test_sparse_tensorize_per_baseline_fg_model_comps(sky_model_projected, dpss_vectors, redundant_groups, gains):
+def test_sparse_tensorize_pbl_fg_model_comps(sky_model_projected, dpss_vectors, redundant_groups, gains):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor = calamity.sparse_tensorize_per_baseline_fg_model_comps(
+    fg_comp_tensor = calamity.sparse_tensorize_pbl_fg_model_comps(
         red_grps=redundant_groups,
         fg_model_comps=dpss_vectors,
         ants_map=ants_map,
@@ -147,7 +147,7 @@ def test_yield_fg_model_and_fg_coeffs(dpss_vectors, redundant_groups, sky_model_
     (
         fg_range_map,
         _,
-    ) = calamity.tensorize_per_baseline_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
+    ) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
     (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
         sky_model_projected,
         dpss_vectors,
@@ -158,7 +158,7 @@ def test_yield_fg_model_and_fg_coeffs(dpss_vectors, redundant_groups, sky_model_
     )
     # test that all model predictions are close to the underlying data they are derived from.
     for ap in dpss_vectors:
-        (model_r, model_i,) = calamity.yield_fg_model_per_baseline_dictionary_method(
+        (model_r, model_i,) = calamity.yield_fg_model_pbl_dictionary_method(
             ap[0],
             ap[1],
             fg_coeffs_re,
@@ -178,8 +178,11 @@ def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_grou
     # and then translate model back into visibility spectra and compare with original visibilties.
     # First, generate sparse matrix representation (sparse foreground components and coefficients).
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor = calamity.sparse_tensorize_per_baseline_fg_model_comps(
-        red_grps=redundant_groups, fg_model_comps=dpss_vectors, ants_map=ants_map, dtype=np.float64
+    fg_comp_tensor = calamity.sparse_tensorize_pbl_fg_model_comps(
+        red_grps=redundant_groups,
+        fg_model_comps=dpss_vectors,
+        ants_map=ants_map,
+        dtype=np.float64,
     )
     (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
         sky_model_projected,
@@ -191,11 +194,17 @@ def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_grou
         dtype=np.float64,
     )
     # now retrieve Nants x Nants x Nfreq complex visibility cube from representation.
-    model_r = calamity.yield_fg_model_sparse_tensor(
-        fg_comp_tensor, fg_coeffs_re, sky_model_projected.Nants_data, sky_model_projected.Nfreqs
+    model_r = calamity.yield_fg_pbl_model_sparse_tensor(
+        fg_comp_tensor,
+        fg_coeffs_re,
+        sky_model_projected.Nants_data,
+        sky_model_projected.Nfreqs,
     )
-    model_i = calamity.yield_fg_model_sparse_tensor(
-        fg_comp_tensor, fg_coeffs_im, sky_model_projected.Nants_data, sky_model_projected.Nfreqs
+    model_i = calamity.yield_fg_pbl_model_sparse_tensor(
+        fg_comp_tensor,
+        fg_coeffs_im,
+        sky_model_projected.Nants_data,
+        sky_model_projected.Nfreqs,
     )
     model = model_r.numpy() + 1j * model_i.numpy()
     # and check that the columns in that cube line up with data.
@@ -209,9 +218,7 @@ def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_grou
 
 
 def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky_model_projected):
-    (fg_range_map, _) = calamity.tensorize_per_baseline_model_comps_dictionary(
-        redundant_groups, dpss_vectors, dtype=np.float64
-    )
+    (fg_range_map, _) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
     (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
         sky_model_projected,
         dpss_vectors,
@@ -224,7 +231,7 @@ def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky
     inserted_model.data_array = np.random.randn(*inserted_model.data_array.shape) + 1j * np.random.randn(
         *inserted_model.data_array.shape
     )
-    # inserte tensors
+    # insert tensors
     calamity.insert_model_into_uvdata_dictionary(
         inserted_model,
         0,
@@ -238,10 +245,13 @@ def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky
     assert np.allclose(inserted_model.data_array, sky_model_projected.data_array)
 
 
-def test_insert_model_into_uvdata_sparse_tensor(redundant_groups, dpss_vectors, sky_model_projected, gains):
+def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_model_projected, gains):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor = calamity.sparse_tensorize_per_baseline_fg_model_comps(
-        red_grps=redundant_groups, fg_model_comps=dpss_vectors, ants_map=ants_map, dtype=np.float64
+    fg_comps_tensor = calamity.sparse_tensorize_pbl_fg_model_comps(
+        red_grps=redundant_groups,
+        fg_model_comps=dpss_vectors,
+        ants_map=ants_map,
+        dtype=np.float64,
     )
     (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
         sky_model_projected,
@@ -252,11 +262,33 @@ def test_insert_model_into_uvdata_sparse_tensor(redundant_groups, dpss_vectors, 
         force2d=True,
         dtype=np.float64,
     )
+    inserted_model = copy.deepcopy(sky_model_projected)
+    # set data array to be noise.
+    inserted_model.data_array = np.random.randn(*inserted_model.data_array.shape) + 1j * np.random.randn(
+        *inserted_model.data_array.shape
+    )
+    # get model tensor.
+    nants = sky_model_projected.Nants_data
+    nfreqs = sky_model_projected.Nfreqs
+    model_r = calamity.yield_fg_pbl_model_sparse_tensor(fg_comps_tensor, fg_coeffs_re, nants, nfreqs)
+    model_i = calamity.yield_fg_pbl_model_sparse_tensor(fg_comps_tensor, fg_coeffs_im, nants, nfreqs)
+    # insert tensors
+    calamity.insert_model_into_uvdata_tensor(
+        inserted_model,
+        0,
+        "xx",
+        ants_map,
+        redundant_groups,
+        model_r,
+        model_i,
+    )
+    # check that data arrays are equal
+    assert np.allclose(inserted_model.data_array, sky_model_projected.data_array)
 
 
-def test_tensorize_per_baseline_data_dictionary(sky_model_projected, redundant_groups):
+def test_tensorize_pbl_data_dictionary(sky_model_projected, redundant_groups):
     for tnum in range(sky_model_projected.Ntimes):
-        data_re, data_im, wgts = calamity.tensorize_per_baseline_data_dictionary(
+        data_re, data_im, wgts = calamity.tensorize_pbl_data_dictionary(
             sky_model_projected, "xx", tnum, redundant_groups, dtype=np.float64
         )
         for red_grp in redundant_groups:
@@ -266,7 +298,7 @@ def test_tensorize_per_baseline_data_dictionary(sky_model_projected, redundant_g
                 assert np.allclose(wgts[ap], 1.0)
 
 
-def test_yield_data_model_per_baseline_dictionary(
+def test_yield_data_model_pbl_dictionary(
     sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized
 ):
     calibrated = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
@@ -276,7 +308,7 @@ def test_yield_data_model_per_baseline_dictionary(
         (
             fg_range_map,
             component_tensor_map,
-        ) = calamity.tensorize_per_baseline_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
+        ) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
         (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
             sky_model_projected,
             dpss_vectors,
@@ -285,12 +317,12 @@ def test_yield_data_model_per_baseline_dictionary(
             polarization="xx",
             dtype=np.float64,
         )
-        data_re, data_im, wgts = calamity.tensorize_per_baseline_data_dictionary(
+        data_re, data_im, wgts = calamity.tensorize_pbl_data_dictionary(
             calibrated, "xx", tnum, redundant_groups, dtype=np.float64
         )
         for red_grp in redundant_groups:
             for ap in red_grp:
-                model_r, model_i = calamity.yield_data_model_per_baseline_dictionary(
+                model_r, model_i = calamity.yield_data_model_pbl_dictionary(
                     ap[0],
                     ap[1],
                     gains_re,
@@ -313,7 +345,7 @@ def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups
         (
             fg_range_map,
             component_tensor_map,
-        ) = calamity.tensorize_per_baseline_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
+        ) = calamity.tensorize_pbl_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
         (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
             sky_model_projected,
             dpss_vectors,
@@ -322,7 +354,7 @@ def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups
             polarization="xx",
             dtype=np.float64,
         )
-        data_re, data_im, wgts = calamity.tensorize_per_baseline_data_dictionary(
+        data_re, data_im, wgts = calamity.tensorize_pbl_data_dictionary(
             calibrated, "xx", tnum, redundant_groups, dtype=np.float64
         )
 

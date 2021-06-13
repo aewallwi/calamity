@@ -20,7 +20,7 @@ OPTIMIZERS = {
 }
 
 
-def sparse_tensorize_per_baseline_fg_model_comps(red_grps, fg_model_comps, ants_map, dtype=np.float32):
+def sparse_tensorize_pbl_fg_model_comps(red_grps, fg_model_comps, ants_map, dtype=np.float32):
     """Convert per-baseline model components into a sparse Ndata x Ncomponent tensor
 
     Parameters
@@ -224,7 +224,7 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
     return gains_re, gains_im
 
 
-def tensorize_per_baseline_model_comps_dictionary(red_grps, fg_model_comps, dtype=np.float32):
+def tensorize_pbl_model_comps_dictionary(red_grps, fg_model_comps, dtype=np.float32):
     """Helper function generating mappings for per-baseline foreground modeling.
 
     Generates mappings between antenna pairs and foreground basis vectors accounting for redundancies.
@@ -258,7 +258,7 @@ def tensorize_per_baseline_model_comps_dictionary(red_grps, fg_model_comps, dtyp
     return fg_range_map, model_component_tensor_map
 
 
-def yield_fg_model_sparse_tensor(fg_comps, fg_coeffs, nants, nfreqs):
+def yield_fg_pbl_model_sparse_tensor(fg_comps, fg_coeffs, nants, nfreqs):
     model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
     return model
 
@@ -268,8 +268,8 @@ def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs
     gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
     grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
     gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
-    vr = yield_fg_model_sparse_tensor(fg_r, nants, nfreqs)
-    vi = yield_fg_model_sparse_tensor(fg_i, nants, nfreqs)
+    vr = yield_fg_pbl_model_sparse_tensor(fg_r, nants, nfreqs)
+    vi = yield_fg_pbl_model_sparse_tensor(fg_i, nants, nfreqs)
     model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
     model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
     return model_r, model_i
@@ -457,7 +457,7 @@ def fit_gains_and_foregrounds(
     return g_r_opt, g_i_opt, fg_r_opt, fg_i_opt, fit_history
 
 
-def yield_fg_model_per_baseline_dictionary_method(
+def yield_fg_model_pbl_dictionary_method(
     i,
     j,
     fg_coeffs_re,
@@ -513,7 +513,7 @@ def yield_fg_model_per_baseline_dictionary_method(
     return fg_model_re, fg_model_im
 
 
-def insert_model_into_uvdata_sparse_tensor(
+def insert_model_into_uvdata_tensor(
     uvdata,
     time_index,
     polarization,
@@ -654,7 +654,7 @@ def insert_gains_into_uvcal(uvcal, time_index, polarization, gains_re, gains_im)
 
 
 # get the calibrated model
-def yield_data_model_per_baseline_dictionary(
+def yield_data_model_pbl_dictionary(
     i,
     j,
     gains_re,
@@ -711,7 +711,7 @@ def yield_data_model_per_baseline_dictionary(
         Nfreq 1d tensorflow tensor model of the imag part of the uncalibrated (i, j) correlation
         Real(V_{ij}^{true} \times g_i \times conj(g_j))
     """
-    (fg_model_re, fg_model_im,) = yield_fg_model_per_baseline_dictionary_method(
+    (fg_model_re, fg_model_im,) = yield_fg_model_pbl_dictionary_method(
         i,
         j,
         fg_coeffs_re=fg_coeffs_re,
@@ -778,7 +778,7 @@ def cal_loss_dictionary(
     """
     loss_total = 0.0
     for i, j in fg_range_map:
-        model_r, model_i = yield_data_model_per_baseline_dictionary(
+        model_r, model_i = yield_data_model_pbl_dictionary(
             i,
             j,
             gains_re=gains_re,
@@ -795,7 +795,7 @@ def cal_loss_dictionary(
     return loss_total
 
 
-def tensorize_per_baseline_data_dictionary(
+def tensorize_pbl_data_dictionary(
     uvdata,
     polarization,
     time_index,
@@ -913,14 +913,10 @@ def tensorize_fg_coeffs(
         ap = red_grp[0]
         bl = ap + (polarization,)
         fg_coeffs_re.extend(
-            uvdata.get_data(bl).real[time_index]
-            * ~uvdata.get_flags(bl)[time_index]
-            @ model_component_dict[ap]
+            uvdata.get_data(bl).real[time_index] * ~uvdata.get_flags(bl)[time_index] @ model_component_dict[ap]
         )
         fg_coeffs_im.extend(
-            uvdata.get_data(bl).imag[time_index]
-            * ~uvdata.get_flags(bl)[time_index]
-            @ model_component_dict[ap]
+            uvdata.get_data(bl).imag[time_index] * ~uvdata.get_flags(bl)[time_index] @ model_component_dict[ap]
         )
     fg_coeffs_re = np.asarray(fg_coeffs_re) / scale_factor
     fg_coeffs_im = np.asarray(fg_coeffs_im) / scale_factor
@@ -933,7 +929,7 @@ def tensorize_fg_coeffs(
     return fg_coeffs_re, fg_coeffs_im
 
 
-def calibrate_and_model_per_baseline_sparse_method(
+def calibrate_and_model_pbl_sparse_method(
     uvdata,
     fg_model_comps,
     gains=None,
@@ -954,7 +950,7 @@ def calibrate_and_model_per_baseline_sparse_method(
 ):
     """Perform simultaneous calibration and foreground fitting using sparse tensors.
 
-    This method should be used in place of calibrate_and_model_per_baseline_dictionary_method
+    This method should be used in place of calibrate_and_model_pbl_dictionary_method
     when using GPUs while the latter tends to perform better on CPUs.
 
     Parameters
@@ -1073,7 +1069,7 @@ def calibrate_and_model_per_baseline_sparse_method(
         f"{datetime.datetime.now()} Computing sparse foreground components matrix...\n",
         verbose=verbose,
     )
-    fg_comp_tensor = sparse_tensorize_per_baseline_fg_model_comps(
+    fg_comp_tensor = sparse_tensorize_pbl_fg_model_comps(
         red_grps=red_grps, fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype
     )
     echo(
@@ -1164,14 +1160,14 @@ def calibrate_and_model_per_baseline_sparse_method(
                 **opt_kwargs,
             )
             # insert into model uvdata.
-            insert_model_into_uvdata_sparse_tensor(
+            insert_model_into_uvdata_tensor(
                 uvdata=model,
                 time_index=time_index,
                 polarization=pol,
                 ants_map=ants_map,
                 red_grps=red_grps,
-                model_r=yield_fg_model_sparse_tensor(fg_comp_tensor, fg_r, uvdata.Nants_data, uvdata.Nfreqs),
-                model_i=yield_fg_model_sparse_tensor(fg_comp_tensor, fg_i, uvdata.Nants_data, uvdata.Nfreqs),
+                model_r=yield_fg_pbl_model_sparse_tensor(fg_comp_tensor, fg_r, uvdata.Nants_data, uvdata.Nfreqs),
+                model_i=yield_fg_pbl_model_sparse_tensor(fg_comp_tensor, fg_i, uvdata.Nants_data, uvdata.Nfreqs),
                 scale_factor=rmsdata,
             )
             # insert gains into uvcal
@@ -1200,7 +1196,7 @@ def calibrate_and_model_per_baseline_sparse_method(
     return model, resid, filtered, gains, fit_history
 
 
-def calibrate_and_model_per_baseline_dictionary_method(
+def calibrate_and_model_pbl_dictionary_method(
     uvdata,
     fg_model_comps,
     gains=None,
@@ -1222,7 +1218,7 @@ def calibrate_and_model_per_baseline_dictionary_method(
     """Perform simultaneous calibration and fitting of foregrounds using method that loops over baselines.
 
     This approach gives up on trying to invert the wedge but can be used on practically any array.
-    Use this in place of calibrate_and_model_per_baseline_sparse_method when working on CPUs but
+    Use this in place of calibrate_and_model_pbl_sparse_method when working on CPUs but
     use the latter with GPUs.
 
     Parameters
@@ -1342,7 +1338,7 @@ def calibrate_and_model_per_baseline_dictionary_method(
     (
         fg_range_map,
         model_comps_map,
-    ) = tensorize_per_baseline_model_comps_dictionary(red_grps, fg_model_comps, dtype=dtype)
+    ) = tensorize_pbl_model_comps_dictionary(red_grps, fg_model_comps, dtype=dtype)
     # index antenna numbers (in gain vectors).
     ants_map = {gains.antenna_numbers[i]: i for i in range(len(gains.antenna_numbers))}
     # We do fitting per time and per polarization and time.
@@ -1373,7 +1369,7 @@ def calibrate_and_model_per_baseline_dictionary_method(
             )
             # pull data for pol out of raveled uvdata object and into dicts of 1d tf.Tensor objects for processing..
             echo(f"{datetime.datetime.now()} Tensorizing Data...\n", verbose=verbose)
-            data_r, data_i, wgts = tensorize_per_baseline_data_dictionary(
+            data_r, data_i, wgts = tensorize_pbl_data_dictionary(
                 uvdata,
                 dtype=dtype,
                 time_index=time_index,
@@ -1501,8 +1497,8 @@ def calibrate_and_model_dpss(
         lots of text output
         default is False.
     fitting_kwargs: kwarg dict
-        additional kwargs for calibrate_and_model_per_baseline.
-        see docstring of calibrate_and_model_per_baseline.
+        additional kwargs for calibrate_and_model_pbl.
+        see docstring of calibrate_and_model_pbl.
 
     Returns
     -------
@@ -1531,7 +1527,7 @@ def calibrate_and_model_dpss(
         offset=offset,
         include_autos=include_autos,
     )
-    (model, resid, filtered, gains, fitted_info,) = calibrate_and_model_per_baseline_dictionary_method(
+    (model, resid, filtered, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
         uvdata=uvdata,
         fg_model_comps=dpss_model_comps,
         include_autos=include_autos,
@@ -1541,7 +1537,7 @@ def calibrate_and_model_dpss(
     return model, resid, filtered, gains, fitted_info
 
 
-def read_calibrate_and_model_per_baseline(
+def read_calibrate_and_model_pbl(
     infilename,
     incalfilename=None,
     refmodelname=None,
@@ -1584,7 +1580,7 @@ def read_calibrate_and_model_per_baseline(
         overwrite existing output files.
         default is False.
     cal_kwargs: kwarg_dict.
-        kwargs for calibrate_data_model_dpss and calibrate_and_model_per_baseline
+        kwargs for calibrate_data_model_dpss and calibrate_and_model_pbl
         see the docstrings of these functions for more details.
     """
     # initialize uvdata
@@ -1628,7 +1624,7 @@ def red_calibrate_and_model_dpss_argparser():
     Returns
     -------
     ap: argparse.ArgumentParser object.
-        parser for running read_calibrate_and_filter_data_per_baseline with model_basis='dpss'
+        parser for running read_calibrate_and_filter_data_pbl with model_basis='dpss'
 
     """
     ap = argparse.ArgumentParser(
