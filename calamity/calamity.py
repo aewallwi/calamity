@@ -64,12 +64,8 @@ def convert_per_baseline_fg_model_comps_to_sparse_tensor(
 
         fgvind += 1
 
-    dense_number_of_elements = (
-        uvdata.Nants * uvdata.Nants * uvdata.Nfreqs * len(fgvind + 1)
-    )
-    sparse_fg_model_mat = tf.sparse.SparseTensor(
-        indices=ev_inds, values=ev_vals, dense_shape=dense_number_of_elements
-    )
+    dense_number_of_elements = uvdata.Nants * uvdata.Nants * uvdata.Nfreqs * len(fgvind + 1)
+    sparse_fg_model_mat = tf.sparse.SparseTensor(indices=ev_inds, values=ev_vals, dense_shape=dense_number_of_elements)
     return sparse_fg_model_mat
 
 
@@ -139,9 +135,7 @@ def tensorize_data(
     return data_r, data_i, wgts
 
 
-def renormalize(
-    uvdata_reference_model, uvdata_deconv, gains, polarization, uvdata_flags=None
-):
+def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, uvdata_flags=None):
     """Remove arbitrary phase and amplitude from deconvolved model and gains.
 
     Parameters
@@ -163,8 +157,7 @@ def renormalize(
     """
     # compute and multiply out scale-factor accounting for overall amplitude and phase degeneracy.
     polnum_data = np.where(
-        uvdata_deconv.polarization_array
-        == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
+        uvdata_deconv.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
 
     if uvdata_flags is None:
@@ -191,8 +184,7 @@ def renormalize(
     uvdata_deconv.data_array[:, :, :, polnum_data] *= scale_factor
 
     polnum_gains = np.where(
-        gains.jones_array
-        == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
+        gains.jones_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
     gains.gain_array[:, :, :, :, polnum_data] *= (scale_factor) ** -0.5
 
@@ -223,22 +215,13 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
         shape is Nant x Nfreq
 
     """
-    polnum = np.where(
-        uvcal.jones_array
-        == uvutils.polstr2num(polarization, x_orientation=uvcal.x_orientation)
-    )[0][0]
-    gains_real = tf.convert_to_tensor(
-        uvcal.gain_array[:, 0, :, time_index, polnum].squeeze().real, dtype=dtype
-    )
-    gains_imag = tf.convert_to_tensor(
-        uvcal.gain_array[:, 0, :, time_index, polnum].squeeze().imag, dtype=dtype
-    )
+    polnum = np.where(uvcal.jones_array == uvutils.polstr2num(polarization, x_orientation=uvcal.x_orientation))[0][0]
+    gains_real = tf.convert_to_tensor(uvcal.gain_array[:, 0, :, time_index, polnum].squeeze().real, dtype=dtype)
+    gains_imag = tf.convert_to_tensor(uvcal.gain_array[:, 0, :, time_index, polnum].squeeze().imag, dtype=dtype)
     return gains_real, gains_imag
 
 
-def tensorize_per_baseline_model_comps_dictionary(
-    red_grps, fg_model_comps, dtype=np.float32
-):
+def tensorize_per_baseline_model_comps_dictionary(red_grps, fg_model_comps, dtype=np.float32):
     """Helper function generating mappings for per-baseline foreground modeling.
 
     Generates mappings between antenna pairs and foreground basis vectors accounting for redundancies.
@@ -267,17 +250,13 @@ def tensorize_per_baseline_model_comps_dictionary(
         fg_range_map[red_grp[0]] = (startind, startind + ncomponents)
         startind += ncomponents
         for ap in red_grp:
-            model_component_tensor_map[ap] = tf.convert_to_tensor(
-                fg_model_comps[ap], dtype=dtype
-            )
+            model_component_tensor_map[ap] = tf.convert_to_tensor(fg_model_comps[ap], dtype=dtype)
             fg_range_map[ap] = fg_range_map[red_grp[0]]
     return fg_range_map, model_component_tensor_map
 
 
 def yield_fg_model_sparse_tensor(fg_comps, fg_coeffs, nants, nfreqs):
-    model = tf.reshape(
-        tf.sparse.sparse_dense_matmul(fg_comps, fg_r), (nants, nants, nfreqs)
-    )
+    model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_r), (nants, nants, nfreqs))
     return model
 
 
@@ -293,15 +272,9 @@ def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs
     return model_r, model_i
 
 
-def cal_loss_sparse_tensor(
-    data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs
-):
-    model_r, model_i = yield_data_model_sparse_tensor(
-        g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs
-    )
-    return tf.reduce_sum(
-        tf.square(dfit_r - model_r) * wgts + tf.square(dfit_i - model_i) * wgts
-    )
+def cal_loss_sparse_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs):
+    model_r, model_i = yield_data_model_sparse_tensor(g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs)
+    return tf.reduce_sum(tf.square(dfit_r - model_r) * wgts + tf.square(dfit_i - model_i) * wgts)
 
 
 def fit_gains_and_foregrounds(
@@ -312,11 +285,13 @@ def fit_gains_and_foregrounds(
     loss_function,
     use_min=False,
     tol=1e-14,
+    maxsteps=10000,
     optimizer="Adamax",
     freeze_model=False,
     record_var_history=False,
     record_var_history_interval=1,
     verbose=False,
+    notebook_progressbar=False,
     **opt_kwargs,
 ):
     """Run optimization loop to fit gains and foreground components.
@@ -341,6 +316,9 @@ def fit_gains_and_foregrounds(
     tol: float, optional
         halt optimization loop once the loss changes by less then this value.
         default is 1e-14
+    maxsteps: int, optional
+        maximum number of opt.minimize calls before halting.
+        default is 10000
     optimizer: string
         Name of optimizer. See OPTIMIZERS dictionary which contains optimizers described in
         https://www.tensorflow.org/api_docs/python/tf/keras/optimizers
@@ -357,6 +335,9 @@ def fit_gains_and_foregrounds(
         default is 1.
     verbose: bool, optional
         lots of text output
+        default is False.
+    notebook_progressbar: bool, optional
+        use progress bar optimized for notebook output.
         default is False.
     opt_kwargs: kwarg dict
         additional kwargs for tf.opt.Optimizer(). See tensorflow docs.
@@ -389,7 +370,7 @@ def fit_gains_and_foregrounds(
     # initialize the optimizer.
     opt = OPTIMIZERS[optimizer](**opt_kwargs)
     # set up history recording
-    fit_history = {"loss_history": []}
+    fit_history = {"loss": []}
     if record_var_history:
         fit_history["g_r"] = []
         fit_history["g_i"] = []
@@ -409,7 +390,7 @@ def fit_gains_and_foregrounds(
     min_loss = 9e99
     echo(
         f"{datetime.datetime.now()} Building Computational Graph...\n",
-        verbose=(verbose and time_index == 0 and polnum == 0),
+        verbose=verbose,
     )
 
     @tf.function
@@ -426,19 +407,19 @@ def fit_gains_and_foregrounds(
             loss = cal_loss()
         grads = tape.gradient(loss, vars)
         opt.apply_gradients(zip(grads, vars))
-        fit_history_t["loss_history"].append(loss.numpy())
+        fit_history["loss"].append(loss.numpy())
         if record_var_history and step % record_var_history_interval == 0:
-            fit_history["g_r"].append(gain_r.numpy())
-            fit_history["g_i"].append(gain_i.numpy())
+            fit_history["g_r"].append(g_r.numpy())
+            fit_history["g_i"].append(g_i.numpy())
             if not freeze_model:
                 fit_history["fg_r"].append(fg_r.numpy())
                 fit_history["fg_i"].append(fg_i.numpy())
-        if use_min and fit_history["loss_history"][-1] < min_loss:
+        if use_min and fit_history["loss"][-1] < min_loss:
             # store the g_r, g_i, fg_r, fg_i values that minimize loss
             # in case of overshoot.
-            min_loss = fit_history["loss_history"][-1]
-            g_r_opt = gain_r.value()
-            g_i_opt = gain_i.value()
+            min_loss = fit_history["loss"][-1]
+            g_r_opt = g_r.value()
+            g_i_opt = g_i.value()
             if not freeze_model:
                 fg_r_opt = fg_r.value()
                 fg_i_opt = fg_i.value()
@@ -446,33 +427,31 @@ def fit_gains_and_foregrounds(
                 fg_r_opt = fg_r
                 fg_i_opt = fg_i
 
-        if (
-            step >= 1
-            and np.abs(
-                fit_history["loss_history"][-1] - fit_history["loss_history"][-2]
+        if step >= 1 and np.abs(fit_history["loss"][-1] - fit_history["loss"][-2]) < tol:
+            echo(
+                f"Tolerance thresshold met with delta of {np.abs(fit_history['loss'][-1] - fit_history['loss'][-2]):.2e}. Terminating...\n ",
+                verbose=verbose,
             )
-            < tol
-        ):
             break
 
-        # if we dont use use_min, then the last
-        # visited set of parameters will be used
-        # to set the ML params.
-        if not use_min:
-            min_loss = fit_history["loss_history"][-1]
-            g_r_opt = gain_r.value()
-            g_i_opt = gain_i.value()
-            if not freeze_model:
-                fg_r_opt = fg_r.value()
-                fg_i_opt = fg_i.value()
-            else:
-                fg_r_opt = fg_r
-                fg_i_opt = fg_i
-        echo(
-            f"{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n",
-            verbose=verbose,
-        )
-        return g_r_opt, g_i_opt, fg_r_opt, fg_i_opt, fit_history
+    # if we dont use use_min, then the last
+    # visited set of parameters will be used
+    # to set the ML params.
+    if not use_min:
+        min_loss = fit_history["loss"][-1]
+        g_r_opt = g_r.value()
+        g_i_opt = g_i.value()
+        if not freeze_model:
+            fg_r_opt = fg_r.value()
+            fg_i_opt = fg_i.value()
+        else:
+            fg_r_opt = fg_r
+            fg_i_opt = fg_i
+    echo(
+        f"{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n",
+        verbose=verbose,
+    )
+    return g_r_opt, g_i_opt, fg_r_opt, fg_i_opt, fit_history
 
 
 def yield_fg_model_per_baseline_dictionary_method(
@@ -521,13 +500,11 @@ def yield_fg_model_per_baseline_dictionary_method(
 
     """
     fg_model_real = tf.reduce_sum(
-        components_map[i, j]
-        * fg_coeffs_real[fg_range_map[(i, j)][0] : fg_range_map[(i, j)][1]],
+        components_map[i, j] * fg_coeffs_real[fg_range_map[(i, j)][0] : fg_range_map[(i, j)][1]],
         axis=1,
     )  # real part of fg model.
     fg_model_imag = tf.reduce_sum(
-        components_map[i, j]
-        * fg_coeffs_imag[fg_range_map[(i, j)][0] : fg_range_map[(i, j)][1]],
+        components_map[i, j] * fg_coeffs_imag[fg_range_map[(i, j)][0] : fg_range_map[(i, j)][1]],
         axis=1,
     )  # imag part of fg model.
     return fg_model_real, fg_model_imag
@@ -573,9 +550,7 @@ def insert_model_into_uvdata_tensor(
 
     """
     antpairs_data = uvdata.get_antpairs()
-    polnum = np.where(uvdata.polarization_array == uvutils.polstr2num(polarization))[0][
-        0
-    ]
+    polnum = np.where(uvdata.polarization_array == uvutils.polstr2num(polarization))[0][0]
     for red_grp in red_grps:
         for ap in red_grp:
             i, j = ants_map[ap[0]], ants_map[ap[1]]
@@ -632,14 +607,11 @@ def insert_model_into_uvdata_dictionary(
     """
     data_antpairs = uvdata.get_antpairs()
     polnum = np.where(
-        uvdata.polarization_array
-        == uvutils.polstr2num(polarization, x_orientation=uvdata.x_orientation)
+        uvdata.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata.x_orientation)
     )[0][0]
     for ap in fg_range_map:
         fgrange = slice(fg_range_map[ap][0], fg_range_map[ap][1])
-        model = model_comps_map[ap].numpy() @ (
-            fg_coeffs_real.numpy()[fgrange] + 1j * fg_coeffs_imag.numpy()[fgrange]
-        )
+        model = model_comps_map[ap].numpy() @ (fg_coeffs_real.numpy()[fgrange] + 1j * fg_coeffs_imag.numpy()[fgrange])
         model *= scale_factor
         if ap in data_antpairs:
             dinds = uvdata.antpair2ind(ap)[time_index]
@@ -671,10 +643,7 @@ def insert_gains_into_uvcal(uvcal, time_index, polarization, gains_real, gains_i
     -------
     N/A: Modifies uvcal inplace.
     """
-    polnum = np.where(
-        uvcal.jones_array
-        == uvutils.polstr2num(polarization, x_orientation=uvcal.x_orientation)
-    )[0][0]
+    polnum = np.where(uvcal.jones_array == uvutils.polstr2num(polarization, x_orientation=uvcal.x_orientation))[0][0]
     for ant_index in range(uvcal.Nants_data):
         uvcal.gain_array[ant_index, 0, :, time_index, polnum] = (
             gains_real[ant_index].numpy() + 1j * gains_imag[ant_index].numpy()
@@ -748,14 +717,10 @@ def yield_data_model_per_baseline_dictionary(
         components_map=components_map,
     )
     i, j = ants_map[i], ants_map[j]
-    uncal_model_real = (
-        gains_real[i] * gains_real[j] + gains_imag[i] * gains_imag[j]
-    ) * fg_model_real + (
+    uncal_model_real = (gains_real[i] * gains_real[j] + gains_imag[i] * gains_imag[j]) * fg_model_real + (
         gains_real[i] * gains_imag[j] - gains_imag[i] * gains_real[j]
     ) * fg_model_imag  # real part of model with gains
-    uncal_model_imag = (
-        gains_real[i] * gains_real[j] + gains_imag[i] * gains_imag[j]
-    ) * fg_model_imag + (
+    uncal_model_imag = (gains_real[i] * gains_real[j] + gains_imag[i] * gains_imag[j]) * fg_model_imag + (
         gains_imag[i] * gains_real[j] - gains_real[i] * gains_imag[j]
     ) * fg_model_real  # imag part of model with gains
     return uncal_model_real, uncal_model_imag
@@ -883,16 +848,10 @@ def tensorize_per_baseline_data_dictionary(
     for red_grp in red_grps:
         for ap in red_grp:
             bl = ap + (polarization,)
-            data_real[ap] = tf.convert_to_tensor(
-                uvdata.get_data(bl)[time_index].real / scale_factor, dtype=dtype
-            )
-            data_imag[ap] = tf.convert_to_tensor(
-                uvdata.get_data(bl)[time_index].imag / scale_factor, dtype=dtype
-            )
+            data_real[ap] = tf.convert_to_tensor(uvdata.get_data(bl)[time_index].real / scale_factor, dtype=dtype)
+            data_imag[ap] = tf.convert_to_tensor(uvdata.get_data(bl)[time_index].imag / scale_factor, dtype=dtype)
             wgts[ap] = tf.convert_to_tensor(
-                ~uvdata.get_flags(bl)[time_index]
-                * uvdata.get_nsamples(bl)[time_index]
-                / wgts_scale_factor,
+                ~uvdata.get_flags(bl)[time_index] * uvdata.get_nsamples(bl)[time_index] / wgts_scale_factor,
                 dtype=dtype,
             )
     return data_real, data_imag, wgts
@@ -957,12 +916,8 @@ def tensorize_fg_coeffs(
             * ~uvdata.get_flags(bl)[time_index]
             @ model_component_dict[ap]
         )
-    fg_coefficients_real = tf.convert_to_tensor(
-        np.asarray(fg_coefficients_real), dtype=dtype
-    )
-    fg_coefficients_imag = tf.convert_to_tensor(
-        np.asarray(fg_coefficients_imag), dtype=dtype
-    )
+    fg_coefficients_real = tf.convert_to_tensor(np.asarray(fg_coefficients_real), dtype=dtype)
+    fg_coefficients_imag = tf.convert_to_tensor(np.asarray(fg_coefficients_imag), dtype=dtype)
 
     return fg_coefficients_real, fg_coefficients_imag
 
@@ -1131,9 +1086,7 @@ def calibrate_and_model_per_baseline_sparse_method(
                 np.mean(
                     np.abs(
                         uvdata.data_array[time_index :: uvdata.Ntimes, 0, :, polnum][
-                            ~uvdata.flag_array[
-                                time_index :: uvdata.Ntimes, 0, :, polnum
-                            ]
+                            ~uvdata.flag_array[time_index :: uvdata.Ntimes, 0, :, polnum]
                         ]
                     )
                     ** 2.0
@@ -1158,9 +1111,7 @@ def calibrate_and_model_per_baseline_sparse_method(
                 wgts_scale_factor=wgtsum,
             )
             echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
-            gain_r, gain_i = tensorize_gains(
-                gains, dtype=dtype, time_index=time_index, polarization=pol
-            )
+            gains_r, gains_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
             # generate initial guess for foreground coefficients.
             echo(
                 f"{datetime.datetime.now()} Tensorizing Foreground Coefficients...\n",
@@ -1185,13 +1136,7 @@ def calibrate_and_model_per_baseline_sparse_method(
                 fg_model_comps=fg_vec_tensor,
             )
             # derive optimal gains and foregrounds
-            (
-                gains_r,
-                gains_i,
-                fg_r,
-                fg_i,
-                fit_history_p[time_index],
-            ) = fit_gains_and_foregrounds(
+            (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                 g_r=gains_r,
                 g_i=gains_i,
                 fg_r=fg_r,
@@ -1214,12 +1159,8 @@ def calibrate_and_model_per_baseline_sparse_method(
                 polarization=polarization,
                 ants_map=ants_map,
                 red_grps=red_grps,
-                model_r=yield_fg_model_sparse_tensor(
-                    fg_vec_tensor, fg_r, uvdata.Nants_data, uvdata.Nfreqs
-                ),
-                model_i=yield_fg_model_sparse_tensor(
-                    fg_vec_tensor, fg_i, uvdata.Nants_data, uvdata.Nfreqs
-                ),
+                model_r=yield_fg_model_sparse_tensor(fg_vec_tensor, fg_r, uvdata.Nants_data, uvdata.Nfreqs),
+                model_i=yield_fg_model_sparse_tensor(fg_vec_tensor, fg_i, uvdata.Nants_data, uvdata.Nfreqs),
                 scale_factor=rmsdata,
             )
             # insert gains into uvcal
@@ -1387,9 +1328,10 @@ def calibrate_and_model_per_baseline_dictionary_method(
         f"{datetime.datetime.now()} Generating map between antenna pairs and modeling vectors...\n",
         verbose=verbose,
     )
-    (fg_range_map, model_comps_map,) = tensorize_per_baseline_model_comps_dictionary(
-        red_grps, fg_model_comps, dtype=dtype
-    )
+    (
+        fg_range_map,
+        model_comps_map,
+    ) = tensorize_per_baseline_model_comps_dictionary(red_grps, fg_model_comps, dtype=dtype)
     # index antenna numbers (in gain vectors).
     ants_map = {gains.antenna_numbers[i]: i for i in range(len(gains.antenna_numbers))}
     # We do fitting per time and per polarization and time.
@@ -1404,9 +1346,7 @@ def calibrate_and_model_per_baseline_dictionary_method(
                 np.mean(
                     np.abs(
                         uvdata.data_array[time_index :: uvdata.Ntimes, 0, :, polnum][
-                            ~uvdata.flag_array[
-                                time_index :: uvdata.Ntimes, 0, :, polnum
-                            ]
+                            ~uvdata.flag_array[time_index :: uvdata.Ntimes, 0, :, polnum]
                         ]
                     )
                     ** 2.0
@@ -1432,9 +1372,7 @@ def calibrate_and_model_per_baseline_dictionary_method(
                 red_grps=red_grps,
             )
             echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
-            gain_r, gain_i = tensorize_gains(
-                gains, dtype=dtype, time_index=time_index, polarization=pol
-            )
+            gains_r, gains_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
             echo(
                 f"{datetime.datetime.now()} Tensorizing Foreground Coefficients...\n",
                 verbose=verbose,
@@ -1462,13 +1400,7 @@ def calibrate_and_model_per_baseline_dictionary_method(
                 components_map=model_comps_map,
             )
 
-            (
-                gains_r,
-                gains_i,
-                fg_r,
-                fg_i,
-                fit_history_p[time_index],
-            ) = fit_gains_and_foregrounds(
+            (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                 g_r=gains_r,
                 g_i=gains_i,
                 fg_r=fg_r,
@@ -1500,8 +1432,8 @@ def calibrate_and_model_per_baseline_dictionary_method(
                 uvcal=gains,
                 time_index=time_index,
                 polarization=pol,
-                gains_real=gain_r,
-                gains_imag=gain_i,
+                gains_real=gains_r,
+                gains_imag=gains_i,
             )
 
         fit_history[polnum] = fit_history_p
@@ -1587,13 +1519,7 @@ def calibrate_and_model_dpss(
         offset=offset,
         include_autos=include_autos,
     )
-    (
-        model,
-        resid,
-        filtered,
-        gains,
-        fitted_info,
-    ) = calibrate_and_model_per_baseline_dictionary_method(
+    (model, resid, filtered, gains, fitted_info,) = calibrate_and_model_per_baseline_dictionary_method(
         uvdata=uvdata,
         fg_model_comps=dpss_model_comps,
         include_autos=include_autos,
@@ -1697,9 +1623,7 @@ def red_calibrate_and_model_dpss_argparser():
         description="Simultaneous Gain Calibration and Filtering of Foregrounds using DPSS modes"
     )
     io_opts = ap.add_argument_group(title="I/O options.")
-    io_opts.add_argument(
-        "infilename", type=str, help="Path to data file to be calibrated and modeled."
-    )
+    io_opts.add_argument("infilename", type=str, help="Path to data file to be calibrated and modeled.")
     io_opts.add_argument(
         "--incalfilename",
         type=str,
@@ -1728,9 +1652,7 @@ def red_calibrate_and_model_dpss_argparser():
         type=str,
         help="Path to write output uvh5 filtered and calibrated data.",
     )
-    io_opts.add_argument(
-        "--calfilename", type=str, help="path to write output calibration gains."
-    )
+    io_opts.add_argument("--calfilename", type=str, help="path to write output calibration gains.")
     fg_opts = ap.add_argument_group(title="Options for foreground modeling.")
     fg_opts.add_argument(
         "--horizon",
@@ -1775,9 +1697,7 @@ def red_calibrate_and_model_dpss_argparser():
         default=10000,
         help="Maximum number of steps to carry out optimization to",
     )
-    fit_opts.add_argument(
-        "--verbose", default=False, action="store_true", help="Lots of outputs."
-    )
+    fit_opts.add_argument("--verbose", default=False, action="store_true", help="Lots of outputs.")
     fit_opts.add_argument(
         "--learning_rate",
         default=1e-2,

@@ -31,9 +31,7 @@ def blank_uvcal_from_uvdata(uvdata):
     uvcal.telescope_location = uvdata.telescope_location
     uvcal.Nants_data = uvdata.Nants_data
     uvcal.Nants_telescope = uvdata.Nants_telescope
-    uvcal.ant_array = np.asarray(
-        list(set(uvdata.ant_1_array).union(set(uvdata.ant_2_array)))
-    )
+    uvcal.ant_array = np.asarray(list(set(uvdata.ant_1_array).union(set(uvdata.ant_2_array))))
     uvcal.antenna_names = uvdata.antenna_names
     uvcal.antenna_numbers = uvdata.antenna_numbers
     uvcal.antenna_positions = uvdata.antenna_positions
@@ -56,9 +54,7 @@ def blank_uvcal_from_uvdata(uvdata):
     return uvcal
 
 
-def get_redundant_groups_conjugated(
-    uvdata, remove_redundancy=False, tol=1.0, include_autos=False
-):
+def get_redundant_groups_conjugated(uvdata, remove_redundancy=False, tol=1.0, include_autos=False):
     """Get lists of antenna pairs and redundancies in a uvdata set.
 
     Provides list of antenna pairs and ant-pairs organized in redundant groups
@@ -94,17 +90,12 @@ def get_redundant_groups_conjugated(
         include_conjugates=True, include_autos=include_autos, tol=tol
     )
     # convert to ant pairs
-    red_grps = [
-        [uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps
-    ]
+    red_grps = [[uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps]
     conjugates = [uvdata.baseline_to_antnums(bl) for bl in conjugates]
 
     ap_data = set(uvdata.get_antpairs())
     # make sure all red_grps in data and all conjugates in data
-    red_grps = [
-        [ap for ap in red_grp if ap in ap_data or ap[::-1] in ap_data]
-        for red_grp in red_grps
-    ]
+    red_grps = [[ap for ap in red_grp if ap in ap_data or ap[::-1] in ap_data] for red_grp in red_grps]
     red_grps = [red_grp for red_grp in red_grps if len(red_grp) > 0]
     conjugates = [ap for ap in conjugates if ap in ap_data or ap[::-1] in ap_data]
     # modeify red_grp lists to have conjugated antpairs ordered consistently.
@@ -146,9 +137,7 @@ def echo(message, verbose=True):
         print(message)
 
 
-def yield_dpss_model_components(
-    uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include_autos=False, verbose=False
-):
+def yield_dpss_model_comps(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include_autos=False, verbose=False):
     """Get dictionary of DPSS vectors for modeling 21cm foregrounds.
 
     Parameters
@@ -181,9 +170,7 @@ def yield_dpss_model_components(
     dpss_model_components = {}
     operator_cache = {}
     # generate dpss modeling vectors.
-    antpairs, red_grps, red_grp_map, lengths = get_redundant_groups_conjugated(
-        uvdata, include_autos=include_autos
-    )
+    antpairs, red_grps, red_grp_map, lengths = get_redundant_groups_conjugated(uvdata, include_autos=include_autos)
     echo(
         f"{datetime.datetime.now()} Building DPSS modeling vectors...\n",
         verbose=verbose,
@@ -228,24 +215,15 @@ def apply_gains(uvdata, gains, inverse=False):
             if not inverse:
                 calibrated.data_array[dinds, 0, :, pnum] = (
                     calibrated.data_array[dinds, 0, :, pnum]
-                    / (
-                        gains.get_gains(ap[0], "J" + pol)
-                        * np.conj(gains.get_gains(ap[1], "J" + pol))
-                    ).T
+                    / (gains.get_gains(ap[0], "J" + pol) * np.conj(gains.get_gains(ap[1], "J" + pol))).T
                 )
             else:
                 calibrated.data_array[dinds, 0, :, pnum] = (
                     calibrated.data_array[dinds, 0, :, pnum]
-                    * (
-                        gains.get_gains(ap[0], "J" + pol)
-                        * np.conj(gains.get_gains(ap[1], "J" + pol))
-                    ).T
+                    * (gains.get_gains(ap[0], "J" + pol) * np.conj(gains.get_gains(ap[1], "J" + pol))).T
                 )
             calibrated.flag_array[dinds, 0, :, pnum] = (
                 calibrated.flag_array[dinds, 0, :, pnum]
-                | (
-                    gains.get_flags(ap[0], "J" + pol)
-                    | gains.get_flags(ap[1], "J" + pol)
-                ).T
+                | (gains.get_flags(ap[0], "J" + pol) | gains.get_flags(ap[1], "J" + pol)).T
             )
     return calibrated
