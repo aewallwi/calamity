@@ -105,30 +105,53 @@ def test_tensorize_gains(gains_antscale):
 
 def test_sparse_tensorize_per_baseline_fg_model_comps(sky_model_projected, dpss_vectors, redundant_groups, gains):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_vec_tensor = calamity.sparse_tensorize_per_baseline_fg_model_comps(
+    fg_comp_tensor = calamity.sparse_tensorize_per_baseline_fg_model_comps(
         red_grps=redundant_groups, fg_model_comps=dpss_vectors, ants_map=ants_map, dtype=np.float64,
     )
     # retrieve dense numpy array from sparse tensor.
     # check whether values agree with original dpss vectors.
-    fg_vec_tensor = tf.sparse.to_dense(fg_vec_tensor).numpy()
+    fg_comp_tensor = tf.sparse.to_dense(fg_comp_tensor).numpy()
     # iterate through and select out nonzero elements and check that they are close to dpss_vectors
     start_index = 0
     for vnum, red_grp in enumerate(redundant_groups):
         vdpss = dpss_vectors[red_grp[0]]
         end_index = start_index + vdpss.shape[1]
         for i, j in enumerate(range(start_index, end_index)):
-            vreduced = fg_vec_tensor[:, j]
+            vreduced = fg_comp_tensor[:, j]
             vreduced = vreduced[np.abs(vreduced) > 0]
         assert np.allclose(vreduced, vdpss[:, i])
         start_index = end_index
 
-"""
+
 def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_groups, sky_model_projected, gains):
-    ants_map = {ant, i for i, ant in enumerage(gains.ant_array)}
-    fg_vec_tensor = calamity.sparse_tensorize_per_baseline_fg_model_comps(
+    # loop test where we create a sparse matrix representation of our foregrounds using dpss vector projection
+    # and then translate model back into visibility spectra and compare with original visibilties.
+    # First, generate sparse matrix representation (sparse foreground components and coefficients).
+    ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
+    fg_comp_tensor = calamity.sparse_tensorize_per_baseline_fg_model_comps(
         red_grps=redundant_groups, fg_model_comps=dpss_vectors, ants_map=ants_map, dtype=np.float64
     )
-"""
+    (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
+        sky_model_projected,
+        dpss_vectors,
+        redundant_groups,
+        time_index=0,
+        polarization="xx",
+        dtype=np.float64,
+    )
+    # now retrieve Nants x Nants x Nfreq complex visibility cube from representation.
+    model_r = calamity.yield_fg_model_sparse_tensor(fg_comp_tensor, fg_coeffs_re, sky_model_projected.Nants_data, sky_model_projected.Nfreqs)
+    model_i = calamity.yield_fg_model_sparse_tensor(fg_comp_tensor, fg_coeffs_im, sky_model_projected.Nants_data, sky_model_projected.Nfreqs)
+    model = model_r.numpy() + 1j * model_i.numpy()
+    # and check that the columns in that cube line up with data.
+    for grp in redundant_groups:
+        for ap in grp:
+            i, j = ants_map[ap[0]], ants_map[ap[1]]
+            ap_data = sky_model_projected.get_data(ap + ("xx", ))
+            ap_model = model[i, j]
+            rmsdata = np.mean(np.abs(ap_data) ** 2.0) ** 0.5
+            assert np.allclose(ap_model, ap_data, rtol=0.0, atol=1e-5 * rmsdata)
+
 
 
 def test_tensorize_per_baseline_model_comps_dictionary(sky_model_projected, dpss_vectors, redundant_groups):
@@ -152,7 +175,7 @@ def test_yield_fg_model_and_fg_coeffs(dpss_vectors, redundant_groups, sky_model_
         foreground_range_map,
         component_tensor_map,
     ) = calamity.tensorize_per_baseline_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
-    (foreground_coeffs_real, foreground_coeffs_imag,) = calamity.tensorize_fg_coeffs(
+    (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
         sky_model_projected,
         dpss_vectors,
         redundant_groups,
@@ -165,13 +188,13 @@ def test_yield_fg_model_and_fg_coeffs(dpss_vectors, redundant_groups, sky_model_
         (model_r, model_i,) = calamity.yield_fg_model_per_baseline_dictionary_method(
             ap[0],
             ap[1],
-            foreground_coeffs_real,
-            foreground_coeffs_imag,
+            fg_coeffs_re,
+            fg_coeffs_im,
             foreground_range_map,
             component_tensor_map,
         )
         model = model_r.numpy() + 1j * model_i.numpy()
-        data = sky_model_projected.get_data(ap + ("xx",))
+        data = sky_model_projected.get_data(ap + ("xx", ))
         rmsdata = np.mean(np.abs(data) ** 2.0) ** 0.5
 
         assert np.allclose(model, data, rtol=0.0, atol=1e-5 * rmsdata)
@@ -182,7 +205,7 @@ def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky
         foreground_range_map,
         component_tensor_map,
     ) = calamity.tensorize_per_baseline_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
-    (foreground_coeffs_real, foreground_coeffs_imag,) = calamity.tensorize_fg_coeffs(
+    (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
         sky_model_projected,
         dpss_vectors,
         redundant_groups,
@@ -201,8 +224,8 @@ def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky
         "xx",
         foreground_range_map,
         component_tensor_map,
-        foreground_coeffs_real,
-        foreground_coeffs_imag,
+        fg_coeffs_re,
+        fg_coeffs_im,
     )
     # check that data arrays are equal
     assert np.allclose(inserted_model.data_array, sky_model_projected.data_array)
@@ -210,13 +233,13 @@ def test_insert_model_into_uvdata_dictionary(dpss_vectors, redundant_groups, sky
 
 def test_tensorize_per_baseline_data_dictionary(sky_model_projected, redundant_groups):
     for tnum in range(sky_model_projected.Ntimes):
-        data_real, data_imag, wgts = calamity.tensorize_per_baseline_data_dictionary(
+        data_re, data_im, wgts = calamity.tensorize_per_baseline_data_dictionary(
             sky_model_projected, "xx", tnum, redundant_groups, dtype=np.float64
         )
         for red_grp in redundant_groups:
             for ap in red_grp:
                 data = sky_model_projected.get_data(ap + ("xx",))[tnum]
-                assert np.allclose(data, data_real[ap].numpy() + 1j * data_imag[ap].numpy())
+                assert np.allclose(data, data_re[ap].numpy() + 1j * data_im[ap].numpy())
                 assert np.allclose(wgts[ap], 1.0)
 
 
@@ -226,12 +249,12 @@ def test_yield_data_model_per_baseline_dictionary(
     calibrated = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
     ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
     for tnum in range(sky_model_projected.Ntimes):
-        gains_real, gains_imag = calamity.tensorize_gains(gains_antscale_randomized, "xx", tnum, dtype=np.float64)
+        gains_re, gains_im = calamity.tensorize_gains(gains_antscale_randomized, "xx", tnum, dtype=np.float64)
         (
             foreground_range_map,
             component_tensor_map,
         ) = calamity.tensorize_per_baseline_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
-        (foreground_coeffs_real, foreground_coeffs_imag,) = calamity.tensorize_fg_coeffs(
+        (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
             sky_model_projected,
             dpss_vectors,
             redundant_groups,
@@ -239,7 +262,7 @@ def test_yield_data_model_per_baseline_dictionary(
             polarization="xx",
             dtype=np.float64,
         )
-        data_real, data_imag, wgts = calamity.tensorize_per_baseline_data_dictionary(
+        data_re, data_im, wgts = calamity.tensorize_per_baseline_data_dictionary(
             calibrated, "xx", tnum, redundant_groups, dtype=np.float64
         )
         for red_grp in redundant_groups:
@@ -247,28 +270,28 @@ def test_yield_data_model_per_baseline_dictionary(
                 model_r, model_i = calamity.yield_data_model_per_baseline_dictionary(
                     ap[0],
                     ap[1],
-                    gains_real,
-                    gains_imag,
+                    gains_re,
+                    gains_im,
                     ants_map,
-                    foreground_coeffs_real,
-                    foreground_coeffs_imag,
+                    fg_coeffs_re,
+                    fg_coeffs_im,
                     foreground_range_map,
                     component_tensor_map,
                 )
-                assert np.allclose(model_r.numpy(), data_real[ap].numpy())
-                assert np.allclose(model_i.numpy(), data_imag[ap].numpy())
+                assert np.allclose(model_r.numpy(), data_re[ap].numpy())
+                assert np.allclose(model_i.numpy(), data_im[ap].numpy())
 
 
 def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized):
     calibrated = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
     ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
     for tnum in range(sky_model_projected.Ntimes):
-        gains_real, gains_imag = calamity.tensorize_gains(gains_antscale_randomized, "xx", tnum, dtype=np.float64)
+        gains_re, gains_im = calamity.tensorize_gains(gains_antscale_randomized, "xx", tnum, dtype=np.float64)
         (
             foreground_range_map,
             component_tensor_map,
         ) = calamity.tensorize_per_baseline_model_comps_dictionary(redundant_groups, dpss_vectors, dtype=np.float64)
-        (foreground_coeffs_real, foreground_coeffs_imag,) = calamity.tensorize_fg_coeffs(
+        (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
             sky_model_projected,
             dpss_vectors,
             redundant_groups,
@@ -276,17 +299,17 @@ def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups
             polarization="xx",
             dtype=np.float64,
         )
-        data_real, data_imag, wgts = calamity.tensorize_per_baseline_data_dictionary(
+        data_re, data_im, wgts = calamity.tensorize_per_baseline_data_dictionary(
             calibrated, "xx", tnum, redundant_groups, dtype=np.float64
         )
 
         cal_loss = calamity.cal_loss_dictionary(
-            gains_real,
-            gains_imag,
-            foreground_coeffs_real,
-            foreground_coeffs_imag,
-            data_real,
-            data_imag,
+            gains_re,
+            gains_im,
+            fg_coeffs_re,
+            fg_coeffs_im,
+            data_re,
+            data_im,
             wgts,
             ants_map,
             foreground_range_map,
