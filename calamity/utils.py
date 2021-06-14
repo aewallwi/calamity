@@ -185,7 +185,7 @@ def yield_dpss_model_comps(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include
                     filter_half_widths=[dly],
                     eigenval_cutoff=[1e-12],
                     cache=operator_cache,
-                )[0]
+                )[0].real
             else:
                 dpss_model_components[ap] = dpss_model_components[red_grp[0]]
 
