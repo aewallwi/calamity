@@ -259,11 +259,64 @@ def tensorize_pbl_model_comps_dictionary(red_grps, fg_model_comps, dtype=np.floa
 
 
 def yield_fg_pbl_model_sparse_tensor(fg_comps, fg_coeffs, nants, nfreqs):
+    """Compute sparse tensor foreground model.
+
+    Parameters
+    ----------
+    fg_comps: tf.sparse.SparseTensor object
+        Sparse tensor with dense shape of  (Nants^2 * Nfreqs) x Ncomponents
+        Each column is a different data modeling component. The first axis ravels
+        the data by ant1, ant2, freq. In the per-baseline
+        modeling case, each column will be non-zero only over a single baseline.
+    fg_coeffs: tf.Tensor object.
+        An Ncomponents x 1 tf.Tensor representing either the real or imag component
+        of visibilities.
+    nants: int
+        number of antennas in data to model.
+    freqs: int
+        number of frequencies in data to model.
+
+    Returns
+    -------
+    model: tf.Tensor object
+        nants x nants x nfreqs model of the visibility data
+    """
     model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
     return model
 
 
 def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs):
+    """Compute an uncalibrated data model with gains and foreground coefficients.
+
+    Parameters
+    ----------
+    g_r: tf.Tensor object
+        real part of gains, Nants 1d tensor.
+    g_i: tf.Tensor object
+        imag part of gains, Nants 1d tensor.
+    fg_comps: tf.sparse.SparseTensor object
+        tf.sparse.SparseTensor object holding foreground modeling components
+        (Nants^2 * Nfreqs) x Ncomponents
+    fg_r: tf.Tensor object
+        tf.Tensor object containing real components of foreground coefficients.
+        Ncomponents x 1 tensor.
+    fg_i: tf.Tensor object
+        tf.Tensor object containing imag components of foreground coefficients
+        Ncomponents x 1 tensor.
+    nants: int
+        number of modeled data antennas.
+    nfreqs: int
+        number of modeled frequenciers.
+
+    Returns
+    -------
+    model_r: tf.Tensor object
+        real component of data model
+        3d: nants x nants x nfreqs
+    model_i: tf.Tensor object
+        imag component of data model
+        3d: nants x nants x nfreqs
+    """
     grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
     gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
     grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
@@ -276,6 +329,43 @@ def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs
 
 
 def cal_loss_sparse_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs):
+    """MSE Loss function for sparse tensor representation of visibilities.
+
+    Parameters
+    ----------
+    data_r: tf.Tensor object.
+        tf.Tensor object holding real parts of data
+        3d: nants x nants x nfreqs
+    data_i: tf.Tensor object.
+        tf.Tensor object holding imag parts of data
+        3d: nants x nants x nfreqs
+    wgts: tf.Tensor object
+        tf.Tensor object holding weights of each i,j,f visibility
+        contribution to MSE loss.
+    g_r: tf.Tensor object
+        nants x nfreqs tf.Tensor holding real gain values.
+    g_i: tf.Tensor object
+        nants x nfreqs tf.Tensor holding imag gain values
+    fg_comps: tf.sparse.SparseTensor object
+        tf.sparse.SparseTensor object holding foreground modeling components
+        (Nants^2 * Nfreqs) x Ncomponents
+    fg_r: tf.Tensor object
+        tf.Tensor object containing real components of foreground coefficients.
+        Ncomponents x 1 tensor.
+    fg_i: tf.Tensor object
+        tf.Tensor object containing imag components of foreground coefficients
+        Ncomponents x 1 tensor.
+    nants: int
+        number of modeled data antennas.
+    nfreqs: int
+        number of modeled frequenciers.
+
+    Returns
+    -------
+    loss: scalar tf.Tensor object
+        MSE loss between model given by g_r, g_i, fg_model_comps, fg_r, fg_i
+        and data provided through data_r, data_i
+    """
     model_r, model_i = yield_data_model_sparse_tensor(g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs)
     return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
 
@@ -1132,15 +1222,20 @@ def calibrate_and_model_pbl_sparse_method(
                 time_index=time_index,
                 polarization=pol,
                 scale_factor=rmsdata,
+                force2d=True,
             )
 
             cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_sparse_tensor(
                 data_r=data_r,
-                gata_i=data_i,
+                data_i=data_i,
                 wgts=wgts,
                 g_r=g_r,
                 g_i=g_i,
+                fg_r=fg_r,
+                fg_i=fg_i,
                 fg_model_comps=fg_comp_tensor,
+                nants=uvdata.Nants_data,
+                nfreqs=uvdata.Nfreqs,
             )
             # derive optimal gains and foregrounds
             (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
@@ -1470,6 +1565,7 @@ def calibrate_and_model_dpss(
     offset=0.0,
     include_autos=False,
     verbose=False,
+    modeling="dictionary",
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with DPSS vectors.
@@ -1496,6 +1592,18 @@ def calibrate_and_model_dpss(
     verbose: bool, optional
         lots of text output
         default is False.
+    modeling: str, optional
+        specify method for modeling the data / computing loss function
+        supported options are 'sparse_tensor' and 'dictionary'
+        'sparse_tensor' represents each time and polarization as an
+        Nants^2 x Nfreqs tensor and per-baseline modeling components
+        as Nants^2 x Nfreqs x Ncomponents sparse tensor. The impact of gains
+        by taking the outer product of the Nants gain arrays. This is more memory
+        intensive but better optimized to take advantage of tensor operations,
+        especially on GPU. 'dictionary' mode represents visibilities in a dictionary
+        of spectra keyed to antenna pairs which is more memory efficient but at a loss
+        of performance on GPUs.
+
     fitting_kwargs: kwarg dict
         additional kwargs for calibrate_and_model_pbl.
         see docstring of calibrate_and_model_pbl.
@@ -1527,13 +1635,22 @@ def calibrate_and_model_dpss(
         offset=offset,
         include_autos=include_autos,
     )
-    (model, resid, filtered, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
-        uvdata=uvdata,
-        fg_model_comps=dpss_model_comps,
-        include_autos=include_autos,
-        verbose=verbose,
-        **fitting_kwargs,
-    )
+    if modeling == "dictionary":
+        (model, resid, filtered, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
+            uvdata=uvdata,
+            fg_model_comps=dpss_model_comps,
+            include_autos=include_autos,
+            verbose=verbose,
+            **fitting_kwargs,
+        )
+    elif modeling == "sparse_tensor":
+        (model, resid, filtered, gains, fitted_info,) = calibrate_and_model_pbl_sparse_method(
+            uvdata=uvdata,
+            fg_model_comps=dpss_model_comps,
+            include_autos=include_autos,
+            verbose=verbose,
+            **fitting_kwargs,
+        )
     return model, resid, filtered, gains, fitted_info
 
 

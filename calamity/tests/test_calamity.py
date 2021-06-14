@@ -482,7 +482,8 @@ def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups
         assert np.isclose(cal_loss, 0.0)
 
 
-def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized):
+@pytest.mark.parametrize("method", ["sparse_tensor", "dictionary"])
+def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized, method):
     for use_redundancy in [True, False]:
         # check that resid is much smaller then model and original data.
         model, resid, filtered, gains, fit_history = calamity.calibrate_and_model_dpss(
@@ -494,6 +495,7 @@ def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized)
             use_redundancy=use_redundancy,
             sky_model=sky_model_projected,
             maxsteps=1000,
+            modeling=method,
         )
         assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(
             np.mean(np.abs(resid.data_array) ** 2.0)
@@ -515,6 +517,7 @@ def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized)
             sky_model=sky_model_projected,
             freeze_model=True,
             maxsteps=1000,
+            modeling=method,
         )
         assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(
             np.mean(np.abs(resid.data_array) ** 2.0)
