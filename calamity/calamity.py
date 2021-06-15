@@ -1252,6 +1252,7 @@ def calibrate_and_model_pbl_sparse_method(
                 notebook_progressbar=notebook_progressbar,
                 verbose=verbose,
                 tol=tol,
+                maxsteps=maxsteps,
                 **opt_kwargs,
             )
             # insert into model uvdata.
