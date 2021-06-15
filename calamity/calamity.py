@@ -1036,6 +1036,7 @@ def calibrate_and_model_pbl_sparse_method(
     record_var_history_interval=1,
     use_redundancy=False,
     notebook_progressbar=False,
+    red_tol=1.0,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using sparse tensors.
@@ -1103,6 +1104,9 @@ def calibrate_and_model_pbl_sparse_method(
     notebook_progressbar: bool, optional
         use progress bar optimized for notebook output.
         default is False.
+    red_tol: float, optional
+        tolerance for determining baselines redundant (meters)
+        default is 1.0
 
     Returns
     -------
@@ -1142,7 +1146,10 @@ def calibrate_and_model_pbl_sparse_method(
     # data divided by the initial gain estimates.
 
     antpairs, red_grps, antpair_red_indices, _ = utils.get_redundant_groups_conjugated(
-        uvdata, remove_redundancy=not (use_redundancy), include_autos=include_autos, tol=0.1,
+        uvdata,
+        remove_redundancy=not (use_redundancy),
+        include_autos=include_autos,
+        tol=red_tol,
     )
 
     if sky_model is None:
@@ -1309,6 +1316,7 @@ def calibrate_and_model_pbl_dictionary_method(
     record_var_history_interval=1,
     use_redundancy=False,
     notebook_progressbar=False,
+    red_tol=1.0,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and fitting of foregrounds using method that loops over baselines.
@@ -1377,6 +1385,9 @@ def calibrate_and_model_pbl_dictionary_method(
     notebook_progressbar: bool, optional
         use progress bar optimized for notebook output.
         default is False.
+    red_tol: float, optional
+        tolerance for treating baselines as redundant (meters)
+        default is 1.0
 
     Returns
     -------
@@ -1416,7 +1427,10 @@ def calibrate_and_model_pbl_dictionary_method(
     # data divided by the initial gain estimates.
 
     antpairs, red_grps, antpair_red_indices, _ = utils.get_redundant_groups_conjugated(
-        uvdata, remove_redundancy=not (use_redundancy), include_autos=include_autos, tol=0.1
+        uvdata,
+        remove_redundancy=not (use_redundancy),
+        include_autos=include_autos,
+        tol=red_tol,
     )
 
     if sky_model is None:
@@ -1567,6 +1581,7 @@ def calibrate_and_model_dpss(
     include_autos=False,
     verbose=False,
     modeling="dictionary",
+    red_tol=1.0,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with DPSS vectors.
@@ -1604,6 +1619,9 @@ def calibrate_and_model_dpss(
         especially on GPU. 'dictionary' mode represents visibilities in a dictionary
         of spectra keyed to antenna pairs which is more memory efficient but at a loss
         of performance on GPUs.
+    red_tol: float, optional
+        tolerance for treating baselines as redundant (meters)
+        default is 1.0
 
     fitting_kwargs: kwarg dict
         additional kwargs for calibrate_and_model_pbl.
@@ -1635,6 +1653,7 @@ def calibrate_and_model_dpss(
         min_dly=min_dly,
         offset=offset,
         include_autos=include_autos,
+        red_tol=red_tol,
     )
     if modeling == "dictionary":
         (model, resid, filtered, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
@@ -1642,6 +1661,7 @@ def calibrate_and_model_dpss(
             fg_model_comps=dpss_model_comps,
             include_autos=include_autos,
             verbose=verbose,
+            red_tol=red_tol,
             **fitting_kwargs,
         )
     elif modeling == "sparse_tensor":
@@ -1650,6 +1670,7 @@ def calibrate_and_model_dpss(
             fg_model_comps=dpss_model_comps,
             include_autos=include_autos,
             verbose=verbose,
+            red_tol=red_tol,
             **fitting_kwargs,
         )
     return model, resid, filtered, gains, fitted_info

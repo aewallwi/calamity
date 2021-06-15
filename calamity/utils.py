@@ -69,6 +69,13 @@ def get_redundant_groups_conjugated(uvdata, remove_redundancy=False, tol=1.0, in
         if True, split all baselines into their own redundant groups, effectively
         removeing redundancy but allowing us to handle redundant and non-redundant
         modeling under the same framework.
+    tol: float, optional
+        baselines are considered redundant if their bl_x, bl_y coords are
+        within tol of eachother (units of meters)
+        default is 1.0m
+    include_autos: bool, optional
+        if True, include autocorrelations
+        default is False.
 
     Returns
     -------
@@ -137,7 +144,15 @@ def echo(message, verbose=True):
         print(message)
 
 
-def yield_dpss_model_comps(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include_autos=False, verbose=False):
+def yield_dpss_model_comps(
+    uvdata,
+    horizon=1.0,
+    offset=0.0,
+    min_dly=0.0,
+    include_autos=False,
+    verbose=False,
+    red_tol=1.0,
+):
     """Get dictionary of DPSS vectors for modeling 21cm foregrounds.
 
     Parameters
@@ -160,6 +175,9 @@ def yield_dpss_model_comps(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include
     verbose: bool, optional
         lots of text output
         default is False.
+    red_tol: float, optional
+        tolarance for treating baselines as redundant.
+        default is 1.0
 
     Returns
     -------
@@ -170,7 +188,9 @@ def yield_dpss_model_comps(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include
     dpss_model_components = {}
     operator_cache = {}
     # generate dpss modeling vectors.
-    antpairs, red_grps, red_grp_map, lengths = get_redundant_groups_conjugated(uvdata, include_autos=include_autos, tol=0.1)
+    antpairs, red_grps, red_grp_map, lengths = get_redundant_groups_conjugated(
+        uvdata, include_autos=include_autos, tol=red_tol
+    )
     echo(
         f"{datetime.datetime.now()} Building DPSS modeling vectors...\n",
         verbose=verbose,
