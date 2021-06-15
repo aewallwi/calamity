@@ -1142,7 +1142,7 @@ def calibrate_and_model_pbl_sparse_method(
     # data divided by the initial gain estimates.
 
     antpairs, red_grps, antpair_red_indices, _ = utils.get_redundant_groups_conjugated(
-        uvdata, remove_redundancy=not (use_redundancy), include_autos=include_autos
+        uvdata, remove_redundancy=not (use_redundancy), include_autos=include_autos, tol=0.1,
     )
 
     if sky_model is None:
@@ -1415,7 +1415,7 @@ def calibrate_and_model_pbl_dictionary_method(
     # data divided by the initial gain estimates.
 
     antpairs, red_grps, antpair_red_indices, _ = utils.get_redundant_groups_conjugated(
-        uvdata, remove_redundancy=not (use_redundancy), include_autos=include_autos
+        uvdata, remove_redundancy=not (use_redundancy), include_autos=include_autos, tol=0.1
     )
 
     if sky_model is None:

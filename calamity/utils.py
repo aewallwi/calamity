@@ -170,7 +170,7 @@ def yield_dpss_model_comps(uvdata, horizon=1.0, offset=0.0, min_dly=0.0, include
     dpss_model_components = {}
     operator_cache = {}
     # generate dpss modeling vectors.
-    antpairs, red_grps, red_grp_map, lengths = get_redundant_groups_conjugated(uvdata, include_autos=include_autos)
+    antpairs, red_grps, red_grp_map, lengths = get_redundant_groups_conjugated(uvdata, include_autos=include_autos, tol=0.1)
     echo(
         f"{datetime.datetime.now()} Building DPSS modeling vectors...\n",
         verbose=verbose,
