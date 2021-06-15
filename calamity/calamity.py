@@ -1326,7 +1326,7 @@ def calibrate_and_model_pbl_dictionary_method(
     use_redundancy=False,
     notebook_progressbar=False,
     red_tol=1.0,
-    correct_reside=False,
+    correct_resid=False,
     correct_model=False,
     **opt_kwargs,
 ):

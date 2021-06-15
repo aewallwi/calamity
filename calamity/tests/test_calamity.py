@@ -496,6 +496,8 @@ def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized,
             sky_model=sky_model_projected,
             maxsteps=1000,
             modeling=method,
+            correct_resid=True,
+            correct_model=True,
         )
         assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(
             np.mean(np.abs(resid.data_array) ** 2.0)
@@ -518,6 +520,8 @@ def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized,
             freeze_model=True,
             maxsteps=1000,
             modeling=method,
+            correct_resid=True,
+            correct_model=True,
         )
         assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(
             np.mean(np.abs(resid.data_array) ** 2.0)
