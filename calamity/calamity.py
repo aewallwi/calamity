@@ -1133,6 +1133,7 @@ def calibrate_and_model_pbl_sparse_method(
         antpairs_data = set([ap for ap in antpairs_data if ap[0] != ap[1]])
 
     uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
+    sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
     filtered = copy.deepcopy(uvdata)
@@ -1414,6 +1415,7 @@ def calibrate_and_model_pbl_dictionary_method(
         antpairs_data = set([ap for ap in antpairs_data if ap[0] != ap[1]])
 
     uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
+    sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
     filtered = copy.deepcopy(uvdata)
