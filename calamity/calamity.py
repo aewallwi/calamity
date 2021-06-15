@@ -643,7 +643,7 @@ def insert_model_into_uvdata_tensor(
 
     """
     antpairs_data = uvdata.get_antpairs()
-    polnum = np.where(uvdata.polarization_array == uvutils.polstr2num(polarization))[0][0]
+    polnum = np.where(uvdata.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata.x_orientation))[0][0]
     for red_grp in red_grps:
         for ap in red_grp:
             i, j = ants_map[ap[0]], ants_map[ap[1]]
