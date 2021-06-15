@@ -1037,6 +1037,8 @@ def calibrate_and_model_pbl_sparse_method(
     use_redundancy=False,
     notebook_progressbar=False,
     red_tol=1.0,
+    correct_resid=False,
+    correct_model=False,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using sparse tensors.
@@ -1107,6 +1109,12 @@ def calibrate_and_model_pbl_sparse_method(
     red_tol: float, optional
         tolerance for determining baselines redundant (meters)
         default is 1.0
+    correct_resid: bool, optional
+        if True, gain correct residual.
+        default is False
+    correct_model: bool, optional
+        if True, gain correct model.
+        default is False
 
     Returns
     -------
@@ -1136,7 +1144,6 @@ def calibrate_and_model_pbl_sparse_method(
     sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
-    filtered = copy.deepcopy(uvdata)
     if gains is None:
         echo(
             f"{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n",
@@ -1292,12 +1299,13 @@ def calibrate_and_model_pbl_sparse_method(
                 uvdata_flags=uvdata,
             )
     model_with_gains = utils.apply_gains(model, gains, inverse=True)
+    if not correct_model:
+        model = model_with_gains
     resid.data_array -= model_with_gains.data_array
-    resid = utils.apply_gains(resid, gains)
-    filtered = copy.deepcopy(model)
-    filtered.data_array += resid.data_array
+    if correct_resid:
+        resid = utils.apply_gains(resid, gains)
 
-    return model, resid, filtered, gains, fit_history
+    return model, resid, gains, fit_history
 
 
 def calibrate_and_model_pbl_dictionary_method(
@@ -1318,6 +1326,8 @@ def calibrate_and_model_pbl_dictionary_method(
     use_redundancy=False,
     notebook_progressbar=False,
     red_tol=1.0,
+    correct_reside=False,
+    correct_model=False,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and fitting of foregrounds using method that loops over baselines.
@@ -1389,6 +1399,12 @@ def calibrate_and_model_pbl_dictionary_method(
     red_tol: float, optional
         tolerance for treating baselines as redundant (meters)
         default is 1.0
+    correct_resid: bool, optional
+        if True, gain correct residual.
+        default is False
+    correct_model: bool, optional
+        if True, gain correct model.
+        default is False
 
     Returns
     -------
@@ -1418,7 +1434,6 @@ def calibrate_and_model_pbl_dictionary_method(
     sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
-    filtered = copy.deepcopy(uvdata)
     if gains is None:
         echo(
             f"{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n",
@@ -1567,12 +1582,13 @@ def calibrate_and_model_pbl_dictionary_method(
             )
 
     model_with_gains = utils.apply_gains(model, gains, inverse=True)
+    if not correct_model:
+        model = model_with_gains
     resid.data_array -= model_with_gains.data_array
-    resid = utils.apply_gains(resid, gains)
-    filtered = copy.deepcopy(model)
-    filtered.data_array += resid.data_array
+    if correct_resid:
+        resid = utils.apply_gains(resid, gains)
 
-    return model, resid, filtered, gains, fit_history
+    return model, resid, gains, fit_history
 
 
 def calibrate_and_model_dpss(
@@ -1635,8 +1651,6 @@ def calibrate_and_model_dpss(
         uvdata object containing DPSS model of intrinsic foregrounds.
     resid: UVData object
         uvdata object containing residuals after subtracting model times gains and applying gains.
-    filtered: UVData object
-        uvdata object containing the sum of the residuals and instrinsic foreground model.
     gains: UVCal object
         uvcal object containing fitted gains.
     fit_history:
@@ -1658,7 +1672,7 @@ def calibrate_and_model_dpss(
         red_tol=red_tol,
     )
     if modeling == "dictionary":
-        (model, resid, filtered, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
+        (model, resid, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,
             include_autos=include_autos,
@@ -1667,7 +1681,7 @@ def calibrate_and_model_dpss(
             **fitting_kwargs,
         )
     elif modeling == "sparse_tensor":
-        (model, resid, filtered, gains, fitted_info,) = calibrate_and_model_pbl_sparse_method(
+        (model, resid, gains, fitted_info,) = calibrate_and_model_pbl_sparse_method(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,
             include_autos=include_autos,
@@ -1675,7 +1689,7 @@ def calibrate_and_model_dpss(
             red_tol=red_tol,
             **fitting_kwargs,
         )
-    return model, resid, filtered, gains, fitted_info
+    return model, resid, gains, fitted_info
 
 
 def read_calibrate_and_model_pbl(
@@ -1684,7 +1698,6 @@ def read_calibrate_and_model_pbl(
     refmodelname=None,
     residfilename=None,
     modelfilename=None,
-    filteredfilename=None,
     calfilename=None,
     model_basis="dpss",
     clobber=False,
@@ -1739,7 +1752,7 @@ def read_calibrate_and_model_pbl(
     else:
         sky_model = None
     if model_basis == "dpss":
-        model, resid, filtered, gains, fitted_info = calibrate_and_model_dpss(
+        model, resid, gains, fitted_info = calibrate_and_model_dpss(
             uvdata=uvdata, sky_model=sky_model, gains=gains, **cal_kwargs
         )
     else:
@@ -1748,11 +1761,9 @@ def read_calibrate_and_model_pbl(
         resid.write_uvh5(residfilename, clobber=clobber)
     if modelfilename is not None:
         model.write_uvh5(modelfilename, clobber=clobber)
-    if filteredfilename is not None:
-        filtered.write_uvh5(filteredfilename, clobber=clobber)
     if calfilename is not None:
         gains.write_calfits(calfilename, clobber=clobber)
-    return model, resid, filtered, gains, fitted_info
+    return model, resid, gains, fitted_info
 
 
 def red_calibrate_and_model_dpss_argparser():
@@ -1795,11 +1806,6 @@ def red_calibrate_and_model_dpss_argparser():
         type=str,
         help="Path to write output uvh5 model.",
         default=None,
-    )
-    io_opts.add_argument(
-        "--filteredfilename",
-        type=str,
-        help="Path to write output uvh5 filtered and calibrated data.",
     )
     io_opts.add_argument("--calfilename", type=str, help="path to write output calibration gains.")
     fg_opts = ap.add_argument_group(title="Options for foreground modeling.")

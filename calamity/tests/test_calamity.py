@@ -486,7 +486,7 @@ def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups
 def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized, method):
     for use_redundancy in [True, False]:
         # check that resid is much smaller then model and original data.
-        model, resid, filtered, gains, fit_history = calamity.calibrate_and_model_dpss(
+        model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
             min_dly=2.0 / 0.3,
             offset=2.0 / 0.3,
             uvdata=uvdata,
@@ -507,7 +507,7 @@ def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized,
         assert len(fit_history[0]) == 1
 
         # test that calibrating with a perfect sky model and only optimizing gains yields nearly perfect solutions for the gains.
-        model, resid, filtered, gains, fit_history = calamity.calibrate_and_model_dpss(
+        model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
             min_dly=2.0 / 0.3,
             offset=2.0 / 0.3,
             uvdata=sky_model_projected,
