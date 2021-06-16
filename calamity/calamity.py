@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from pyuvdata import UVData, UVCal
+from pyuvdata import UVData, UVCal, UVFlag
 from . import utils
 import copy
 import argparse
@@ -78,7 +78,8 @@ def tensorize_data(
     polarization,
     time_index,
     data_scale_factor=1.0,
-    wgts_scale_factor=1.0,
+    weighting='constant',
+    weights=None,
     dtype=np.float32,
 ):
     """Convert data in uvdata object to a tensor
@@ -98,9 +99,9 @@ def tensorize_data(
     data_scale_factor: float, optional
         overall scaling factor to divide tensorized data by.
         default is 1.0
-    wgts_scale_factor: float, optional
-        overall scaling factor to divide tensorized weights by.
-        default is 1.0 (but we recommend sum of weights * flags)
+    weights: UVFlag object, optional
+        UVFlag object wgts array contains weights for fitting.
+        default is None -> weight by nsamples x ~flags
     dtype: numpy.dtype
         data-type to store in sparse tensor.
         default is np.float32
@@ -121,6 +122,7 @@ def tensorize_data(
     data_r = np.zeros(dshape, dtype=dtype)
     data_i = np.zeros_like(data_r)
     wgts = np.zeros_like(data_r)
+    wgtsum = 0.
     for red_grp in red_grps:
         for ap in red_grp:
             bl = ap + (polarization,)
@@ -130,10 +132,16 @@ def tensorize_data(
             i, j = ants_map[ap[0]], ants_map[ap[1]]
             data_r[i, j] = data.real.astype(dtype)
             data_i[i, j] = data.imag.astype(dtype)
-            wgts[i, j] = iflags * nsamples
+            if weights is None:
+                wgts[i, j] = iflags * nsamples
+            else:
+                dinds = weights.antpair2ind(ap)
+                polnum = np.where(weights.polarization_array == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation))[0][0]
+                wgts[i, j] = weights.weights_array[dinds, 0, :, polnum].astype(dtype) * ~iflags
+            wgtsum += np.sum(wgts[i, j])
     data_r = tf.convert_to_tensor(data_r, dtype=dtype)
     data_i = tf.convert_to_tensor(data_i, dtype=dtype)
-    wgts = tf.convert_to_tensor(wgts, dtype=dtype)
+    wgts = tf.convert_to_tensor(wgts / wgtsum, dtype=dtype)
     return data_r, data_i, wgts
 
 
@@ -891,7 +899,7 @@ def tensorize_pbl_data_dictionary(
     time_index,
     red_grps,
     scale_factor=1.0,
-    wgts_scale_factor=1.0,
+    weights=None,
     dtype=np.float32,
 ):
     """extract data from uvdata object into a dict of tensors for fitting.
@@ -914,9 +922,6 @@ def tensorize_pbl_data_dictionary(
     data_scale_factor: float, optional
         overall scaling factor to divide tensorized data by.
         default is 1.0
-    wgts_scale_factor: float, optional
-        overall scaling factor to divide tensorized weights by.
-        default is 1.0 (but we recommend sum of weights * flags)
     dtype: np.dtype
         data type to store tensorized data in.
 
@@ -938,19 +943,29 @@ def tensorize_pbl_data_dictionary(
     data_re = {}
     data_im = {}
     wgts = {}
+    wgtssum = 0.0
     for red_grp in red_grps:
         for ap in red_grp:
             bl = ap + (polarization,)
             data_re[ap] = tf.convert_to_tensor(uvdata.get_data(bl)[time_index].real / scale_factor, dtype=dtype)
             data_im[ap] = tf.convert_to_tensor(uvdata.get_data(bl)[time_index].imag / scale_factor, dtype=dtype)
-            wgts[ap] = tf.convert_to_tensor(
-                ~uvdata.get_flags(bl)[time_index] * uvdata.get_nsamples(bl)[time_index] / wgts_scale_factor,
-                dtype=dtype,
-            )
+            if weights is None:
+                wgts[ap] = tf.convert_to_tensor(
+                    ~uvdata.get_flags(bl)[time_index] * uvdata.get_nsamples(bl)[time_index],
+                    dtype=dtype)
+            else:
+                dinds = weights.antpair2ind(ap)
+                polnum = np.where(weights.polarization_array == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation))[0][0]
+                wgts[ap] = weights.weights_array[dinds, 0, :, polnum].astype(dtype) * ~uvdata.get_flags(bl)[time_index]
+                wgtssum += np.sum(wgts[ap])
+                wgts[ap] = tf.convert_to_tensor(wgts[ap], dtype=dtype)
+    for ap in wgts:
+        wgts[ap] /= wgtssum
+
     return data_re, data_im, wgts
 
 
-def tensorize_fg_coeffs(
+def tensorize_fg_coeffs_pbl(
     uvdata,
     model_component_dict,
     red_grps,
@@ -1018,8 +1033,7 @@ def tensorize_fg_coeffs(
 
     return fg_coeffs_re, fg_coeffs_im
 
-
-def calibrate_and_model_pbl_sparse_method(
+def calibrate_and_model(
     uvdata,
     fg_model_comps,
     gains=None,
@@ -1039,6 +1053,7 @@ def calibrate_and_model_pbl_sparse_method(
     red_tol=1.0,
     correct_resid=False,
     correct_model=False,
+    weights=None,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using sparse tensors.
@@ -1115,6 +1130,9 @@ def calibrate_and_model_pbl_sparse_method(
     correct_model: bool, optional
         if True, gain correct model.
         default is False
+    weights: UVFlag object, optional.
+        UVFlag weights object containing weights to use for data fitting.
+        default is None -> use nsamples * ~flags
 
     Returns
     -------
@@ -1204,10 +1222,6 @@ def calibrate_and_model_pbl_sparse_method(
                     ** 2.0
                 )
             )
-            wgtsum = np.sum(
-                uvdata.nsample_array[time_index :: uvdata.Ntimes, 0, :, polnum]
-                * ~uvdata.flag_array[time_index :: uvdata.Ntimes, 0, :, polnum]
-            )
             echo(
                 f"{datetime.datetime.now()} Working on time {time_index + 1} of {uvdata.Ntimes}...\n",
                 verbose=verbose,
@@ -1220,7 +1234,7 @@ def calibrate_and_model_pbl_sparse_method(
                 polarization=pol,
                 time_index=time_index,
                 data_scale_factor=rmsdata,
-                wgts_scale_factor=wgtsum,
+                weights=weights,
             )
             echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
             gains_r, gains_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
@@ -1229,7 +1243,7 @@ def calibrate_and_model_pbl_sparse_method(
                 f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
                 verbose=verbose,
             )
-            fg_r, fg_i = tensorize_fg_coeffs(
+            fg_r, fg_i = tensorize_fg_coeffs_pbl(
                 uvdata=sky_model,
                 red_grps=red_grps,
                 model_component_dict=fg_model_comps,
@@ -1328,6 +1342,8 @@ def calibrate_and_model_pbl_dictionary_method(
     red_tol=1.0,
     correct_resid=False,
     correct_model=False,
+    weighting='constant',
+    weights=None,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and fitting of foregrounds using method that loops over baselines.
@@ -1405,6 +1421,9 @@ def calibrate_and_model_pbl_dictionary_method(
     correct_model: bool, optional
         if True, gain correct model.
         default is False
+    weights: UVFlag object, optional.
+        UVFlag weights object containing weights to use for data fitting.
+        default is None -> use nsamples * ~flags
 
     Returns
     -------
@@ -1486,10 +1505,6 @@ def calibrate_and_model_pbl_dictionary_method(
                     ** 2.0
                 )
             )
-            wgtsum = np.sum(
-                uvdata.nsample_array[time_index :: uvdata.Ntimes, 0, :, polnum]
-                * ~uvdata.flag_array[time_index :: uvdata.Ntimes, 0, :, polnum]
-            )
             echo(
                 f"{datetime.datetime.now()} Working on time {time_index + 1} of {uvdata.Ntimes}...\n",
                 verbose=verbose,
@@ -1504,6 +1519,8 @@ def calibrate_and_model_pbl_dictionary_method(
                 scale_factor=rmsdata,
                 wgts_scale_factor=wgtsum,
                 red_grps=red_grps,
+                weighting=weighting,
+                weights=weights
             )
             echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
             gains_r, gains_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
@@ -1511,7 +1528,7 @@ def calibrate_and_model_pbl_dictionary_method(
                 f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
                 verbose=verbose,
             )
-            fg_r, fg_i = tensorize_fg_coeffs(
+            fg_r, fg_i = tensorize_fg_coeffs_pbl(
                 uvdata=sky_model,
                 red_grps=red_grps,
                 model_component_dict=fg_model_comps,
