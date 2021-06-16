@@ -78,7 +78,6 @@ def tensorize_data(
     polarization,
     time_index,
     data_scale_factor=1.0,
-    weighting='constant',
     weights=None,
     dtype=np.float32,
 ):
@@ -116,7 +115,6 @@ def tensorize_data(
         scaled by data_scale_factor
     wgts: tf.Tensor object
         tf.Tensor object storing wgts with shape Nants_data x Nants_data x Nfreqs
-        scaled by wgts_scale_factor
     """
     dshape = (uvdata.Nants_data, uvdata.Nants_data, uvdata.Nfreqs)
     data_r = np.zeros(dshape, dtype=dtype)
@@ -128,7 +126,7 @@ def tensorize_data(
             bl = ap + (polarization,)
             data = uvdata.get_data(bl) / data_scale_factor
             iflags = (~uvdata.get_flags(bl)).astype(dtype)
-            nsamples = (uvdata.get_nsamples(bl) / wgts_scale_factor).astype(dtype)
+            nsamples = uvdata.get_nsamples(bl).astype(dtype)
             i, j = ants_map[ap[0]], ants_map[ap[1]]
             data_r[i, j] = data.real.astype(dtype)
             data_i[i, j] = data.imag.astype(dtype)
@@ -943,7 +941,7 @@ def tensorize_pbl_data_dictionary(
     data_re = {}
     data_im = {}
     wgts = {}
-    wgtssum = 0.0
+    wgtsum = 0.0
     for red_grp in red_grps:
         for ap in red_grp:
             bl = ap + (polarization,)
@@ -957,15 +955,15 @@ def tensorize_pbl_data_dictionary(
                 dinds = weights.antpair2ind(ap)
                 polnum = np.where(weights.polarization_array == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation))[0][0]
                 wgts[ap] = weights.weights_array[dinds, 0, :, polnum].astype(dtype) * ~uvdata.get_flags(bl)[time_index]
-                wgtssum += np.sum(wgts[ap])
                 wgts[ap] = tf.convert_to_tensor(wgts[ap], dtype=dtype)
+            wgtsum += np.sum(wgts[ap])
     for ap in wgts:
-        wgts[ap] /= wgtssum
+        wgts[ap] /= wgtsum
 
     return data_re, data_im, wgts
 
 
-def tensorize_fg_coeffs_pbl(
+def tensorize_fg_coeffs(
     uvdata,
     model_component_dict,
     red_grps,
@@ -1033,7 +1031,7 @@ def tensorize_fg_coeffs_pbl(
 
     return fg_coeffs_re, fg_coeffs_im
 
-def calibrate_and_model(
+def calibrate_and_model_sparse(
     uvdata,
     fg_model_comps,
     gains=None,
@@ -1243,7 +1241,7 @@ def calibrate_and_model(
                 f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
                 verbose=verbose,
             )
-            fg_r, fg_i = tensorize_fg_coeffs_pbl(
+            fg_r, fg_i = tensorize_fg_coeffs(
                 uvdata=sky_model,
                 red_grps=red_grps,
                 model_component_dict=fg_model_comps,
@@ -1342,14 +1340,13 @@ def calibrate_and_model_pbl_dictionary_method(
     red_tol=1.0,
     correct_resid=False,
     correct_model=False,
-    weighting='constant',
     weights=None,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and fitting of foregrounds using method that loops over baselines.
 
     This approach gives up on trying to invert the wedge but can be used on practically any array.
-    Use this in place of calibrate_and_model_pbl_sparse_method when working on CPUs but
+    Use this in place of calibrate_and_model_sparse when working on CPUs but
     use the latter with GPUs.
 
     Parameters
@@ -1517,9 +1514,7 @@ def calibrate_and_model_pbl_dictionary_method(
                 time_index=time_index,
                 polarization=pol,
                 scale_factor=rmsdata,
-                wgts_scale_factor=wgtsum,
                 red_grps=red_grps,
-                weighting=weighting,
                 weights=weights
             )
             echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
@@ -1528,7 +1523,7 @@ def calibrate_and_model_pbl_dictionary_method(
                 f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
                 verbose=verbose,
             )
-            fg_r, fg_i = tensorize_fg_coeffs_pbl(
+            fg_r, fg_i = tensorize_fg_coeffs(
                 uvdata=sky_model,
                 red_grps=red_grps,
                 model_component_dict=fg_model_comps,
@@ -1698,7 +1693,7 @@ def calibrate_and_model_dpss(
             **fitting_kwargs,
         )
     elif modeling == "sparse_tensor":
-        (model, resid, gains, fitted_info,) = calibrate_and_model_pbl_sparse_method(
+        (model, resid, gains, fitted_info,) = calibrate_and_model_sparse(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,
             include_autos=include_autos,

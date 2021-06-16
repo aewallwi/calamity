@@ -297,7 +297,7 @@ def test_tensorize_pbl_data_dictionary(sky_model_projected, redundant_groups):
             for ap in red_grp:
                 data = sky_model_projected.get_data(ap + ("xx",))[tnum]
                 assert np.allclose(data, data_re[ap].numpy() + 1j * data_im[ap].numpy())
-                assert np.allclose(wgts[ap], 1.0)
+                assert np.allclose(wgts[ap], np.sum(sky_model_projected.nsample_array * ~sky_model_projected.flag_array) ** -1.)
 
 
 def test_tensorize_data(sky_model_projected, redundant_groups, gains):
@@ -311,7 +311,7 @@ def test_tensorize_data(sky_model_projected, redundant_groups, gains):
                 i, j = ants_map[ap[0]], ants_map[ap[1]]
                 data = sky_model_projected.get_data(ap + ("xx",))[tnum]
                 assert np.allclose(data, data_re[i, j].numpy() + 1j * data_im[i, j].numpy())
-                assert np.allclose(wgts[i, j], 1.0)
+                assert np.allclose(wgts[i, j], np.sum(sky_model_projected.nsample_array * ~sky_model_projected.flag_array) ** -1.)
 
 
 def test_yield_data_model_pbl_dictionary(
