@@ -143,15 +143,29 @@ def echo(message, verbose=True):
     if verbose:
         print(message)
 
-def yield_aesaehaettr_components(
+def yield_dpss_model_comps_bl_group(antpairs, lengths, freqs, cache, horizon=1.0, min_dly=0.0, offset=0.0):
+    dpss_model_comps = {}
+    for apnum, (ap, length) in enumerate(ziip(antpairs, lengths)):
+        if apnum == 0:
+            dly = np.ceil(max(min_dly, length / 0.3 * horizon + offset)) / 1e9
+            dpss_model_components[ap] = dspec.dpss_operator(
+                uvdata.freq_array[0],
+                filter_centers=[0.0],
+                filter_half_widths=[dly],
+                eigenval_cutoff=[1e-12],
+                cache=operator_cache,
+            )[0].real
+        else:
+            dpss_model_components[ap] = dpss_model_components[red_grp[0]]
+    return dpss_model_comps
+
+def yield_mixed_components(
     uvdata,
     fitting_groups,
     eigenval_cutoff=1e-10,
-    horizon=1.0,
-    offset=1.0,
-    min_dly=0.0,
-    include_autos=False,
-    verboase=False,
+    intrinsic_delay=0.0,
+    verbose=False,
+    dtype=np.float32
 ):
     """Generate modeling components that include jointly modeled baselines.
 
@@ -163,11 +177,27 @@ def yield_aesaehaettr_components(
         each tuple in list is a list of redundant groups of baselines that we will fit jointly
         with components that span each group.
         groups with a single redundant baseline group will be modeled with dpss vectors.
-
-    eigenval_cutoff:
-
-
+        Redundancies must have conjugation already taken into account.
+    eigenval_cutoff: float, optional
+        threshold of eigenvectors to include in modeling components.
+    intrinsic_delay: float, optional
+        intrinsic chromaticity of antenna elements.
+    verbose: bool, optional
+        produce text outputs.
+    dtype: numpy.dtype
+        data type in which to compute model eigenvectors.
     """
+    operator_cache = {}
+    modeling_vectors = {}
+    for fit_group in fitting_groups:
+        # yield dpss
+        if len(fit_group) == 1:
+            bllens = compute_bllens(uvdata, fit_group)
+            modeling_vectors.update(yield_dpss_model_comps_bl_group(freqs=uvdata.freq_array[0],
+                                                                    antpairs=fit_group,
+                                                                    lengths=bllens,
+                                                                    offset=intrinsic_delay))
+
 
 def yield_dpss_model_comps(
     uvdata,
@@ -221,18 +251,7 @@ def yield_dpss_model_comps(
         verbose=verbose,
     )
     for red_grp, length in zip(red_grps, lengths):
-        for apnum, ap in enumerate(red_grp):
-            if apnum == 0:
-                dly = np.ceil(max(min_dly, length / 0.3 * horizon + offset)) / 1e9
-                dpss_model_components[ap] = dspec.dpss_operator(
-                    uvdata.freq_array[0],
-                    filter_centers=[0.0],
-                    filter_half_widths=[dly],
-                    eigenval_cutoff=[1e-12],
-                    cache=operator_cache,
-                )[0].real
-            else:
-                dpss_model_components[ap] = dpss_model_components[red_grp[0]]
+        dpss_model_comps.update(yield_dpss_model_comps_bl_group(antpairs=red_grp, lengths=[l for ap in red_grp], freqs=uvdata.freq_array[0], cache=operator_cache, horizon=1.0, min_dly=min_dly, offset=offset))
 
     return dpss_model_components
 
