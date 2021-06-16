@@ -143,6 +143,31 @@ def echo(message, verbose=True):
     if verbose:
         print(message)
 
+def yield_aesaehaettr_components(
+    uvdata,
+    fitting_groups,
+    eigenval_cutoff=1e-10,
+    horizon=1.0,
+    offset=1.0,
+    min_dly=0.0,
+    include_autos=False,
+    verboase=False,
+):
+    """Generate modeling components that include jointly modeled baselines.
+
+    Parameters
+    ----------
+    uvdata: UVData object
+        data to model
+    fitting_groups: list of tuple of tuples of 2-tuples
+        each tuple in list is a list of redundant groups of baselines that we will fit jointly
+        with components that span each group.
+        groups with a single redundant baseline group will be modeled with dpss vectors.
+
+    eigenval_cutoff:
+
+
+    """
 
 def yield_dpss_model_comps(
     uvdata,
