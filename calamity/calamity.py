@@ -120,7 +120,7 @@ def tensorize_data(
     data_r = np.zeros(dshape, dtype=dtype)
     data_i = np.zeros_like(data_r)
     wgts = np.zeros_like(data_r)
-    wgtsum = 0.
+    wgtsum = 0.0
     for red_grp in red_grps:
         for ap in red_grp:
             bl = ap + (polarization,)
@@ -133,9 +133,14 @@ def tensorize_data(
             if weights is None:
                 wgts[i, j] = iflags * nsamples
             else:
-                dinds = weights.antpair2ind(ap)
-                polnum = np.where(weights.polarization_array == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation))[0][0]
-                wgts[i, j] = weights.weights_array[dinds, 0, :, polnum].astype(dtype) * ~iflags
+                if ap in weights.get_antpairs():
+                    dinds = weights.antpair2ind(*ap)
+                else:
+                    dinds = weights.antpair2ind(*ap[::-1])
+                polnum = np.where(
+                    weights.polarization_array == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation)
+                )[0][0]
+                wgts[i, j] = weights.weights_array[dinds, 0, :, polnum].astype(dtype) * iflags
             wgtsum += np.sum(wgts[i, j])
     data_r = tf.convert_to_tensor(data_r, dtype=dtype)
     data_i = tf.convert_to_tensor(data_i, dtype=dtype)
@@ -649,7 +654,9 @@ def insert_model_into_uvdata_tensor(
 
     """
     antpairs_data = uvdata.get_antpairs()
-    polnum = np.where(uvdata.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata.x_orientation))[0][0]
+    polnum = np.where(
+        uvdata.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata.x_orientation)
+    )[0][0]
     for red_grp in red_grps:
         for ap in red_grp:
             i, j = ants_map[ap[0]], ants_map[ap[1]]
@@ -949,11 +956,16 @@ def tensorize_pbl_data_dictionary(
             data_im[ap] = tf.convert_to_tensor(uvdata.get_data(bl)[time_index].imag / scale_factor, dtype=dtype)
             if weights is None:
                 wgts[ap] = tf.convert_to_tensor(
-                    ~uvdata.get_flags(bl)[time_index] * uvdata.get_nsamples(bl)[time_index],
-                    dtype=dtype)
+                    ~uvdata.get_flags(bl)[time_index] * uvdata.get_nsamples(bl)[time_index], dtype=dtype
+                )
             else:
-                dinds = weights.antpair2ind(ap)
-                polnum = np.where(weights.polarization_array == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation))[0][0]
+                if ap in weights.get_antpairs():
+                    dinds = weights.antpair2ind(*ap)
+                else:
+                    dinds = weights.antpair2ind(*ap[::-1])
+                polnum = np.where(
+                    weights.polarization_array == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation)
+                )[0][0]
                 wgts[ap] = weights.weights_array[dinds, 0, :, polnum].astype(dtype) * ~uvdata.get_flags(bl)[time_index]
                 wgts[ap] = tf.convert_to_tensor(wgts[ap], dtype=dtype)
             wgtsum += np.sum(wgts[ap])
@@ -1030,6 +1042,7 @@ def tensorize_fg_coeffs(
     fg_coeffs_im = tf.convert_to_tensor(fg_coeffs_im, dtype=dtype)
 
     return fg_coeffs_re, fg_coeffs_im
+
 
 def calibrate_and_model_sparse(
     uvdata,
@@ -1515,7 +1528,7 @@ def calibrate_and_model_pbl_dictionary_method(
                 polarization=pol,
                 scale_factor=rmsdata,
                 red_grps=red_grps,
-                weights=weights
+                weights=weights,
             )
             echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
             gains_r, gains_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)

@@ -8,6 +8,8 @@ import os
 import numpy as np
 import copy
 import tensorflow as tf
+from pyuvdata import UVFlag
+import sys
 
 
 @pytest.fixture
@@ -25,6 +27,13 @@ def sky_model():
 @pytest.fixture
 def gains(sky_model):
     return utils.blank_uvcal_from_uvdata(sky_model)
+
+
+@pytest.fixture
+def weights(sky_model):
+    uvf = UVFlag(sky_model, mode="flag")
+    uvf.weights_array = np.ones_like(uvf.flag_array).astype(np.float)
+    return uvf
 
 
 @pytest.fixture
@@ -297,7 +306,9 @@ def test_tensorize_pbl_data_dictionary(sky_model_projected, redundant_groups):
             for ap in red_grp:
                 data = sky_model_projected.get_data(ap + ("xx",))[tnum]
                 assert np.allclose(data, data_re[ap].numpy() + 1j * data_im[ap].numpy())
-                assert np.allclose(wgts[ap], np.sum(sky_model_projected.nsample_array * ~sky_model_projected.flag_array) ** -1.)
+                assert np.allclose(
+                    wgts[ap], np.sum(sky_model_projected.nsample_array * ~sky_model_projected.flag_array) ** -1.0
+                )
 
 
 def test_tensorize_data(sky_model_projected, redundant_groups, gains):
@@ -311,7 +322,9 @@ def test_tensorize_data(sky_model_projected, redundant_groups, gains):
                 i, j = ants_map[ap[0]], ants_map[ap[1]]
                 data = sky_model_projected.get_data(ap + ("xx",))[tnum]
                 assert np.allclose(data, data_re[i, j].numpy() + 1j * data_im[i, j].numpy())
-                assert np.allclose(wgts[i, j], np.sum(sky_model_projected.nsample_array * ~sky_model_projected.flag_array) ** -1.)
+                assert np.allclose(
+                    wgts[i, j], np.sum(sky_model_projected.nsample_array * ~sky_model_projected.flag_array) ** -1.0
+                )
 
 
 def test_yield_data_model_pbl_dictionary(
@@ -482,55 +495,143 @@ def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups
         assert np.isclose(cal_loss, 0.0)
 
 
-@pytest.mark.parametrize("method", ["sparse_tensor", "dictionary"])
-def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized, method):
-    for use_redundancy in [True, False]:
-        # check that resid is much smaller then model and original data.
-        model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
-            min_dly=2.0 / 0.3,
-            offset=2.0 / 0.3,
-            uvdata=uvdata,
-            gains=gains_randomized,
-            verbose=True,
-            use_redundancy=use_redundancy,
-            sky_model=sky_model_projected,
-            maxsteps=1000,
-            modeling=method,
-            correct_resid=True,
-            correct_model=True,
-        )
-        assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(
-            np.mean(np.abs(resid.data_array) ** 2.0)
-        )
-        assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e3 * np.sqrt(
-            np.mean(np.abs(resid.data_array) ** 2.0)
-        )
-        assert len(fit_history) == 1
-        assert len(fit_history[0]) == 1
+def test_red_calibrate_and_model_dpss_argparser():
+    sys.argv = [sys.argv[0], "infile", "--incalfilename", "calfile"]
+    ap = calamity.red_calibrate_and_model_dpss_argparser()
+    args = ap.parse_args()
+    assert args.infilename == "infile"
+    assert args.incalfilename == "calfile"
 
-        # test that calibrating with a perfect sky model and only optimizing gains yields nearly perfect solutions for the gains.
-        model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
-            min_dly=2.0 / 0.3,
-            offset=2.0 / 0.3,
-            uvdata=sky_model_projected,
-            gains=gains_randomized,
-            verbose=True,
-            use_redundancy=use_redundancy,
-            sky_model=sky_model_projected,
-            freeze_model=True,
-            maxsteps=1000,
-            modeling=method,
-            correct_resid=True,
-            correct_model=True,
-        )
-        assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(
-            np.mean(np.abs(resid.data_array) ** 2.0)
-        )
-        assert np.allclose(
-            model.data_array,
-            sky_model_projected.data_array,
-            atol=1e-5 * np.mean(np.abs(model.data_array) ** 2.0) ** 0.5,
-        )
-        assert np.allclose(gains.gain_array, gains_randomized.gain_array, rtol=0.0, atol=1e-4)
-        assert len(fit_history) == 1
-        assert len(fit_history[0]) == 1
+
+@pytest.mark.parametrize(
+    "method, use_redundancy, noweights",
+    [
+        ("sparse_tensor", True, True),
+        ("sparse_tensor", True, False),
+        ("sparse_tensor", False, True),
+        ("sparse_tensor", False, False),
+        ("dictionary", True, True),
+        ("dictionary", True, False),
+        ("dictionary", False, True),
+        ("dictionary", False, False),
+    ],
+)
+def test_calibrate_and_model_dpss(
+    uvdata, sky_model_projected, gains_randomized, method, weights, use_redundancy, noweights
+):
+    if noweights:
+        weight = None
+    else:
+        weight = weights
+    # check that resid is much smaller then model and original data.
+    model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+        min_dly=2.0 / 0.3,
+        offset=2.0 / 0.3,
+        uvdata=uvdata,
+        gains=gains_randomized,
+        verbose=True,
+        use_redundancy=use_redundancy,
+        sky_model=sky_model_projected,
+        maxsteps=1000,
+        modeling=method,
+        correct_resid=True,
+        correct_model=True,
+        weights=weight,
+    )
+    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert len(fit_history) == 1
+    assert len(fit_history[0]) == 1
+
+
+@pytest.mark.parametrize(
+    "method, use_redundancy, noweights",
+    [
+        ("sparse_tensor", True, True),
+        ("sparse_tensor", True, False),
+        ("sparse_tensor", False, True),
+        ("sparse_tensor", False, False),
+        ("dictionary", True, True),
+        ("dictionary", True, False),
+        ("dictionary", False, True),
+        ("dictionary", False, False),
+    ],
+)
+def test_calibrate_and_model_dpss_dont_correct_resid(
+    uvdata, sky_model_projected, gains_randomized, method, weights, use_redundancy, noweights
+):
+    # check that resid is much smaller then model and original data.
+    if noweights:
+        weight = None
+    else:
+        weight = weights
+    model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+        min_dly=2.0 / 0.3,
+        offset=2.0 / 0.3,
+        uvdata=uvdata,
+        gains=gains_randomized,
+        verbose=True,
+        use_redundancy=use_redundancy,
+        sky_model=sky_model_projected,
+        maxsteps=1000,
+        modeling=method,
+        correct_resid=False,
+        correct_model=False,
+        weights=weight,
+    )
+
+    # post hoc correction
+    resid = utils.apply_gains(resid, gains)
+    model = utils.apply_gains(model, gains)
+    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert len(fit_history) == 1
+    assert len(fit_history[0]) == 1
+
+
+@pytest.mark.parametrize(
+    "method, use_redundancy, noweights",
+    [
+        ("sparse_tensor", True, True),
+        ("sparse_tensor", True, False),
+        ("sparse_tensor", False, True),
+        ("sparse_tensor", False, False),
+        ("dictionary", True, True),
+        ("dictionary", True, False),
+        ("dictionary", False, True),
+        ("dictionary", False, False),
+    ],
+)
+def test_calibrate_and_model_dpss_freeze_model(
+    uvdata, sky_model_projected, gains_randomized, method, weights, use_redundancy, noweights
+):
+    # check that resid is much smaller then model and original data.
+    if noweights:
+        weight = None
+    else:
+        weight = weights
+    # test that calibrating with a perfect sky model and only optimizing gains yields nearly perfect solutions for the gains.
+    model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+        min_dly=2.0 / 0.3,
+        offset=2.0 / 0.3,
+        uvdata=sky_model_projected,
+        gains=gains_randomized,
+        verbose=True,
+        use_redundancy=use_redundancy,
+        sky_model=sky_model_projected,
+        freeze_model=True,
+        maxsteps=1000,
+        modeling=method,
+        correct_resid=True,
+        correct_model=True,
+        weights=weight,
+    )
+    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.allclose(
+        model.data_array,
+        sky_model_projected.data_array,
+        atol=1e-5 * np.mean(np.abs(model.data_array) ** 2.0) ** 0.5,
+    )
+    assert np.allclose(gains.gain_array, gains_randomized.gain_array, rtol=0.0, atol=1e-4)
+    assert len(fit_history) == 1
+    assert len(fit_history[0]) == 1
