@@ -20,19 +20,25 @@ OPTIMIZERS = {
 }
 
 
-def sparse_tensorize_pbl_fg_model_comps(red_grps, fg_model_comps, ants_map, dtype=np.float32):
+def sparse_tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, dtype=np.float32):
     """Convert per-baseline model components into a sparse Ndata x Ncomponent tensor
 
     Parameters
     ----------
-    red_grps: list of lists of int 2-tuples
-        a list of lists of 2-tuples where all antenna pairs within each sublist
-        are redundant with eachother. Assumes that conjugates are correctly taken.
-    fg_model_comps: dict of 2-tuples as keys and numpy.ndarray as values.
-        dictionary mapping int antenna-pair 2-tuples to
+    fg_model_comps: dictionary
+        dictionary with keys that are tuples of tuples of 2-tuples (thats right, 3 levels)
+        in the first level, each tuple represents a 'modeling group' visibilities in each
+        modeling group are represented by a set of basis vectors that span all baselines in that
+        group with elements raveled by baseline and then frequency. Each tuple in the modeling group is a
+        'redundant group' representing visibilities that we will represent with identical component coefficients
+        each element of each 'redundant group' is a 2-tuple antenna pair. Our formalism easily accomodates modeling
+        visibilities as redundant or non redundant (one simply needs to make each redundant group length 1).
     ants_map: dict mapping integers to integers
         map between each antenna number to a unique index between 0 and Nants_data
         (typically the index of each antenna in ants_map)
+    nfreqs: int, optional
+        number of frequency channels
+
     dtype: numpy.dtype
         data-type to store in sparse tensor.
         default is np.float32
@@ -48,20 +54,20 @@ def sparse_tensorize_pbl_fg_model_comps(red_grps, fg_model_comps, ants_map, dtyp
     comp_vals = []
     fgvind = 0
     nants_data = len(ants_map)
-    nfreqs = len(fg_model_comps[red_grps[0][0]])
-    for red_grp in red_grps:
-        # calculate one Ndata x Ncomponent sparse vector per redundant baseline group.
-        for vind in range(fg_model_comps[red_grp[0]].shape[1]):
-            for ap in red_grp:
-                i, j = ants_map[ap[0]], ants_map[ap[1]]
-                blind = i * nants_data + j
-                for f in range(nfreqs):
-                    comp_inds.append([blind * nfreqs + f, fgvind])
-                    comp_vals.append(fg_model_comps[ap][f, vind].astype(dtype))
-                    sparse_number_of_elements += 1
-
+    for modeling_grp in fg_model_comps:
+        # calculate Ncomponents Ndata sparse vectors per modeling group
+        for vind in range(fg_model_comps[modeling_grp].shape[1]):
+            # visibilities in each redundant group have identical copies
+            # of each per-baseline Nfreq spectra in a modeling component
+            for grpnum, red_grp in enumerage(modeling_grp):
+                for ap in red_grp:
+                    i, j = ants_map[ap[0]], ants_map[ap[1]]
+                    blind = i * nants_data + j
+                    for f in range(nfreqs):
+                        comp_inds.append([blind * nfreqs + f, fgvind])
+                        comp_vals.append(fg_model_comps[modeling_grp][grpnum * nfreqs + f, vind].astype(dtype))
+                        sparse_number_of_elements += 1
             fgvind += 1
-
     # sort by comp_inds.
     sort_order = sorted(range(len(comp_inds)), key=comp_inds.__getitem__)
     comp_vals = [comp_vals[ind] for ind in sort_order]
@@ -1061,7 +1067,6 @@ def calibrate_and_model_sparse(
     record_var_history_interval=1,
     use_redundancy=False,
     notebook_progressbar=False,
-    red_tol=1.0,
     correct_resid=False,
     correct_model=False,
     weights=None,
@@ -1077,9 +1082,13 @@ def calibrate_and_model_sparse(
     uvdata: UVData object
         uvdata objet of data to be calibrated.
     fg_model_comps: dictionary
-        dictionary containing Nfreq x Nbasis design matrices
-        describing the basis vectors being used to model each baseline with keys corresponding
-        antenna pairs.
+        dictionary with keys that are tuples of tuples of 2-tuples (thats right, 3 levels)
+        in the first level, each tuple represents a 'modeling group' visibilities in each
+        modeling group are represented by a set of basis vectors that span all baselines in that
+        group with elements raveled by baseline and then frequency. Each tuple in the modeling group is a
+        'redundant group' representing visibilities that we will represent with identical component coefficients
+        each element of each 'redundant group' is a 2-tuple antenna pair. Our formalism easily accomodates modeling
+        visibilities as redundant or non redundant (one simply needs to make each redundant group length 1).
     gains: UVCal object
         UVCal with initial gain estimates.
         There many smart ways to obtain initial gain estimates
@@ -1179,15 +1188,6 @@ def calibrate_and_model_sparse(
             verbose=verbose,
         )
         gains = utils.blank_uvcal_from_uvdata(uvdata)
-    # if sky-model is None, initialize it to be the
-    # data divided by the initial gain estimates.
-
-    antpairs, red_grps, antpair_red_indices, _ = utils.get_redundant_groups_conjugated(
-        uvdata,
-        remove_redundancy=not (use_redundancy),
-        include_autos=include_autos,
-        tol=red_tol,
-    )
 
     if sky_model is None:
         echo(
@@ -1203,8 +1203,8 @@ def calibrate_and_model_sparse(
         f"{datetime.datetime.now()} Computing sparse foreground components matrix...\n",
         verbose=verbose,
     )
-    fg_comp_tensor = sparse_tensorize_pbl_fg_model_comps(
-        red_grps=red_grps, fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype
+    fg_comp_tensor = sparse_tensorize_fg_model_comps(
+        fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype
     )
     echo(
         f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
