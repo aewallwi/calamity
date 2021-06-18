@@ -5,7 +5,7 @@ from uvtools import dspec
 import datetime
 import tensorflow as tf
 from . import simple_cov
-
+from .echo import echo
 
 
 def blank_uvcal_from_uvdata(uvdata):
@@ -313,9 +313,3 @@ def apply_gains(uvdata, gains, inverse=False):
                 | (gains.get_flags(ap[0], "J" + pol) | gains.get_flags(ap[1], "J" + pol)).T
             )
     return calibrated
-
-
-
-def echo(message, verbose=True):
-    if verbose:
-        print(message)

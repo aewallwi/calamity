@@ -5,9 +5,9 @@ from . import utils
 import copy
 import argparse
 import itertools
-from .utils import echo
 import datetime
 from pyuvdata import utils as uvutils
+from .echo import echo
 
 OPTIMIZERS = {
     "Adadelta": tf.optimizers.Adadelta,

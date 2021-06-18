@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import datetime
+from .echo import echo
 
 
 def simple_cov_matrix(uvdata, baseline_group, ant_dly, dtype=np.float32):
@@ -90,10 +91,3 @@ def yield_simple_multi_baseline_model_comps(uvdata, baseline_group, ant_dly, dty
     evals = evals[selection][::-1]
     evecs = evecs[:, selection][:, ::-1]
     return {baseline_group: evecs.numpy()}
-
-
-
-
-def echo(message, verbose=True):
-    if verbose:
-        print(message)
