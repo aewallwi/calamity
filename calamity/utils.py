@@ -3,6 +3,7 @@ import numpy as np
 import copy
 from uvtools import dspec
 import datetime
+import tensorflow as tf
 
 
 def blank_uvcal_from_uvdata(uvdata):
@@ -143,35 +144,36 @@ def echo(message, verbose=True):
     if verbose:
         print(message)
 
-def yield_dpss_model_comps_bl_grp(antpairs, lengths, freqs, cache, horizon=1.0, min_dly=0.0, offset=0.0, multi_bl_key=False, operator_cache=None):
+
+def compute_bllens(uvdata, fit_group):
+    lengths = []
+    for ap in fit_group:
+        dinds = uvdata.antpair2ind(ap)
+        if len(dinds) == 0:
+            dinds = uvdata.antpair2ind(ap[::-1])
+        bllen = np.max(np.linalg.norm(uvdata.uvw_array[dinds], axis=1) ** 2.0, axis=0)
+        lengths.append(bllen)
+    return lengths
+
+
+def yield_dpss_model_comps_bl_grp(
+    antpairs, length, freqs, cache, horizon=1.0, min_dly=0.0, offset=0.0, operator_cache=None
+):
     if operator_cache is None:
         operator_cache = {}
     dpss_model_comps = {}
-    if not multi_bl_key:
-        for apnum, (ap, length) in enumerate(zip(antpairs, lengths)):
-            if apnum == 0:
-                dly = np.ceil(max(min_dly, length / 0.3 * horizon + offset)) / 1e9
-                dpss_model_components[ap] = dspec.dpss_operator(
-                    uvdata.freq_array[0],
-                    filter_centers=[0.0],
-                    filter_half_widths=[dly],
-                    eigenval_cutoff=[1e-12],
-                    cache=operator_cache,
-                )[0].real
-            else:
-                dpss_model_components[ap] = dpss_model_components[red_grp[0]]
-        return dpss_model_comps
-    else:
-        dly = np.ceil(max(min_dly, lengths[0] / 0.3 * horizon + offset)) / 1e9
-        dpss_model_components[tuple(antpairs)] = dspec.dpss_operator(
-            uvdata.freq_array[0],
-            filter_centers=[0.0],
-            filter_half_widths=[dly],
-            eigenval_cutoff=[1e-12],
-            cache=operator_cache,
-        )[0].real
+    dly = np.ceil(max(min_dly, length / 0.3 * horizon + offset)) / 1e9
+    dpss_model_comps[(tuple(antpairs),)] = dspec.dpss_operator(
+        freqs,
+        filter_centers=[0.0],
+        filter_half_widths=[dly],
+        eigenval_cutoff=[1e-12],
+        cache=operator_cache,
+    )[0].real
+    return dpss_model_comps
 
-def simple_cov_matrix(uvdata, baseline_group, intrinsic_delay, dtype=np.float32):
+
+def simple_cov_matrix(uvdata, baseline_group, ant_dly, dtype=np.float32):
     """Compute simple covariance matrix for subset of baselines in uvdata
 
     Parameters
@@ -181,7 +183,7 @@ def simple_cov_matrix(uvdata, baseline_group, intrinsic_delay, dtype=np.float32)
     baseline_group: tuple of tuples of 2-tuples
         tuple of tuple of 2-tuples where each tuple is a different redundant baseline
         group that contains 2-tuples specifying each baseline.
-    intrinsic_delay: float
+    ant_dly: float
         intrinsic chromaticity of each antenna element.
     dtype: numpy.dtype
         data type to process and store covariance matrix as.
@@ -193,33 +195,35 @@ def simple_cov_matrix(uvdata, baseline_group, intrinsic_delay, dtype=np.float32)
 
     """
     ap_data = set(uvdata.get_antpairs())
+    uvws = []
     for red_grp in baseline_group:
         ap = red_grp[0]
         if ap in ap_data:
             dinds = uvdata.antpair2ind(red_grp[0])
-            uvws.append(uvdata.uvw_array[dinds])
+            uvws.extend(uvdata.uvw_array[dinds])
         else:
             dinds = uvdata.antpair2ind(red_grp[0][::-1])
             uvws.extend(-uvdata.uvw_array[dinds])
     # find differences between all uvws
     uvws = np.asarray(uvws)
     nbls = len(uvws)
-    uvws = tf.convert_to_tensor(uvws, dtype=dtyp)
+    uvws = tf.convert_to_tensor(uvws, dtype=dtype)
     freqs = tf.convert_to_tensor(np.asarray(uvdata.freq_array.squeeze()), dtype)
-    absdiff = tf.convert_to_tensor(np.zeros((len(uvals), len(uvals)), dtype=dtype), dtype=dtype)
+    absdiff = tf.convert_to_tensor(np.zeros((nbls, nbls), dtype=dtype), dtype=dtype)
     for uvw_ind in range(3):
-        uvw_coord = tf.reshape(tf.outer(uvws[:, uvw_ind], freqs / 3e8), (nbls * uvdata.Nfreqs, ))
-        cg0, cg1 = tf.meshgrid(uvw_coord, uvw_coord, indexing='ij')
-        absdiff += np.abs(cg0 - cg1) ** 2.
-    absdiff = absdiff ** .5
+        uvw_coord = tf.reshape(tf.outer(uvws[:, uvw_ind], freqs / 3e8), (nbls * uvdata.Nfreqs,))
+        cg0, cg1 = tf.meshgrid(uvw_coord, uvw_coord, indexing="ij")
+        absdiff += np.abs(cg0 - cg1) ** 2.0
+    absdiff = absdiff ** 0.5
     cmat = tf.experimental.numpy.sinc(2 * absdiff)
     del absdiff
-    fg0, fg1 = tf.reshape(tf.outer(tf.ones(nbls, dytpe=dtype), freqs), (nbls * uvdata.Nfreqs, ), indexing='ij')
-    cmat = cmat * tf.experimental.sinc(2 * tf.abs(fg0 - fg1) * min_dly)
+    fg0, fg1 = tf.reshape(tf.outer(tf.ones(nbls, dytpe=dtype), freqs), (nbls * uvdata.Nfreqs,), indexing="ij")
+    cmat = cmat * tf.experimental.sinc(2 * tf.abs(fg0 - fg1) * ant_dly)
     del fg0, fg1
     return cmat
 
-def yield_multi_baseline_model_comps(uvdata, baseline_group, intrinsic_delay, dtype=np.float32, verbose=False):
+
+def yield_multi_baseline_model_comps(uvdata, baseline_group, ant_dly, dtype=np.float32, verbose=False):
     """Generate model components for multiple baselines.
 
     Parameters
@@ -244,7 +248,7 @@ def yield_multi_baseline_model_comps(uvdata, baseline_group, intrinsic_delay, dt
         (Nbl * Nfreqs) x Ncomponents tf.Tensor array as single value
 
     """
-    cmat = simple_cov_matrix(uvdata, baseline_group, intrinsic_delay, dtype=dtype, verbose=verbose)
+    cmat = simple_cov_matrix(uvdata, baseline_group, ant_dly, dtype=dtype, verbose=verbose)
     # get eigenvectors
     echo(
         f"{datetime.datetime.now()} Deriving modeling components with eigenvalue decomposition...\n",
@@ -252,22 +256,13 @@ def yield_multi_baseline_model_comps(uvdata, baseline_group, intrinsic_delay, dt
     )
     evals, evecs = tf.linalg.eigh(cmat)
     evals_n = evals.numpy()
-    selection = evals_n  / evals_n.max() >= evals_n
+    selection = evals_n / evals_n.max() >= evals_n
     evals = evals[selection][::-1]
     evecs = evecs[:, selection][:, ::-1]
     return {baseline_group: evecs.numpy()}
 
 
-
-
-def yield_mixed_comps(
-    uvdata,
-    fitting_groups,
-    eigenval_cutoff=1e-10,
-    intrinsic_delay=0.0,
-    verbose=False,
-    dtype=np.float32
-):
+def yield_mixed_comps(uvdata, fitting_groups, eigenval_cutoff=1e-10, ant_dly=0.0, verbose=False, dtype=np.float32):
     """Generate modeling components that include jointly modeled baselines.
 
     Parameters
@@ -281,7 +276,7 @@ def yield_mixed_comps(
         Redundancies must have conjugation already taken into account.
     eigenval_cutoff: float, optional
         threshold of eigenvectors to include in modeling components.
-    intrinsic_delay: float, optional
+    ant_dly: float, optional
         intrinsic chromaticity of antenna elements.
     verbose: bool, optional
         produce text outputs.
@@ -294,19 +289,25 @@ def yield_mixed_comps(
         # yield dpss
         if len(fit_group) == 1:
             bllens = compute_bllens(uvdata, fit_group)
-            modeling_vectors.update(yield_dpss_model_comps_bl_grp(freqs=uvdata.freq_array[0],
-                                                                    antpairs=fit_group,
-                                                                    lengths=bllens,
-                                                                    offset=intrinsic_delay, cache=operator_cache, multibl_key=True))
+            modeling_vectors.update(
+                yield_dpss_model_comps_bl_grp(
+                    freqs=uvdata.freq_array[0],
+                    antpairs=fit_group[0],
+                    length=bllens[0],
+                    offset=ant_dly,
+                    cache=operator_cache,
+                    multibl_key=True,
+                )
+            )
 
         else:
-            modeling_vectors.update(yield_multi_baseline_model_comps(uvdata=uvdata,
-                                                                     antpairs=fit_group
-                                                                     intrinsic_delay=intrinsic_delay, dtype=dtype))
+            modeling_vectors.update(
+                yield_multi_baseline_model_comps(uvdata=uvdata, antpairs=fit_group, ant_dly=ant_dly, dtype=dtype)
+            )
+    return modeling_vectors
 
 
-
-def yield_dpss_model_comps(
+def yield_pbl_dpss_model_comps(
     uvdata,
     horizon=1.0,
     offset=0.0,
@@ -343,11 +344,11 @@ def yield_dpss_model_comps(
 
     Returns
     -------
-    dpss_model_components: dict
-        dictionary with antenna-pair keys pointing to dpss operators.
+    dpss_model_comps: dict
+        dictionary with redundant group antenna-pair keys pointing to dpss operators.
 
     """
-    dpss_model_components = {}
+    dpss_model_comps = {}
     operator_cache = {}
     # generate dpss modeling vectors.
     antpairs, red_grps, red_grp_map, lengths = get_redundant_groups_conjugated(
@@ -359,9 +360,19 @@ def yield_dpss_model_comps(
     )
 
     for red_grp, length in zip(red_grps, lengths):
-        dpss_model_comps.update(yield_dpss_model_comps_bl_grp(antpairs=red_grp, lengths=[l for ap in red_grp], freqs=uvdata.freq_array[0], cache=operator_cache, horizon=1.0, min_dly=min_dly, offset=offset))
+        dpss_model_comps.update(
+            yield_dpss_model_comps_bl_grp(
+                antpairs=red_grp,
+                length=length,
+                freqs=uvdata.freq_array[0],
+                cache=operator_cache,
+                horizon=1.0,
+                min_dly=min_dly,
+                offset=offset,
+            )
+        )
 
-    return dpss_model_components
+    return dpss_model_comps
 
 
 def apply_gains(uvdata, gains, inverse=False):
