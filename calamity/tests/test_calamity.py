@@ -190,10 +190,7 @@ def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_grou
     # First, generate sparse matrix representation (sparse foreground components and coefficients).
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     fg_comp_tensor = calamity.sparse_tensorize_fg_model_comps(
-        fg_model_comps=dpss_vectors,
-        ants_map=ants_map,
-        dtype=np.float64,
-        nfreqs = sky_model_projected.Nfreqs
+        fg_model_comps=dpss_vectors, ants_map=ants_map, dtype=np.float64, nfreqs=sky_model_projected.Nfreqs
     )
     (fg_coeffs_re, fg_coeffs_im,) = calamity.tensorize_fg_coeffs(
         sky_model_projected,
@@ -371,7 +368,7 @@ def test_yield_data_model_pbl_sparse_tensor(
         fg_model_comps=dpss_vectors,
         ants_map=ants_map,
         dtype=np.float64,
-        nfreqs = sky_model_projected.Nfreqs,
+        nfreqs=sky_model_projected.Nfreqs,
     )
     nants = corrupted.Nants_data
     nfreqs = corrupted.Nfreqs

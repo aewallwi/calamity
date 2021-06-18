@@ -1207,7 +1207,9 @@ def calibrate_and_model_sparse(
         f"{datetime.datetime.now()} Computing sparse foreground components matrix...\n",
         verbose=verbose,
     )
-    fg_comp_tensor = sparse_tensorize_fg_model_comps(fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype, nfreqs=sky_model.Nfreqs)
+    fg_comp_tensor = sparse_tensorize_fg_model_comps(
+        fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype, nfreqs=sky_model.Nfreqs
+    )
     echo(
         f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
         verbose=verbose,
