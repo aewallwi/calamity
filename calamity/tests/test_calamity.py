@@ -1,9 +1,11 @@
 from ..data import DATA_PATH
 import pytest
 from .. import calamity
+from .. import utils
+from .. import modeling
+from .. import cal_utils
 from pyuvdata import UVData
 from pyuvdata import UVCal
-from .. import utils
 import os
 import numpy as np
 import copy
@@ -26,7 +28,7 @@ def sky_model():
 
 @pytest.fixture
 def gains(sky_model):
-    return utils.blank_uvcal_from_uvdata(sky_model)
+    return cal_utils.blank_uvcal_from_uvdata(sky_model)
 
 
 @pytest.fixture
@@ -60,7 +62,7 @@ def gains_antscale_randomized(gains_randomized):
 
 @pytest.fixture
 def dpss_vectors(sky_model):
-    return utils.yield_pbl_dpss_model_comps(sky_model, offset=2.0 / 0.3, min_dly=2.0 / 0.3)
+    return modeling.yield_pbl_dpss_model_comps(sky_model, offset=2.0 / 0.3, min_dly=2.0 / 0.3)
 
 
 @pytest.fixture
@@ -78,7 +80,7 @@ def sky_model_projected(sky_model, dpss_vectors):
 
 @pytest.fixture
 def redundant_groups(sky_model):
-    return utils.get_redundant_groups_conjugated(sky_model)[1]
+    return modeling.get_redundant_groups_conjugated(sky_model)[1]
 
 
 @pytest.fixture
@@ -324,7 +326,7 @@ def test_tensorize_data(sky_model_projected, redundant_groups, gains):
 def test_yield_data_model_pbl_dictionary(
     sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized
 ):
-    corrupted = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
+    corrupted = cal_utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
     ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
     for tnum in range(sky_model_projected.Ntimes):
         gains_re, gains_im = calamity.tensorize_gains(gains_antscale_randomized, "xx", tnum, dtype=np.float64)
@@ -362,7 +364,7 @@ def test_yield_data_model_pbl_dictionary(
 def test_yield_data_model_pbl_sparse_tensor(
     sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized
 ):
-    corrupted = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
+    corrupted = cal_utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
     ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
     fg_comp_tensor = calamity.sparse_tensorize_fg_model_comps(
         fg_model_comps=dpss_vectors,
@@ -402,7 +404,7 @@ def test_yield_data_model_pbl_sparse_tensor(
 
 
 def test_cal_loss_sparse_tensor(sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized):
-    corrupted = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
+    corrupted = cal_utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
     ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
     fg_comp_tensor = calamity.sparse_tensorize_fg_model_comps(
         fg_model_comps=dpss_vectors,
@@ -451,7 +453,7 @@ def test_cal_loss_sparse_tensor(sky_model_projected, dpss_vectors, redundant_gro
 
 
 def test_cal_loss_dictionary(sky_model_projected, dpss_vectors, redundant_groups, gains_antscale_randomized):
-    corrupted = utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
+    corrupted = cal_utils.apply_gains(sky_model_projected, gains_antscale_randomized, inverse=True)
     ants_map = {ant: i for i, ant in enumerate(gains_antscale_randomized.ant_array)}
     (
         fg_range_map,
@@ -523,7 +525,7 @@ def test_calibrate_and_model_dpss(
         use_redundancy=use_redundancy,
         sky_model=sky_model_projected,
         maxsteps=10000,
-        modeling=method,
+        modeling_paradigm=method,
         correct_resid=True,
         correct_model=True,
         weights=weight,
@@ -564,15 +566,15 @@ def test_calibrate_and_model_dpss_dont_correct_resid(
         use_redundancy=use_redundancy,
         sky_model=sky_model_projected,
         maxsteps=10000,
-        modeling=method,
+        modeling_paradigm=method,
         correct_resid=False,
         correct_model=False,
         weights=weight,
     )
 
     # post hoc correction
-    resid = utils.apply_gains(resid, gains)
-    model = utils.apply_gains(model, gains)
+    resid = cal_utils.apply_gains(resid, gains)
+    model = cal_utils.apply_gains(model, gains)
     assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert len(fit_history) == 1
@@ -611,7 +613,7 @@ def test_calibrate_and_model_dpss_freeze_model(
         sky_model=sky_model_projected,
         freeze_model=True,
         maxsteps=10000,
-        modeling=method,
+        modeling_paradigm=method,
         correct_resid=True,
         correct_model=True,
         weights=weight,

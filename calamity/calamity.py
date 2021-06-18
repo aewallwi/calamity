@@ -7,7 +7,9 @@ import argparse
 import itertools
 import datetime
 from pyuvdata import utils as uvutils
-from .echo import echo
+from .utils import echo
+from . import cal_utils
+from . import modeling
 
 OPTIMIZERS = {
     "Adadelta": tf.optimizers.Adadelta,
@@ -1191,14 +1193,14 @@ def calibrate_and_model_sparse(
             f"{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n",
             verbose=verbose,
         )
-        gains = utils.blank_uvcal_from_uvdata(uvdata)
+        gains = cal_utils.blank_uvcal_from_uvdata(uvdata)
 
     if sky_model is None:
         echo(
             f"{datetime.datetime.now()} Sky model is None. Initializing from data...\n",
             verbose=verbose,
         )
-        sky_model = utils.apply_gains(uvdata, gains)
+        sky_model = cal_utils.apply_gains(uvdata, gains)
 
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
@@ -1326,12 +1328,12 @@ def calibrate_and_model_sparse(
                 polarization=pol,
                 uvdata_flags=uvdata,
             )
-    model_with_gains = utils.apply_gains(model, gains, inverse=True)
+    model_with_gains = cal_utils.apply_gains(model, gains, inverse=True)
     if not correct_model:
         model = model_with_gains
     resid.data_array -= model_with_gains.data_array
     if correct_resid:
-        resid = utils.apply_gains(resid, gains)
+        resid = cal_utils.apply_gains(resid, gains)
 
     return model, resid, gains, fit_history
 
@@ -1475,13 +1477,13 @@ def calibrate_and_model_pbl_dictionary_method(
             f"{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n",
             verbose=verbose,
         )
-        gains = utils.blank_uvcal_from_uvdata(uvdata)
+        gains = cal_utils.blank_uvcal_from_uvdata(uvdata)
     if sky_model is None:
         echo(
             f"{datetime.datetime.now()} Sky model is None. Initializing from data...\n",
             verbose=verbose,
         )
-        sky_model = utils.apply_gains(uvdata, gains)
+        sky_model = cal_utils.apply_gains(uvdata, gains)
 
     fit_history = {}
     echo(
@@ -1602,12 +1604,12 @@ def calibrate_and_model_pbl_dictionary_method(
                 uvdata_flags=uvdata,
             )
 
-    model_with_gains = utils.apply_gains(model, gains, inverse=True)
+    model_with_gains = cal_utils.apply_gains(model, gains, inverse=True)
     if not correct_model:
         model = model_with_gains
     resid.data_array -= model_with_gains.data_array
     if correct_resid:
-        resid = utils.apply_gains(resid, gains)
+        resid = cal_utils.apply_gains(resid, gains)
 
     return model, resid, gains, fit_history
 
@@ -1619,7 +1621,7 @@ def calibrate_and_model_dpss(
     offset=0.0,
     include_autos=False,
     verbose=False,
-    modeling="dictionary",
+    modeling_paradigm="dictionary",
     red_tol=1.0,
     **fitting_kwargs,
 ):
@@ -1684,7 +1686,7 @@ def calibrate_and_model_dpss(
             'g_r': real part of gains.
             'g_i': imag part of gains
     """
-    dpss_model_comps = utils.yield_pbl_dpss_model_comps(
+    dpss_model_comps = modeling.yield_pbl_dpss_model_comps(
         uvdata,
         horizon=horizon,
         min_dly=min_dly,
@@ -1692,7 +1694,7 @@ def calibrate_and_model_dpss(
         include_autos=include_autos,
         red_tol=red_tol,
     )
-    if modeling == "dictionary":
+    if modeling_paradigm == "dictionary":
         (model, resid, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,
@@ -1700,7 +1702,7 @@ def calibrate_and_model_dpss(
             verbose=verbose,
             **fitting_kwargs,
         )
-    elif modeling == "sparse_tensor":
+    elif modeling_paradigm == "sparse_tensor":
         (model, resid, gains, fitted_info,) = calibrate_and_model_sparse(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,
