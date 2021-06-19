@@ -49,6 +49,8 @@ def blank_uvcal_from_uvdata(uvdata):
     uvcal.gain_array = np.ones_like(uvcal.flag_array, dtype=np.complex128)
     uvcal.cal_style = "redundant"
     uvcal.cal_type = "gain"
+    uvcal.time_range = (uvcal.time_array.min() - uvcal.integration_time / 2., uvcal.time_array.max() + uvcal.integration_time / 2.)qstat
+    
     return uvcal
 
 
