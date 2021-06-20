@@ -1503,6 +1503,10 @@ def calibrate_and_model_pbl_dictionary_method(
             verbose=verbose,
         )
         fit_history_p = {}
+        # declare tensor names outside of time_index loop
+        # so we can reuse them as staring values for each successive time sample.
+        fg_r = None, fg_i = None
+        g_r = None, fg_i = None
         for time_index in range(uvdata.Ntimes):
             rmsdata = np.sqrt(
                 np.mean(
@@ -1535,14 +1539,17 @@ def calibrate_and_model_pbl_dictionary_method(
                 f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
                 verbose=verbose,
             )
-            fg_r, fg_i = tensorize_fg_coeffs(
-                uvdata=sky_model,
-                model_component_dict=fg_model_comps,
-                dtype=dtype,
-                time_index=time_index,
-                polarization=pol,
-                scale_factor=rmsdata,
-            )
+            # only generate fresh fg_r, fg_i if time_index == 0
+            # otherwise, use values from previous iteration of loop.
+            if time_index == 0:
+                fg_r, fg_i = tensorize_fg_coeffs(
+                    uvdata=sky_model,
+                    model_component_dict=fg_model_comps,
+                    dtype=dtype,
+                    time_index=time_index,
+                    polarization=pol,
+                    scale_factor=rmsdata,
+                )
 
             cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_dictionary(
                 gains_re=g_r,
