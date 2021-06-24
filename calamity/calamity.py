@@ -1505,8 +1505,10 @@ def calibrate_and_model_pbl_dictionary_method(
         fit_history_p = {}
         # declare tensor names outside of time_index loop
         # so we can reuse them as staring values for each successive time sample.
-        fg_r = None, fg_i = None
-        g_r = None, fg_i = None
+        fg_r = None
+        fg_i = None
+        g_r = None
+        fg_i = None
         for time_index in range(uvdata.Ntimes):
             rmsdata = np.sqrt(
                 np.mean(

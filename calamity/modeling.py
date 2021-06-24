@@ -36,9 +36,9 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
     red_grps: list of lists of 2-tuples.
         list of list where each list contains antpair tuples that are ordered
         so that there are no conjugates.
-    red_grp_map: dict
-        dictionary with ant-pairs in antpairs as keys mapping to the index of the redundant group
-        that they are a memeber of.
+    vec_bin_centers: list
+        list of float 3-arrays with xyz vector bin centers of each
+        redundant group.
     lengths: list
         list of float lengths of redundant baselines in meters.
 
@@ -89,7 +89,9 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
     return antpairs, red_grps, vec_bin_centers, lengths
 
 
-def get_uv_overlapping_grps_conjugated(uvdata, remove_redundancy=False, red_tol=1.0, include_autos=False, red_tol_uv=0.5):
+def get_uv_overlapping_grps_conjugated(
+    uvdata, remove_redundancy=False, red_tol=1.0, include_autos=False, red_tol_uv=0.5, n_angle_bins=100
+):
     """Derive groups of baselines that overlap in frequency.
 
     Parameters
@@ -106,92 +108,277 @@ def get_uv_overlapping_grps_conjugated(uvdata, remove_redundancy=False, red_tol=
         to be placed in the same
     """
     # firest get redundant baselines.
-    antpairs, red_grps, red_grp_map, vec_bin_centers, lengths = get_redundant_grps_conjugated(
+    antpairs, red_grps, vec_bin_centers, lengths = get_redundant_grps_conjugated(
         uvdata, include_autos=include_autos, tol=red_tol
     )
     # next, we build fitting fitting_grps by generating a hashmap of connections between baselines
     fmin = uvdata.freq_array.min()
     fmax = uvdata.freq_array.max()
     vbc_hash = {}
-    for grp_num0 in range(len(red_grps)):
-        vbc0 = vec_bin_centers[grp_num0]
-        red_grp0 = red_grps[grp_num0]
-        connections[tuple(red_grp0)] = set({})
-        vbc_hash[tuple(red_grp0)] = vbc0
-        for grp_num1 in range(grp_num0 + 1, len(red_grps)):
-            red_grp1 = red_grps[grp_num1]
-            vbc1 = vec_bin_centers[grp_num1]
-            uvwmin0 = fmin * np.linalg.norm(vbc0)
-            uvwmin1 = fmin * np.linalg.norm(vbc1)
-            uvwmax0 = fmax * np.linalg.norm(vbc0)
-            uvwmax1 = fmax * np.linalg.norm(vbc1)
-            if uvwmin0 > uvwmin1 and uvwmin0 < uvwmax1:
-                if np.any(np.linalg.norm(uvdata.freq_array[0] * vbc1 - uvwmin0)) <= red_tol_uv * 3e8:
-                    connections[tuple(red_grp0)].add(red_grp1)
-                elif np.any(np.linalg.norm(uvdata.freq_array[0] * vbc1 + uvwmin0)) <= red_tol_uv * 3e8:
-                    red_grps[grp_num1] = [ap[::-1] for ap in red_grps[grp_num1]]
-                    vec_bin_centers[grp_num1] = [-vbc for vbc in vec_bin_centers[grp_num1]]
-                    connections[tuple(red_grp0)].add(tuple(red_grps[grp_num1]))
-            elif uvwmin1 > uvwmin0 and uvwmin1 < uvwmax0:
-                if np.any(np.linalg.norm(uvdata.freq_array[0] * vbc0 - uvwmin1)) <= red_tol_uv * 3e8:
-                    connections[tuple(red_grp0)].add(red_grp1)
-                elif np.any(np.linalg.norm(uvdata.freq_array[0] * vbc0 + uvwmin1)) <= red_tol_uv * 3e8:
-                    red_grps[grp_num1] = [ap[::-1] for ap in red_grps[grp_num1]]
-                    vec_bin_centers[grp_num1] = [-vbc for vbc in vec_bin_centers[grp_num1]]
-                    connections[tuple(red_grp0)].add(tuple(red_grps[grp_num1]))
-        # now from connections, generate fitting groups.
-        fitting_grps = {}   # keeps track of the fitting groups
-        bl_lengths = {} # keep track of baseline vectors in fitting groups
-        grp_labels = {} # keeps track of the label of each group that contains a given redundant set
-        # go through all redundant baseline groups (keys in connections)
-        for red_grp in connections:
-            # if red baseline group has not yet been assigned a parent group
-            # then start a new fitting group
-            if red_grp not in grp_labels:
-                fitting_grps[red_grp] = [red_grp]
-                grp_labels[red_grp] = red_grp
-                # add all connections of this red baseline group (baselines that have some freq redundancy)
-                # to the new fitting group and also record red_grp as the label for their fitting group.
-                for connection in connections[red_grp]:
+    connections = {}
+    # bin baselines into angular bins. Only search for connections within each angular bin.
+    grp_nums = {i: [] for i in range(n_angle_bins)}
+    dangle = np.pi / n_angle_bins
+    grp_num = 0
+    for red_grp, vbc in zip(red_grps, vec_bin_centers):
+        vbc_hash[tuple(red_grp)] = vbc
+        if np.abs(vbc[0]) > 0.0:
+            bin_index = int(np.min([np.round((np.arctan(vbc[1] / vbc[0]) + np.pi / 2) / dangle), n_angle_bins - 2]))
+        else:
+            bin_index = n_angle_bins - 1
+        grp_nums[bin_index].append(grp_num)
+        grp_num += 1
+
+    for binnum in tqdm(range(n_angle_bins)):
+        nums = grp_nums[binnum]
+        nnums = len(nums)
+        for i in range(nnums):
+            grp_num0 = nums[i]
+            vbc0 = vec_bin_centers[grp_num0]
+            red_grp0 = red_grps[grp_num0]
+            if tuple(red_grp0) not in connections:
+                connections[tuple(red_grp0)] = set({})
+                vbc_hash[tuple(red_grp0)] = vbc0
+            for j in range(i + 1, nnums):
+                grp_num1 = nums[j]
+                red_grp1 = red_grps[grp_num1]
+                vbc1 = vec_bin_centers[grp_num1]
+                uvwmin0 = fmin * np.linalg.norm(vbc0) / 3e8
+                uvwmin1 = fmin * np.linalg.norm(vbc1) / 3e8
+                uvwmax0 = fmax * np.linalg.norm(vbc0) / 3e8
+                uvwmax1 = fmax * np.linalg.norm(vbc1) / 3e8
+                if (uvwmin0 > uvwmin1 and uvwmin0 < uvwmax1) or (uvwmin1 > uvwmin0 and uvwmin1 < uvwmax0):
+                    u0 = vbc0[0] * uvdata.freq_array[0] / 3e8
+                    v0 = vbc0[1] * uvdata.freq_array[0] / 3e8
+                    u1 = vbc1[0] * uvdata.freq_array[0] / 3e8
+                    v1 = vbc1[1] * uvdata.freq_array[0] / 3e8
+                    ug0, ug1 = np.meshgrid(u0, u1)
+                    vg0, vg1 = np.meshgrid(v0, v1)
+                    if np.any(np.sqrt(np.abs(ug0 - ug1) ** 2.0 + (vg0 - vg1) ** 2.0) <= red_tol_uv):
+                        connections[tuple(red_grp0)].add(tuple(red_grp1))
+                        if tuple(red_grp1) not in connections:
+                            connections[tuple(red_grp1)] = set({})
+                            vbc_hash[tuple(red_grp1)] = vbc1
+                        connections[tuple(red_grp1)].add(tuple(red_grp0))
+                    elif np.any(np.sqrt(np.abs(ug0 + ug1) ** 2.0 + (vg0 + vg1) ** 2.0) <= red_tol_uv):
+                        red_grps[grp_num1] = [ap[::-1] for ap in red_grps[grp_num1]]
+                        vec_bin_centers[grp_num1] = [-vbc for vbc in vec_bin_centers[grp_num1]]
+                        red_grp1 = red_grps[grp_num1]
+                        connections[tuple(red_grp0)].add(tuple(red_grps[grp_num1]))
+                        if tuple(red_grp1) not in connections:
+                            connections[tuple(red_grp1)] = set({})
+                            vbc_hash[tuple(red_grp1)] = vbc1
+                        connections[tuple(red_grp1)].add(tuple(red_grp0))
+
+    # now from connections, generate fitting groups.
+    fitting_grps = {}  # keeps track of the fitting groups
+    bl_lengths = {}  # keep track of baseline vectors in fitting groups
+    grp_labels = {}  # keeps track of the label of each group that contains a given redundant set
+    # sort connection keys by baseline length and angle
+    bl_angles = []
+    bl_lengths = []
+    red_grps_sorted = []
+    for red_grp in vbc_hash:
+        bl_lengths.append(np.linalg.norm(vbc_hash[red_grp]))
+        bl_angles.append(np.arccos(vbc_hash[red_grp][0] / bl_lengths[-1]))
+        red_grps_sorted.append(red_grp)
+    # sort now
+    red_grps_sorted = sorted(
+        red_grps_sorted, key=lambda x: (bl_angles[red_grps_sorted.index(x)], bl_lengths[red_grps_sorted.index(x)])
+    )  # ['c003', 'd004', 'b002', 'a001', 'e005']
+
+    for red_grp in tqdm(red_grps_sorted):
+        # check if red_grp or any of its connections have already been assigned a group.
+        no_connections_in_group = not (red_grp in grp_labels)
+        for connection in connections[red_grp]:
+            if connection in grp_labels:
+                no_existing_connection = False
+                connector = connection
+                break
+        if no_connections_in_group:
+            fitting_grps[red_grp] = [red_grp]
+            grp_labels[red_grp] = red_grp
+            # add all connections of this red baseline group (baselines that have some freq redundancy)
+            # to the new fitting group and also record red_grp as the label for their fitting group.
+            for connection in connections[red_grp]:
+                if connection not in grp_labels:
                     fitting_grps[red_grp].append(connection)
-                    parent_grp[connection] = red_grp
-            else:
-                # if red baseline group has already been assigned a fitting group
-                # then add all baselines that are frequency redundant to the
-                # parent fitting group.
-                parent_grp = grp_labels[red_grp]
-                for connection in connections[red_grp]:
+                    grp_labels[connection] = red_grp
+        else:
+            # if red baseline group has already been assigned a fitting group
+            # then add all baselines that are frequency redundant to the
+            # parent fitting group.
+            parent_grp = grp_labels[red_grp]
+            for connection in connections[red_grp]:
+                if connection not in grp_labels:
                     fitting_grps[parent_grp].append(connection)
                     grp_labels[connection] = parent_grp
-        # convert fitting grps to a list of tuples of tuples of int-2-tuples.
-        fitting_grps = list(fitting_grps.values())
-        # store vector bin centers in list of tuples of float 3-tuples
-        fitting_vec_centers = []
-        for fit_grp in fitting_grps:
-            fitting_vec_centers.append(tuple([vbc_hash[]]))
+
+    # convert fitting grps to a list of tuples of tuples of int-2-tuples.
+    fitting_grps = list(fitting_grps.values())
+    # store vector bin centers in list of tuples of float 3-tuples
+    fitting_vec_centers = []
+    for fit_grp in fitting_grps:
+        fitting_vec_centers.append([])
+        for red_grp in fit_grp:
+            fitting_vec_centers[-1].append(vbc_hash[red_grp])
+
+    return fitting_grps, fitting_vec_centers, connections, grp_labels
 
 
+def simple_cov_matrix(blvecs, ant_dly, freqs, dtype=np.float32, use_tensorflow=False):
+    """Compute simple covariance matrix for subset of baselines in uvdata
+
+    Parameters
+    ----------
+    blvecs: list of np.ndarrays
+      list of length-3 np.ndarrays representing ENH baseline vectors.
+    ant_dly: float
+        intrinsic chromaticity of each antenna element.
+    freqs: array-like
+        array of frequencies (Hz) sampled by interferometer.
+    dtype: numpy.dtype, optional
+        data type to process and store covariance matrix as.
+        default is np.float32
+    use_tensorflow: bool, optional
+        if True, use tensorflow module sto compute covariance matrix.
+        Only recommended for machines with GPUs.
+        default is False.
+
+    Returns
+    -------
+    cmat: tf.Tensor object (if use_tensorflow is True) or np.ndarray(use_tensorflow is False)
+        (Nbls * Nfreqs) x (Nbls * Nfreqs) tf.Tensor object or np.ndarray with dtype dtype
+
+    """
+    nbls = len(blvecs)
+    uvws = np.asarray(blvecs, dtype=dtype)
+    freqs = np.asarray(freqs, dtype=dtype)
+    nfreqs = len(freqs)
+    if use_tensorflow:
+        uvws = tf.convert_to_tensor(uvws, dtype=dtype)
+        freqs = tf.convert_to_tensor(freqs, dtype)
+
+    absdiff = np.zeros((nbls * nfreqs, nbls * nfreqs), dtype=dtype)
+    if use_tensorflow:
+        tf.convert_to_tensor(absdiff, dtype=dtype)
+    for uvw_ind in range(3):
+        if use_tensorflow:
+            uvw_coord = tf.reshape(tf.experimental.numpy.outer(uvws[:, uvw_ind], freqs / 3e8), (nbls * nfreqs,))
+            cg0, cg1 = tf.meshgrid(uvw_coord, uvw_coord, indexing="ij")
+            absdiff += np.abs(cg0 - cg1) ** 2.0
+        else:
+            uvw_coord = np.reshape(np.outer(uvws[:, uvw_ind], freqs / 3e8), (nbls * nfreqs,))
+            cg0, cg1 = np.meshgrid(uvw_coord, uvw_coord, indexing="ij")
+            absdiff += np.abs(cg0 - cg1) ** 2.0
+
+    absdiff = absdiff ** 0.5
+    if use_tensorflow:
+        cmat = tf.experimental.numpy.sinc(2 * absdiff)
+    else:
+        cmat = np.sinc(2 * absdiff)
+    del absdiff
+    if use_tensorflow:
+        fvals = tf.reshape(tf.experimental.numpy.outer(tf.ones(nbls, dtype=dtype), freqs), (nbls * nfreqs,))
+        fg0, fg1 = tf.meshgrid(fvals, fvals, indexing="ij")
+        cmat = cmat * tf.experimental.numpy.sinc(2 * tf.abs(fg0 - fg1) * ant_dly)
+    else:
+        fvals = np.reshape(np.outer(tf.ones(nbls, dtype=dtype), freqs), (nbls * nfreqs,))
+        fg0, fg1 = np.meshgrid(fvals, fvals, indexing="ij")
+        cmat = cmat * np.sinc(2 * np.abs(fg0 - fg1) * ant_dly)
+
+    del fg0, fg1
+    return cmat
 
 
+def yield_simple_multi_baseline_model_comps(
+    blvecs, ant_dly, freqs, dtype=np.float32, eigenval_cutoff=1e-10, verbose=False, use_tensorflow=False
+):
+    """Generate model components for multiple baselines.
 
+    Parameters
+    ----------
+    blvecs: list of len-3 numpy.ndarrays
+      list of baseline vectors ENH
+    ant_dly: float,
+      intrinsic delay of antenna (ns).
+    freqs: array-like
+      array of frequencies sampled by interferometer (MHz).
+    dtype: numpy.dtype, optional
+      data-type to use for eigenvalue decomposition
+      default is np.float32
+    eigenval_cutoff: float, optional
+        threshold of eigenvectors to include in modeling components.
+    verbose: bool, optional
+        text outputs
+        default is False.
+    use_tensorflow: bool, optional
+        if True, use tensorflow for multi-baseline modeling matrix operations.
+        Recommended only for machines with GPUs.
 
+    Returns
+    -------
+    multi_baseline_model_comps: np.ndarray
+        (Nbl * Nfreqs) x Ncomponents numpy.ndarray containing eigenvectors
+        with eigenvalues above cutoff threshold.
 
+    """
+    cmat = simple_cov_matrix(blvecs, ant_dly, freqs, dtype=dtype, use_tensorflow=use_tensorflow)
+    # get eigenvectors
+    echo(
+        f"{datetime.datetime.now()} Deriving modeling components with eigenvalue decomposition...\n",
+        verbose=verbose,
+    )
+    if use_tensorflow:
+        evals, evecs = tf.linalg.eigh(cmat)
+        evals = evals.numpy()
+        evecs = evecs.numpy()
+    else:
+        evals, evecs = np.linalg.eigh(cmat)
 
-
-def compute_bllens(uvdata, fit_grp):
-    lengths = []
-    for ap in fit_grp:
-        dinds = uvdata.antpair2ind(ap)
-        if len(dinds) == 0:
-            dinds = uvdata.antpair2ind(ap[::-1])
-        bllen = np.max(np.linalg.norm(uvdata.uvw_array[dinds], axis=1) ** 2.0, axis=0)
-        lengths.append(bllen)
-    return lengths
+    selection = evals / evals.max() >= eigenval_cutoff
+    evals = evals[selection][::-1]
+    evecs = evecs[:, selection][:, ::-1]
+    return evecs
 
 
 def yield_dpss_model_comps_bl_grp(
-    antpairs, length, freqs, cache, horizon=1.0, min_dly=0.0, offset=0.0, operator_cache=None
+    length,
+    freqs,
+    cache,
+    horizon=1.0,
+    min_dly=0.0,
+    offset=0.0,
+    operator_cache=None,
+    eigenval_cutoff=1e-10,
 ):
+    """Get per-baseline DPSS modeling vectors
+
+    Parameters
+    ----------
+    length: float
+      length of baseline to model (meters)
+    freqs: array-like
+      np.ndarray of frequencies
+    cache: dict
+      dictionary with keys pointing to numpy ndarrays
+    horizon: float, optional
+      fraction of horizon to model
+    min_dly: float, optional
+      default is 0.0
+    offset: float, optional
+      default is 0.0
+    operator_cache: dict, optional
+      dictionary caching operator matrices
+      default is None -> no caching
+    eigenval_cutoff: float, optional
+      default is 1e-10
+
+    Returns
+    -------
+    dpss_model_comps: np.ndarray
+      Nfreqs x Ncomponents array of floats.
+    """
     if operator_cache is None:
         operator_cache = {}
     dly = np.ceil(max(min_dly, length / 0.3 * horizon + offset)) / 1e9
@@ -199,116 +386,85 @@ def yield_dpss_model_comps_bl_grp(
         freqs,
         filter_centers=[0.0],
         filter_half_widths=[dly],
-        eigenval_cutoff=[1e-12],
+        eigenval_cutoff=[eigenval_cutoff],
         cache=operator_cache,
     )[0].real
     return dpss_model_comps
 
 
-def yield_mixed_comps(uvdata, fitting_grps, eigenval_cutoff=1e-10, ant_dly=0.0, verbose=False, dtype=np.float32):
+def yield_mixed_comps(
+    fitting_grps,
+    fitting_blvecs,
+    freqs,
+    eigenval_cutoff=1e-10,
+    ant_dly=0.0,
+    verbose=False,
+    dtype=np.float32,
+    notebook_progressbar=False,
+    use_tensorflow=False,
+):
     """Generate modeling components that include jointly modeled baselines.
 
     Parameters
     ----------
-    uvdata: UVData object
-        data to model
     fitting_grps: list of tuple of tuples of 2-tuples
         each tuple in list is a list of redundant groups of baselines that we will fit jointly
         with components that span each group.
         groups with a single redundant baseline group will be modeled with dpss vectors.
         Redundancies must have conjugation already taken into account.
+    fitting_blvecs: list of lists of len-3 np.ndarrays
+        each list element represents a group of redundant baselines we will fit jointly
+        and is a list of length 3 np.ndarrays containing the ENH coords of each
+        baseline vector.
+    freqs: np.ndarray
+      list of floats
     eigenval_cutoff: float, optional
-        threshold of eigenvectors to include in modeling components.
+      threshold of eigenvectors to include in modeling components.
     ant_dly: float, optional
-        intrinsic chromaticity of antenna elements.
+      intrinsic chromaticity of antenna elements.
     verbose: bool, optional
-        produce text outputs.
+      produce text outputs.
     dtype: numpy.dtype
-        data type in which to compute model eigenvectors.
+      data type in which to compute model eigenvectors.
+
+    Returns
+    -------
+    modeling_vectors: dict
+      dictionary with tuples of tuples of int 2-tuples as keys
+      (representing redundant baseline groups) and np.ndarrays as values
+      each is (Nfreqs * Ngrp_bls) x Ncomponents
+
     """
     operator_cache = {}
     modeling_vectors = {}
-    for fit_grp in fitting_grps:
+    if notebook_progressbar:
+        from tqdm.notebook import tqdm
+    else:
+        from tqdm import tqdm
+    for grpnum in tqdm(range(len(fitting_grps))):
         # yield dpss
+        fit_grp = fitting_grps[grpnum]
+        if isinstance(fit_grp, list):
+            fit_grp = tuple(fit_grp)
+        blvecs = fitting_blvecs[grpnum]
+        bllens = np.linalg.norm(blvecs, axis=1)
         if len(fit_grp) == 1:
-            bllens = compute_bllens(uvdata, fit_grp)
             modeling_vectors[fit_grp] = yield_dpss_model_comps_bl_grp(
-                freqs=uvdata.freq_array[0],
+                freqs=freqs,
                 antpairs=fit_grp[0],
                 length=bllens[0],
                 offset=ant_dly,
                 cache=operator_cache,
-                multibl_key=True,
+                eigenval_cutoff=eigenval_cutoff,
             )
 
         else:
-            modeling_vectors[fit_grp] = simple_cov.yield_multi_baseline_model_comps(
-                uvdata=uvdata, antpairs=fit_grp, ant_dly=ant_dly, dtype=dtype
+            modeling_vectors[fit_grp] = yield_simple_multi_baseline_model_comps(
+                blvecs=blvecs,
+                ant_dly=ant_dly,
+                dtype=dtype,
+                freqs=freqs,
+                eigenval_cutoff=eigenval_cutoff,
+                use_tensorflow=use_tensorflow,
             )
     return modeling_vectors
-
-
-def yield_pbl_dpss_model_comps(
-    uvdata,
-    horizon=1.0,
-    offset=0.0,
-    min_dly=0.0,
-    include_autos=False,
-    verbose=False,
-    red_tol=1.0,
-):
-    """Get dictionary of DPSS vectors for modeling 21cm foregrounds.
-
-    Parameters
-    ----------
-    horizon: float, optional
-        fraction of baseline delay length to model with dpss modes
-        unitless.
-        default is 1.
-    min_dly: float, optional
-        minimum delay to model with dpss models.
-        in units of ns.
-        default is 0.
-    offset: float optional
-        offset off of horizon wedge to include in dpss delay range.
-        in units of ns.
-        default is 0.
-    include_autos: bool, optional
-        if true, include autocorrelations in fitting.
-        default is False.
-    verbose: bool, optional
-        lots of text output
-        default is False.
-    red_tol: float, optional
-        tolarance for treating baselines as redundant.
-        default is 1.0
-
-    Returns
-    -------
-    dpss_model_comps: dict
-        dictionary with redundant group antenna-pair keys pointing to dpss operators.
-
-    """
-    dpss_model_comps = {}
-    operator_cache = {}
-    # generate dpss modeling vectors.
-    antpairs, red_grps, red_grp_map, vec_bin_centers, lengths = get_redundant_grps_conjugated(
-        uvdata, include_autos=include_autos, tol=red_tol
-    )
-    echo(
-        f"{datetime.datetime.now()} Building DPSS modeling vectors...\n",
-        verbose=verbose,
-    )
-
-    for red_grp, length in zip(red_grps, lengths):
-        dpss_model_comps[(tuple(red_grp),)] = yield_dpss_model_comps_bl_grp(
-            antpairs=red_grp,
-            length=length,
-            freqs=uvdata.freq_array[0],
-            cache=operator_cache,
-            horizon=1.0,
-            min_dly=min_dly,
-            offset=offset,
-        )
-
-    return dpss_model_comps
