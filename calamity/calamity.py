@@ -8,6 +8,7 @@ import itertools
 import datetime
 from pyuvdata import utils as uvutils
 from .utils import echo
+from .utils import PBARS
 from . import cal_utils
 from . import modeling
 
@@ -491,10 +492,6 @@ def fit_gains_and_foregrounds(
         vars = [g_r, g_i]
     else:
         vars = [g_r, g_i, fg_r, fg_i]
-    if notebook_progressbar:
-        from tqdm.notebook import tqdm
-    else:
-        from tqdm import tqdm
     min_loss = 9e99
     echo(
         f"{datetime.datetime.now()} Building Computational Graph...\n",
@@ -510,7 +507,7 @@ def fit_gains_and_foregrounds(
         f"{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss_i:.2e}...\n",
         verbose=verbose,
     )
-    for step in tqdm(range(maxsteps)):
+    for step in PBARS[notebook_progressbar](range(maxsteps)):
         with tf.GradientTape() as tape:
             loss = cal_loss()
         grads = tape.gradient(loss, vars)
@@ -1755,6 +1752,8 @@ def calibrate_and_model_dpss(
         red_tol=red_tol,
     )
     if modeling_paradigm == "dictionary":
+        # get rid of fitting group level for the dictionary method.
+        dpss_model_comps = {k[0]: dpss_model_comps[k] for k in dpss_model_comps}
         (model, resid, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,

@@ -4,6 +4,7 @@ import datetime
 import tensorflow as tf
 from . import simple_cov
 from .utils import echo
+from .utils import PBARS
 
 
 def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, include_autos=False):
@@ -124,10 +125,6 @@ def get_uv_overlapping_grps_conjugated(
         list of tuples of tuples of 2-tuples. Each tuple is a fitting group
         each tuple in each fitting group is a redundant group
     """
-    if notebook_progressbar:
-        from tqdm.notebook import tqdm
-    else:
-        from tqdm import tqdm
     # first get redundant baselines.
     antpairs, red_grps, vec_bin_centers, lengths = get_redundant_grps_conjugated(
         uvdata, include_autos=include_autos, tol=red_tol
@@ -150,7 +147,7 @@ def get_uv_overlapping_grps_conjugated(
         grp_nums[bin_index].append(grp_num)
         grp_num += 1
 
-    for binnum in tqdm(range(n_angle_bins)):
+    for binnum in PBARS[notebook_progressbar](range(n_angle_bins)):
         nums = grp_nums[binnum]
         nnums = len(nums)
         for i in range(nnums):
@@ -208,7 +205,7 @@ def get_uv_overlapping_grps_conjugated(
         red_grps_sorted, key=lambda x: (bl_angles[red_grps_sorted.index(x)], bl_lengths[red_grps_sorted.index(x)])
     )  # ['c003', 'd004', 'b002', 'a001', 'e005']
 
-    for red_grp in tqdm(red_grps_sorted):
+    for red_grp in PBARS[notebook_progressbar](red_grps_sorted):
         # check if red_grp or any of its connections have already been assigned a group.
         no_connections_in_group = not (red_grp in grp_labels)
         for connection in connections[red_grp]:
@@ -367,7 +364,6 @@ def yield_simple_multi_baseline_model_comps(
 def yield_dpss_model_comps_bl_grp(
     length,
     freqs,
-    cache,
     horizon=1.0,
     min_dly=0.0,
     offset=0.0,
@@ -412,6 +408,72 @@ def yield_dpss_model_comps_bl_grp(
         cache=operator_cache,
     )[0].real
     return dpss_model_comps
+
+
+def yield_pbl_dpss_model_comps(
+    uvdata,
+    horizon=1.0,
+    min_dly=0.0,
+    offset=0.0,
+    include_autos=False,
+    use_redundancy=False,
+    red_tol=1.0,
+    eigenval_cutoff=1e-10,
+    notebook_progressbar=False,
+):
+    """Get per-baseline dpss modeling components.
+
+    Parameters
+    uvdata: UVData object
+        dataset to model with per-baseline DPSS modes.
+    horizon: float, optional
+        fraction of horizon to model with DPSS modes
+        default is 1.0
+    min_dly: float, optional
+        minimum delay to model out to with DPSS modes.
+        units of nanoseconds
+        default is 0.
+    offset: float, optional
+        offset off of horizon delay to model foregrounds with DPSS modes
+        units of nanoseconds
+        default is 0.
+    include_autos: bool, optional
+        include autocorrelations in modeling.
+        default is False.
+    use_redundancy: bool, optional
+        If True, model all baselines within each redundant group with the same components
+        If False, model each baseline within each redundant group with sepearate components.
+        default is False.
+    red_tol: float, optional
+        Tolerance for grouping baselines into a redudnant group.
+        units of meters.
+        default is 1.0
+    eigenval_cutoff: float, optional
+        minimum eigenval to keep in each modeling component group.
+        default is 1e-10.
+    notebook_progressbar: bool, optional
+        if True, use pretty progressbar that renders well in jupyter.
+        default is False.
+    """
+    operator_cache = {}
+    _, red_grps, vec_bin_centers, _ = get_redundant_grps_conjugated(
+        uvdata, remove_redundancy=not (use_redundancy), tol=red_tol, include_autos=include_autos
+    )
+    fitting_grps = [(tuple(red_grp),) for red_grp in red_grps]
+    modeling_vectors = {}
+    freqs = uvdata.freq_array[0]
+    for grpnum in PBARS[notebook_progressbar](range(len(fitting_grps))):
+        bllen = np.linalg.norm(vec_bin_centers[grpnum])
+        modeling_vectors[fitting_grps[grpnum]] = yield_dpss_model_comps_bl_grp(
+            freqs=freqs,
+            length=bllen,
+            offset=offset,
+            horizon=horizon,
+            min_dly=min_dly,
+            operator_cache=operator_cache,
+            eigenval_cutoff=eigenval_cutoff,
+        )
+    return modeling_vectors
 
 
 def yield_mixed_comps(
@@ -459,11 +521,7 @@ def yield_mixed_comps(
     """
     operator_cache = {}
     modeling_vectors = {}
-    if notebook_progressbar:
-        from tqdm.notebook import tqdm
-    else:
-        from tqdm import tqdm
-    for grpnum in tqdm(range(len(fitting_grps))):
+    for grpnum in PBARS[notebook_progressbar](range(len(fitting_grps))):
         # yield dpss
         fit_grp = fitting_grps[grpnum]
         if isinstance(fit_grp, list):
@@ -473,10 +531,9 @@ def yield_mixed_comps(
         if len(fit_grp) == 1:
             modeling_vectors[fit_grp] = yield_dpss_model_comps_bl_grp(
                 freqs=freqs,
-                antpairs=fit_grp[0],
                 length=bllens[0],
                 offset=ant_dly,
-                cache=operator_cache,
+                operator_cache=operator_cache,
                 eigenval_cutoff=eigenval_cutoff,
             )
 
