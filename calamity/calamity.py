@@ -1753,7 +1753,6 @@ def calibrate_and_model_dpss(
     )
     if modeling_paradigm == "dictionary":
         # get rid of fitting group level for the dictionary method.
-        dpss_model_comps = {k[0]: dpss_model_comps[k] for k in dpss_model_comps}
         (model, resid, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,
