@@ -90,7 +90,7 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
 
 
 def get_uv_overlapping_grps_conjugated(
-    uvdata, remove_redundancy=False, red_tol=1.0, include_autos=False, red_tol_uv=0.5, n_angle_bins=100
+    uvdata, remove_redundancy=False, red_tol=1.0, include_autos=False, red_tol_freq=0.5, n_angle_bins=200
 ):
     """Derive groups of baselines that overlap in frequency.
 
@@ -103,9 +103,17 @@ def get_uv_overlapping_grps_conjugated(
     red_tol: float, optional
         distance between baselines for them to be considered redundant
         (units of meters)
+    include_autos: bool, optional
+        if true, include autocorrelations in redundant groups
     freq_tol: float, optional
         maximum distance between baselines in uv plane at some frequency
         to be placed in the same
+
+    Returns
+    -------
+    fitting_grps: list
+        list of tuples of tuples of 2-tuples. Each tuple is a fitting group
+        each tuple in each fitting group is a redundant group
     """
     # firest get redundant baselines.
     antpairs, red_grps, vec_bin_centers, lengths = get_redundant_grps_conjugated(
@@ -154,13 +162,13 @@ def get_uv_overlapping_grps_conjugated(
                     v1 = vbc1[1] * uvdata.freq_array[0] / 3e8
                     ug0, ug1 = np.meshgrid(u0, u1)
                     vg0, vg1 = np.meshgrid(v0, v1)
-                    if np.any(np.sqrt(np.abs(ug0 - ug1) ** 2.0 + (vg0 - vg1) ** 2.0) <= red_tol_uv):
+                    if np.any(np.sqrt(np.abs(ug0 - ug1) ** 2.0 + (vg0 - vg1) ** 2.0) <= red_tol_freq):
                         connections[tuple(red_grp0)].add(tuple(red_grp1))
                         if tuple(red_grp1) not in connections:
                             connections[tuple(red_grp1)] = set({})
                             vbc_hash[tuple(red_grp1)] = vbc1
                         connections[tuple(red_grp1)].add(tuple(red_grp0))
-                    elif np.any(np.sqrt(np.abs(ug0 + ug1) ** 2.0 + (vg0 + vg1) ** 2.0) <= red_tol_uv):
+                    elif np.any(np.sqrt(np.abs(ug0 + ug1) ** 2.0 + (vg0 + vg1) ** 2.0) <= red_tol_freq):
                         red_grps[grp_num1] = [ap[::-1] for ap in red_grps[grp_num1]]
                         vec_bin_centers[grp_num1] = [-vbc for vbc in vec_bin_centers[grp_num1]]
                         red_grp1 = red_grps[grp_num1]

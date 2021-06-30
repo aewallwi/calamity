@@ -1623,6 +1623,57 @@ def calibrate_and_model_pbl_dictionary_method(
     return model, resid, gains, fit_history
 
 
+def calibrate_and_model_mixed(
+    uvdata,
+    horizon=1.0,
+    min_dly=0.0,
+    offset=0.0,
+    include_autos=False,
+    verbose=False,
+    red_tol=1.0,
+    red_tol_freq=0.5,
+    **fitting_kwargs,
+):
+    """Simultaneously solve for gains and model foregrounds with a mix of DPSS vectors
+        for baselines with no frequency redundancy and simple_cov components for
+        groups of baselines that have some frequency redundancy.
+
+
+    Parameters
+    ----------
+    uvdata: UVData object.
+        dataset to calibrate and filter.
+    horizon: float, optional
+        fraction of baseline delay length to model with dpss modes
+        unitless.
+        default is 1.
+    min_dly: float, optional
+        minimum delay to model with dpss models.
+        in units of ns.
+        default is 0.
+    offset: float optional
+        offset off of horizon wedge to include in dpss delay range.
+        in units of ns.
+        default is 0.
+    include_autos: bool, optional
+        if true, include autocorrelations in fitting.
+        default is False.
+    verbose: bool, optional
+        lots of text output
+        default is False.
+    red_tol: float, optional
+        tolerance for treating baselines as redundant (meters)
+        default is 1.0
+    red_tol_freq: float, optional
+        tolerance for treating two baselines as having some
+        frequency redundancy. When frequency redundancy exists, baselines
+        will be modeled jointly.
+    fitting_kwargs: kwarg dict
+        additional kwargs for calibrate_and_model.
+        see docstring of calibrate_and_model.
+    """
+
+
 def calibrate_and_model_dpss(
     uvdata,
     horizon=1.0,
