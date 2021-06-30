@@ -1,6 +1,8 @@
 from ..data import DATA_PATH
 from .. import modeling
 import pytest
+from pyuvdata import UVData
+import os
 
 
 @pytest.fixture
@@ -16,7 +18,7 @@ def sky_model():
 
 
 def test_get_uv_overlapping_grps_conjugated(sky_model):
-    fitting_grps, fitting_vec_centers, connections, grp_labels = get_uv_overlapping_grps_conjugated(
+    fitting_grps, fitting_vec_centers, connections, grp_labels = modeling.get_uv_overlapping_grps_conjugated(
         uvdata=sky_model, red_tol_freq=0.5, n_angle_bins=200
     )
     assert fitting_grps == [

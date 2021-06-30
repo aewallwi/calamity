@@ -90,7 +90,13 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
 
 
 def get_uv_overlapping_grps_conjugated(
-    uvdata, remove_redundancy=False, red_tol=1.0, include_autos=False, red_tol_freq=0.5, n_angle_bins=200
+    uvdata,
+    remove_redundancy=False,
+    red_tol=1.0,
+    include_autos=False,
+    red_tol_freq=0.5,
+    n_angle_bins=200,
+    notebook_progressbar=False,
 ):
     """Derive groups of baselines that overlap in frequency.
 
@@ -108,6 +114,9 @@ def get_uv_overlapping_grps_conjugated(
     freq_tol: float, optional
         maximum distance between baselines in uv plane at some frequency
         to be placed in the same
+    notebook_progressbar: bool, optional
+        if True, show graphical notebook progress bar that looks good in jupyter.
+        default is False.
 
     Returns
     -------
@@ -115,7 +124,11 @@ def get_uv_overlapping_grps_conjugated(
         list of tuples of tuples of 2-tuples. Each tuple is a fitting group
         each tuple in each fitting group is a redundant group
     """
-    # firest get redundant baselines.
+    if notebook_progressbar:
+        from tqdm.notebook import tqdm
+    else:
+        from tqdm import tqdm
+    # first get redundant baselines.
     antpairs, red_grps, vec_bin_centers, lengths = get_redundant_grps_conjugated(
         uvdata, include_autos=include_autos, tol=red_tol
     )
@@ -259,6 +272,7 @@ def simple_cov_matrix(blvecs, ant_dly, freqs, dtype=np.float32, use_tensorflow=F
         (Nbls * Nfreqs) x (Nbls * Nfreqs) tf.Tensor object or np.ndarray with dtype dtype
 
     """
+
     nbls = len(blvecs)
     uvws = np.asarray(blvecs, dtype=dtype)
     freqs = np.asarray(freqs, dtype=dtype)
