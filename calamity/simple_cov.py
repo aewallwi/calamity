@@ -5,17 +5,16 @@ from .utils import echo
 
 
 def simple_cov_matrix(
-    uvdata, baseline_group, ant_dly=0.0, horizon=1.0, offset=0.0, min_dly=0.0, dtype=np.float32, use_tensorflow=False
+    blvecs, freqs, ant_dly=0.0, horizon=1.0, offset=0.0, min_dly=0.0, dtype=np.float32, use_tensorflow=False
 ):
     """Compute simple covariance matrix for subset of baselines in uvdata
 
     Parameters
     ----------
-    uvdata: UVdata object
-        uvdata with baselines to produce covariance for.
-    baseline_group: tuple of tuples of 2-tuples
-        tuple of tuple of 2-tuples where each tuple is a different redundant baseline
-        group that contains 2-tuples specifying each baseline.
+    blvecs: list of np.ndarrays
+        list of length-3 np.ndarrays representing ENH baseline vectors.
+    freqs: array-like
+        array of frequencies (Hz) sampled by interferometer.
     ant_dly: float
         intrinsic chromaticity of each antenna element, manifested in a
         multiplicative sinc matrix sinc(2 pi tau_ant * (nu_1 - nu_0))
@@ -43,27 +42,18 @@ def simple_cov_matrix(
 
 
     """
-    ap_data = set(uvdata.get_antpairs())
-    uvws = []
-    for red_grp in baseline_group:
-        ap = red_grp[0]
-        if ap in ap_data:
-            dinds = uvdata.antpair2ind(red_grp[0])
-            uvws.extend(uvdata.uvw_array[dinds])
-        else:
-            dinds = uvdata.antpair2ind(red_grp[0][::-1])
-            uvws.extend(-uvdata.uvw_array[dinds])
-    # find differences between all uvws
-    uvws = np.asarray(uvws, dtype=dtype)
-    nbls = len(uvws)
-    freqs = np.asarray(uvdata.freq_array.squeeze(), dtype=dtype)
-    absdiff = np.zeros((nbls, nbls), dtype=dtype)
+    nbls = len(blvecs)
+    uvws = np.asarray(blvecs, dtype=dtype)
+    freqs = np.asarray(freqs, dtype=dtype)
+    nfreqs = len(freqs)
+    freqs = freqs.astype(dtype)
+    absdiff = np.zeros((nbls * nfreqs, nbls * nfreqs), dtype=dtype)
     if use_tensorflow:
         freqs = tf.convert_to_tensor(freqs, dtype)
-        absdiff = tf.convert_to_tensor(basdiff, dtype=dtype)
+        absdiff = tf.convert_to_tensor(absdiff, dtype=dtype)
     for uvw_ind in range(3):
         if use_tensorflow:
-            uvw_coord = tf.reshape(tf.outer(uvws[:, uvw_ind], freqs / 3e8), (nbls * uvdata.Nfreqs,))
+            uvw_coord = tf.reshape(tf.experimental.numpy.outer(uvws[:, uvw_ind], freqs / 3e8), (nbls * nfreqs,))
             cg0, cg1 = tf.meshgrid(uvw_coord, uvw_coord, indexing="ij")
             absdiff += tf.math.square(tf.math.abs(cg0 - cg1) * horizon)
         else:
@@ -72,10 +62,12 @@ def simple_cov_matrix(
             absdiff += np.abs(cg0 - cg1) ** 2.0
     if use_tensorflow:
         absdiff = tf.math.sqrt(absdiff) * horizon
-        fg0, fg1 = tf.reshape(tf.outer(tf.ones(nbls, dytpe=dtype), freqs), (nbls * uvdata.Nfreqs,), indexing="ij")
+        fvals = tf.reshape(tf.experimental.numpy.outer(tf.ones(nbls, dtype=dtype), freqs), (nbls * nfreqs,))
+        fg0, fg1 = tf.meshgrid(fvals, fvals, indexing="ij")
         dfg = tf.abs(fg0 - fg1)
     else:
         absdiff = np.sqrt(absdiff) * horizon
+        fvals = np.reshape(np.outer(np.ones(nbls, dtype=dtype), freqs), (nbls * nfreqs,))
         fg0, fg1 = np.meshgrid(fvals, fvals, indexing="ij")
         dfg = np.abs(fg0 - fg1)
 
@@ -150,6 +142,7 @@ def yield_simple_multi_baseline_model_comps(
     """
     cmat = simple_cov_matrix(
         blvecs,
+        freqs,
         ant_dly=ant_dly,
         horizon=horizon,
         offset=offset,

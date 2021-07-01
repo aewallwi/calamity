@@ -364,9 +364,10 @@ def yield_mixed_comps(
     fitting_blvecs,
     freqs,
     eigenval_cutoff=1e-10,
-    min_dly=0.0,
+    ant_dly=0.0,
     horizon=1.0,
     offset=0.0,
+    min_dly=0.0,
     verbose=False,
     dtype=np.float32,
     notebook_progressbar=False,
@@ -389,8 +390,20 @@ def yield_mixed_comps(
       list of floats
     eigenval_cutoff: float, optional
       threshold of eigenvectors to include in modeling components.
-    ant_dly: float, optional
-      intrinsic chromaticity of antenna elements.
+    ant_dly: float
+        intrinsic chromaticity of each antenna element, manifested in a
+        multiplicative sinc matrix sinc(2 pi tau_ant * (nu_1 - nu_0))
+    horizon: float, optional
+        fraction of horizon for beam to extend to in analytic cov matrix.
+        default is 1.0
+    offset: float, optional
+        additional offset causing additional decorrelation between antennas
+        (units of ns).
+        default is 0.0
+    min_dly: float, optional
+        minimum decorrelation delay between points in uv plane. Net effect should
+        be some additional modes and signal loss.
+        default is 0.0
     verbose: bool, optional
       produce text outputs.
     dtype: numpy.dtype
@@ -417,15 +430,20 @@ def yield_mixed_comps(
             modeling_vectors[fit_grp] = yield_dpss_model_comps_bl_grp(
                 freqs=freqs,
                 length=bllens[0],
-                offset=ant_dly,
+                offset=offset,
+                horizon=horizon,
+                min_dly=min_dly,
                 operator_cache=operator_cache,
                 eigenval_cutoff=eigenval_cutoff,
             )
 
         else:
-            modeling_vectors[fit_grp] = yield_simple_multi_baseline_model_comps(
+            modeling_vectors[fit_grp] = simple_cov.yield_simple_multi_baseline_model_comps(
                 blvecs=blvecs,
                 ant_dly=ant_dly,
+                offset=offset,
+                min_dly=min_dly,
+                horizon=horizon,
                 dtype=dtype,
                 freqs=freqs,
                 eigenval_cutoff=eigenval_cutoff,

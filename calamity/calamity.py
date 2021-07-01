@@ -1669,9 +1669,9 @@ def calibrate_and_model_mixed(
         additional kwargs for calibrate_and_model.
         see docstring of calibrate_and_model.
     """
-    model_comps = modeling.yield_mixed_comps()
+    #model_comps = modeling.yield_mixed_comps()
 
-    return model, resid, gains, fitted_info
+    #return model, resid, gains, fitted_info
 
 
 def calibrate_and_model_dpss(
