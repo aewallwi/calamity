@@ -5,9 +5,12 @@ from . import utils
 import copy
 import argparse
 import itertools
-from .utils import echo
 import datetime
 from pyuvdata import utils as uvutils
+from .utils import echo
+from .utils import PBARS
+from . import cal_utils
+from . import modeling
 
 OPTIMIZERS = {
     "Adadelta": tf.optimizers.Adadelta,
@@ -20,19 +23,25 @@ OPTIMIZERS = {
 }
 
 
-def sparse_tensorize_pbl_fg_model_comps(red_grps, fg_model_comps, ants_map, dtype=np.float32):
+def sparse_tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, dtype=np.float32):
     """Convert per-baseline model components into a sparse Ndata x Ncomponent tensor
 
     Parameters
     ----------
-    red_grps: list of lists of int 2-tuples
-        a list of lists of 2-tuples where all antenna pairs within each sublist
-        are redundant with eachother. Assumes that conjugates are correctly taken.
-    fg_model_comps: dict of 2-tuples as keys and numpy.ndarray as values.
-        dictionary mapping int antenna-pair 2-tuples to
+    fg_model_comps: dictionary
+        dictionary with keys that are tuples of tuples of 2-tuples (thats right, 3 levels)
+        in the first level, each tuple represents a 'modeling group' visibilities in each
+        modeling group are represented by a set of basis vectors that span all baselines in that
+        group with elements raveled by baseline and then frequency. Each tuple in the modeling group is a
+        'redundant group' representing visibilities that we will represent with identical component coefficients
+        each element of each 'redundant group' is a 2-tuple antenna pair. Our formalism easily accomodates modeling
+        visibilities as redundant or non redundant (one simply needs to make each redundant group length 1).
     ants_map: dict mapping integers to integers
         map between each antenna number to a unique index between 0 and Nants_data
         (typically the index of each antenna in ants_map)
+    nfreqs: int, optional
+        number of frequency channels
+
     dtype: numpy.dtype
         data-type to store in sparse tensor.
         default is np.float32
@@ -48,20 +57,20 @@ def sparse_tensorize_pbl_fg_model_comps(red_grps, fg_model_comps, ants_map, dtyp
     comp_vals = []
     fgvind = 0
     nants_data = len(ants_map)
-    nfreqs = len(fg_model_comps[red_grps[0][0]])
-    for red_grp in red_grps:
-        # calculate one Ndata x Ncomponent sparse vector per redundant baseline group.
-        for vind in range(fg_model_comps[red_grp[0]].shape[1]):
-            for ap in red_grp:
-                i, j = ants_map[ap[0]], ants_map[ap[1]]
-                blind = i * nants_data + j
-                for f in range(nfreqs):
-                    comp_inds.append([blind * nfreqs + f, fgvind])
-                    comp_vals.append(fg_model_comps[ap][f, vind].astype(dtype))
-                    sparse_number_of_elements += 1
-
+    for modeling_grp in fg_model_comps:
+        # calculate Ncomponents Ndata sparse vectors per modeling group
+        for vind in range(fg_model_comps[modeling_grp].shape[1]):
+            # visibilities in each redundant group have identical copies
+            # of each per-baseline Nfreq spectra in a modeling component
+            for grpnum, red_grp in enumerate(modeling_grp):
+                for ap in red_grp:
+                    i, j = ants_map[ap[0]], ants_map[ap[1]]
+                    blind = i * nants_data + j
+                    for f in range(nfreqs):
+                        comp_inds.append([blind * nfreqs + f, fgvind])
+                        comp_vals.append(fg_model_comps[modeling_grp][grpnum * nfreqs + f, vind].astype(dtype))
+                        sparse_number_of_elements += 1
             fgvind += 1
-
     # sort by comp_inds.
     sort_order = sorted(range(len(comp_inds)), key=comp_inds.__getitem__)
     comp_vals = [comp_vals[ind] for ind in sort_order]
@@ -235,18 +244,14 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
     return gains_re, gains_im
 
 
-def tensorize_pbl_model_comps_dictionary(red_grps, fg_model_comps, dtype=np.float32):
+def tensorize_pbl_model_comps_dictionary(fg_model_comps, dtype=np.float32):
     """Helper function generating mappings for per-baseline foreground modeling.
 
     Generates mappings between antenna pairs and foreground basis vectors accounting for redundancies.
 
     Parameters
     ----------
-    red_grps: list of lists of int 2-tuples
-        a list of lists of 2-tuples where all antenna pairs within each sublist
-        are redundant with eachother. Assumes that conjugates are correctly taken.
-    fg_model_comps: dict of 2-tuples as keys and numpy.ndarray as values.
-        dictionary mapping int antenna-pair 2-tuples to
+    fg_model_comps: dict with tuples of tuples of 2-tuples as keys and np.ndarrays as values.
 
     Returns
     -------
@@ -258,14 +263,14 @@ def tensorize_pbl_model_comps_dictionary(red_grps, fg_model_comps, dtype=np.floa
     model_comp_tensor_map = {}
     fg_range_map = {}
     startind = 0
-    for grpnum, red_grp in enumerate(red_grps):
+    for grpnum, red_grp in enumerate(fg_model_comps.keys()):
         # set fg_range_map value based on first antenna-pair in redundant group.
-        ncomponents = fg_model_comps[red_grp[0]].shape[1]
-        fg_range_map[red_grp[0]] = (startind, startind + ncomponents)
+        ncomponents = fg_model_comps[red_grp].shape[1]
+        fg_range_map[red_grp[0][0]] = (startind, startind + ncomponents)
         startind += ncomponents
-        for ap in red_grp:
-            model_comp_tensor_map[ap] = tf.convert_to_tensor(fg_model_comps[ap], dtype=dtype)
-            fg_range_map[ap] = fg_range_map[red_grp[0]]
+        for ap in red_grp[0]:
+            model_comp_tensor_map[ap] = tf.convert_to_tensor(fg_model_comps[red_grp], dtype=dtype)
+            fg_range_map[ap] = fg_range_map[red_grp[0][0]]
     return fg_range_map, model_comp_tensor_map
 
 
@@ -487,10 +492,6 @@ def fit_gains_and_foregrounds(
         vars = [g_r, g_i]
     else:
         vars = [g_r, g_i, fg_r, fg_i]
-    if notebook_progressbar:
-        from tqdm.notebook import tqdm
-    else:
-        from tqdm import tqdm
     min_loss = 9e99
     echo(
         f"{datetime.datetime.now()} Building Computational Graph...\n",
@@ -506,7 +507,7 @@ def fit_gains_and_foregrounds(
         f"{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss_i:.2e}...\n",
         verbose=verbose,
     )
-    for step in tqdm(range(maxsteps)):
+    for step in PBARS[notebook_progressbar](range(maxsteps)):
         with tf.GradientTape() as tape:
             loss = cal_loss()
         grads = tape.gradient(loss, vars)
@@ -978,7 +979,6 @@ def tensorize_pbl_data_dictionary(
 def tensorize_fg_coeffs(
     uvdata,
     model_component_dict,
-    red_grps,
     time_index,
     polarization,
     scale_factor=1.0,
@@ -992,7 +992,7 @@ def tensorize_fg_coeffs(
     ----------
     uvdata: UVData object.
         UVData object holding model data.
-    model_component_dict: dict with int 2-tuple keys and numpy.ndarray values.
+    model_component_dict: dict with tuples of tuples of int 2-tuples as keys keys and numpy.ndarray values.
         dictionary holding int 2-tuple keys mapping to Nfreq x Nfg ndarrrays
         used to model each individual baseline.
     red_grps: list of lists of int 2-tuples
@@ -1024,15 +1024,19 @@ def tensorize_fg_coeffs(
     """
     fg_coeffs_re = []
     fg_coeffs_im = []
-    for red_grp in red_grps:
-        ap = red_grp[0]
-        bl = ap + (polarization,)
-        fg_coeffs_re.extend(
-            uvdata.get_data(bl).real[time_index] * ~uvdata.get_flags(bl)[time_index] @ model_component_dict[ap]
-        )
-        fg_coeffs_im.extend(
-            uvdata.get_data(bl).imag[time_index] * ~uvdata.get_flags(bl)[time_index] @ model_component_dict[ap]
-        )
+    for fit_grp in model_component_dict:
+        fg_coeff = 0.0
+        blnum = 0
+        for red_grp in fit_grp:
+            for ap in red_grp:
+                bl = ap + (polarization,)
+                fg_coeff += (
+                    uvdata.get_data(bl)[time_index] * ~uvdata.get_flags(bl)[time_index]
+                ) @ model_component_dict[fit_grp][blnum * uvdata.Nfreqs : (blnum + 1) * uvdata.Nfreqs]
+            blnum += 1
+        fg_coeffs_re.extend(fg_coeff.real)
+        fg_coeffs_im.extend(fg_coeff.imag)
+
     fg_coeffs_re = np.asarray(fg_coeffs_re) / scale_factor
     fg_coeffs_im = np.asarray(fg_coeffs_im) / scale_factor
     if force2d:
@@ -1061,7 +1065,6 @@ def calibrate_and_model_sparse(
     record_var_history_interval=1,
     use_redundancy=False,
     notebook_progressbar=False,
-    red_tol=1.0,
     correct_resid=False,
     correct_model=False,
     weights=None,
@@ -1077,9 +1080,14 @@ def calibrate_and_model_sparse(
     uvdata: UVData object
         uvdata objet of data to be calibrated.
     fg_model_comps: dictionary
-        dictionary containing Nfreq x Nbasis design matrices
-        describing the basis vectors being used to model each baseline with keys corresponding
-        antenna pairs.
+        dictionary with keys that are tuples of tuples of 2-tuples (thats right, 3 levels)
+        in the first level, each tuple represents a 'modeling group' visibilities in each
+        modeling group are represented by a set of basis vectors that span all baselines in that
+        group with elements raveled by baseline and then frequency. Each tuple in the modeling group is a
+        'redundant group' representing visibilities that we will represent with identical component coefficients
+        each element of each 'redundant group' is a 2-tuple antenna pair. Our formalism easily accomodates modeling
+        visibilities as redundant or non redundant (one simply needs to make each redundant group length 1).
+        values are real numpy arrays with size (Ngrp * Nfreqs) * Ncomponents
     gains: UVCal object
         UVCal with initial gain estimates.
         There many smart ways to obtain initial gain estimates
@@ -1168,7 +1176,11 @@ def calibrate_and_model_sparse(
     antpairs_data = uvdata.get_antpairs()
     if not include_autos:
         antpairs_data = set([ap for ap in antpairs_data if ap[0] != ap[1]])
-
+    red_grps = []
+    # generate redundant groups
+    for fit_grp in fg_model_comps.keys():
+        for red_grp in fit_grp:
+            red_grps.append(red_grp)
     uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
     sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
     resid = copy.deepcopy(uvdata)
@@ -1178,23 +1190,14 @@ def calibrate_and_model_sparse(
             f"{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n",
             verbose=verbose,
         )
-        gains = utils.blank_uvcal_from_uvdata(uvdata)
-    # if sky-model is None, initialize it to be the
-    # data divided by the initial gain estimates.
-
-    antpairs, red_grps, antpair_red_indices, _ = utils.get_redundant_groups_conjugated(
-        uvdata,
-        remove_redundancy=not (use_redundancy),
-        include_autos=include_autos,
-        tol=red_tol,
-    )
+        gains = cal_utils.blank_uvcal_from_uvdata(uvdata)
 
     if sky_model is None:
         echo(
             f"{datetime.datetime.now()} Sky model is None. Initializing from data...\n",
             verbose=verbose,
         )
-        sky_model = utils.apply_gains(uvdata, gains)
+        sky_model = cal_utils.apply_gains(uvdata, gains)
 
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
@@ -1203,8 +1206,8 @@ def calibrate_and_model_sparse(
         f"{datetime.datetime.now()} Computing sparse foreground components matrix...\n",
         verbose=verbose,
     )
-    fg_comp_tensor = sparse_tensorize_pbl_fg_model_comps(
-        red_grps=red_grps, fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype
+    fg_comp_tensor = sparse_tensorize_fg_model_comps(
+        fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype, nfreqs=sky_model.Nfreqs
     )
     echo(
         f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
@@ -1256,7 +1259,6 @@ def calibrate_and_model_sparse(
             )
             fg_r, fg_i = tensorize_fg_coeffs(
                 uvdata=sky_model,
-                red_grps=red_grps,
                 model_component_dict=fg_model_comps,
                 dtype=dtype,
                 time_index=time_index,
@@ -1323,12 +1325,12 @@ def calibrate_and_model_sparse(
                 polarization=pol,
                 uvdata_flags=uvdata,
             )
-    model_with_gains = utils.apply_gains(model, gains, inverse=True)
+    model_with_gains = cal_utils.apply_gains(model, gains, inverse=True)
     if not correct_model:
         model = model_with_gains
     resid.data_array -= model_with_gains.data_array
     if correct_resid:
-        resid = utils.apply_gains(resid, gains)
+        resid = cal_utils.apply_gains(resid, gains)
 
     return model, resid, gains, fit_history
 
@@ -1458,7 +1460,11 @@ def calibrate_and_model_pbl_dictionary_method(
     antpairs_data = uvdata.get_antpairs()
     if not include_autos:
         antpairs_data = set([ap for ap in antpairs_data if ap[0] != ap[1]])
-
+    red_grps = []
+    # generate redundant groups
+    for fit_grp in fg_model_comps.keys():
+        for red_grp in fit_grp:
+            red_grps.append(red_grp)
     uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
     sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
     resid = copy.deepcopy(uvdata)
@@ -1468,23 +1474,13 @@ def calibrate_and_model_pbl_dictionary_method(
             f"{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n",
             verbose=verbose,
         )
-        gains = utils.blank_uvcal_from_uvdata(uvdata)
-    # if sky-model is None, initialize it to be the
-    # data divided by the initial gain estimates.
-
-    antpairs, red_grps, antpair_red_indices, _ = utils.get_redundant_groups_conjugated(
-        uvdata,
-        remove_redundancy=not (use_redundancy),
-        include_autos=include_autos,
-        tol=red_tol,
-    )
-
+        gains = cal_utils.blank_uvcal_from_uvdata(uvdata)
     if sky_model is None:
         echo(
             f"{datetime.datetime.now()} Sky model is None. Initializing from data...\n",
             verbose=verbose,
         )
-        sky_model = utils.apply_gains(uvdata, gains)
+        sky_model = cal_utils.apply_gains(uvdata, gains)
 
     fit_history = {}
     echo(
@@ -1494,7 +1490,7 @@ def calibrate_and_model_pbl_dictionary_method(
     (
         fg_range_map,
         model_comps_map,
-    ) = tensorize_pbl_model_comps_dictionary(red_grps, fg_model_comps, dtype=dtype)
+    ) = tensorize_pbl_model_comps_dictionary(fg_model_comps, dtype=dtype)
     # index antenna numbers (in gain vectors).
     ants_map = {gains.antenna_numbers[i]: i for i in range(len(gains.antenna_numbers))}
     # We do fitting per time and per polarization and time.
@@ -1504,6 +1500,12 @@ def calibrate_and_model_pbl_dictionary_method(
             verbose=verbose,
         )
         fit_history_p = {}
+        # declare tensor names outside of time_index loop
+        # so we can reuse them as staring values for each successive time sample.
+        fg_r = None
+        fg_i = None
+        g_r = None
+        fg_i = None
         for time_index in range(uvdata.Ntimes):
             rmsdata = np.sqrt(
                 np.mean(
@@ -1536,15 +1538,17 @@ def calibrate_and_model_pbl_dictionary_method(
                 f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
                 verbose=verbose,
             )
-            fg_r, fg_i = tensorize_fg_coeffs(
-                uvdata=sky_model,
-                red_grps=red_grps,
-                model_component_dict=fg_model_comps,
-                dtype=dtype,
-                time_index=time_index,
-                polarization=pol,
-                scale_factor=rmsdata,
-            )
+            # only generate fresh fg_r, fg_i if time_index == 0
+            # otherwise, use values from previous iteration of loop.
+            if time_index == 0:
+                fg_r, fg_i = tensorize_fg_coeffs(
+                    uvdata=sky_model,
+                    model_component_dict=fg_model_comps,
+                    dtype=dtype,
+                    time_index=time_index,
+                    polarization=pol,
+                    scale_factor=rmsdata,
+                )
 
             cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_dictionary(
                 gains_re=g_r,
@@ -1606,14 +1610,143 @@ def calibrate_and_model_pbl_dictionary_method(
                 uvdata_flags=uvdata,
             )
 
-    model_with_gains = utils.apply_gains(model, gains, inverse=True)
+    model_with_gains = cal_utils.apply_gains(model, gains, inverse=True)
     if not correct_model:
         model = model_with_gains
     resid.data_array -= model_with_gains.data_array
     if correct_resid:
-        resid = utils.apply_gains(resid, gains)
+        resid = cal_utils.apply_gains(resid, gains)
 
     return model, resid, gains, fit_history
+
+
+def calibrate_and_model_mixed(
+    uvdata,
+    horizon=1.0,
+    min_dly=0.0,
+    offset=0.0,
+    ant_dly=0.0,
+    include_autos=False,
+    verbose=False,
+    red_tol=1.0,
+    red_tol_freq=0.5,
+    n_angle_bins=200,
+    notebook_progressbar=False,
+    use_redundancy=False,
+    use_tensorflow_to_derive_modeling_comps=False,
+    eigenval_cutoff=1e-10,
+    **fitting_kwargs,
+):
+    """Simultaneously solve for gains and model foregrounds with a mix of DPSS vectors
+        for baselines with no frequency redundancy and simple_cov components for
+        groups of baselines that have some frequency redundancy.
+
+
+    Parameters
+    ----------
+    uvdata: UVData object.
+        dataset to calibrate and filter.
+    horizon: float, optional
+        fraction of baseline delay length to model with dpss modes
+        unitless.
+        default is 1.
+    min_dly: float, optional
+        minimum delay to model with dpss models.
+        in units of ns.
+        default is 0.
+    offset: float optional
+        offset off of horizon wedge to include in dpss delay range.
+        in units of ns.
+        default is 0.
+    ant_dly: float, optional
+        intrinsic chromaticity of each antenna element
+        in units of ns.
+        default is 0.
+    include_autos: bool, optional
+        if true, include autocorrelations in fitting.
+        default is False.
+    verbose: bool, optional
+        lots of text output
+        default is False.
+    red_tol: float, optional
+        tolerance for treating baselines as redundant (meters)
+        default is 1.0
+    red_tol_freq: float, optional
+        tolerance for treating two baselines as having some
+        frequency redundancy. When frequency redundancy exists, baselines
+        will be modeled jointly.
+    n_angle_bins: int, optional
+        number of angular bins to use between -pi and pi to compare baselines
+        default is 200
+    notebook_progressbar: bool, optional
+        if True, show graphical notebook progress bar that looks good in jupyter.
+        default is False.
+    use_redundancy: bool, optional
+        If True, model all baselines within each redundant group with the same components
+        If False, model each baseline within each redundant group with sepearate components.
+        default is False.
+    use_tensorflow_to_derive_modeling_comps: bool, optional
+        Use tensorflow methods to derive multi-baseline modeling components.
+        recommended if you have a GPU with enough memory to perform spectral decomposition
+        of multi-baseline covariance matrices.
+    eigenval_cutoff: float, optional
+      threshold of eigenvectors to include in modeling components.
+
+    fitting_kwargs: kwarg dict
+        additional kwargs for calibrate_and_model_sparse.
+        see docstring of calibrate_and_model_sparse.
+
+    Returns
+    -------
+    model: UVData object
+        uvdata object containing DPSS model of intrinsic foregrounds.
+    resid: UVData object
+        uvdata object containing residuals after subtracting model times gains and applying gains.
+    gains: UVCal object
+        uvcal object containing fitted gains.
+    fit_history:
+        dictionary containing fit history for each time-step and polarization in the data with fields:
+        'loss_history': list of values of the loss function in each minimization iteration.
+        if record_var_history is True:
+            each of the following fields is included which points to an Nstep x Nvar array of values
+            'fg_r': real part of foreground coeffs
+            'fg_i': imag part of foreground coeffs
+            'g_r': real part of gains.
+            'g_i': imag part of gains
+    """
+    # get fitting groups
+    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
+        uvdata,
+        remove_redundancy=not (use_redundancy),
+        red_tol=red_tol,
+        include_autos=include_autos,
+        red_tol_freq=red_tol_freq,
+        n_angle_bins=n_angle_bins,
+        notebook_progressbar=notebook_progressbar,
+    )
+    model_comps = modeling.yield_mixed_comps(
+        fitting_grps,
+        blvecs,
+        uvdata.freq_array[0],
+        eigenval_cutoff=eigenval_cutoff,
+        use_tensorflow=use_tensorflow_to_derive_modeling_comps,
+        ant_dly=ant_dly,
+        horizon=horizon,
+        offset=offset,
+        min_dly=min_dly,
+        verbose=verbose,
+        notebook_progressbar=notebook_progressbar,
+    )
+
+    (model, resid, gains, fitted_info,) = calibrate_and_model_sparse(
+        uvdata=uvdata,
+        fg_model_comps=model_comps,
+        include_autos=include_autos,
+        verbose=verbose,
+        notebook_progressbar=notebook_progressbar,
+        **fitting_kwargs,
+    )
+    return model, resid, gains, fitted_info
 
 
 def calibrate_and_model_dpss(
@@ -1623,7 +1756,7 @@ def calibrate_and_model_dpss(
     offset=0.0,
     include_autos=False,
     verbose=False,
-    modeling="dictionary",
+    modeling_paradigm="dictionary",
     red_tol=1.0,
     **fitting_kwargs,
 ):
@@ -1688,7 +1821,7 @@ def calibrate_and_model_dpss(
             'g_r': real part of gains.
             'g_i': imag part of gains
     """
-    dpss_model_comps = utils.yield_dpss_model_comps(
+    dpss_model_comps = modeling.yield_pbl_dpss_model_comps(
         uvdata,
         horizon=horizon,
         min_dly=min_dly,
@@ -1696,22 +1829,21 @@ def calibrate_and_model_dpss(
         include_autos=include_autos,
         red_tol=red_tol,
     )
-    if modeling == "dictionary":
+    if modeling_paradigm == "dictionary":
+        # get rid of fitting group level for the dictionary method.
         (model, resid, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,
             include_autos=include_autos,
             verbose=verbose,
-            red_tol=red_tol,
             **fitting_kwargs,
         )
-    elif modeling == "sparse_tensor":
+    elif modeling_paradigm == "sparse_tensor":
         (model, resid, gains, fitted_info,) = calibrate_and_model_sparse(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,
             include_autos=include_autos,
             verbose=verbose,
-            red_tol=red_tol,
             **fitting_kwargs,
         )
     return model, resid, gains, fitted_info
