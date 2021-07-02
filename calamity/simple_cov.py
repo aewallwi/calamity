@@ -5,7 +5,7 @@ from .utils import echo
 
 
 def simple_cov_matrix(
-    blvecs, freqs, ant_dly=0.0, horizon=1.0, offset=0.0, min_dly=0.0, dtype=np.float32, use_tensorflow=False
+    blvecs, freqs, ant_dly=0.0, horizon=1.0, offset=0.0, min_dly=0.0, dtype=np.float32, use_tensorflow=False, verbose=verbose
 ):
     """Compute simple covariance matrix for subset of baselines in uvdata
 
@@ -34,6 +34,8 @@ def simple_cov_matrix(
     use_tensorflow: bool, optional
         if True, use tensorflow for multi-baseline modeling matrix operations.
         Recommended only for machines with GPUs.
+    verbose: bool, optional
+        lots of text outputs.
 
     Returns
     -------
