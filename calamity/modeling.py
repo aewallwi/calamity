@@ -124,6 +124,15 @@ def get_uv_overlapping_grps_conjugated(
     fitting_grps: list
         list of tuples of tuples of 2-tuples. Each tuple is a fitting group
         each tuple in each fitting group is a redundant group
+    fitting_vec_centers: list
+        list of len-3 np.ndarrays with centers of baselines.
+    connections: dict
+        dictionary with tuples of 2-tuples as keys and lists of tuples of 2-tuples as values storing the connection between each
+        redundant baseline group and every other redundant baseline group.
+        and every other baseline.
+    grp_labels: dict
+        dictionary for keys as tuple of 2-tuples and values as tuples of 2-tuples
+        indicates the
     """
     # first get redundant baselines.
     antpairs, red_grps, vec_bin_centers, lengths = get_redundant_grps_conjugated(

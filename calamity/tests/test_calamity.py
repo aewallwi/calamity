@@ -530,8 +530,8 @@ def test_calibrate_and_model_dpss(
         correct_model=True,
         weights=weight,
     )
-    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
-    assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert len(fit_history) == 1
     assert len(fit_history[0]) == 1
 
@@ -575,8 +575,8 @@ def test_calibrate_and_model_dpss_dont_correct_resid(
     # post hoc correction
     resid = cal_utils.apply_gains(resid, gains)
     model = cal_utils.apply_gains(model, gains)
-    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
-    assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert len(fit_history) == 1
     assert len(fit_history[0]) == 1
 
@@ -618,12 +618,44 @@ def test_calibrate_and_model_dpss_freeze_model(
         correct_model=True,
         weights=weight,
     )
-    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e3 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert np.allclose(
         model.data_array,
         sky_model_projected.data_array,
         atol=1e-5 * np.mean(np.abs(model.data_array) ** 2.0) ** 0.5,
     )
     assert np.allclose(gains.gain_array, gains_randomized.gain_array, rtol=0.0, atol=1e-4)
+    assert len(fit_history) == 1
+    assert len(fit_history[0]) == 1
+
+
+@pytest.mark.parametrize(
+    "use_tensorflow",
+    [True, False],
+)
+def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized, weights, use_tensorflow):
+
+    # check that mixec components and dpss components give similar resids
+    model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
+        min_dly=2.0 / 0.3,
+        offset=2.0 / 0.3,
+        red_tol_freq=0.0,
+        uvdata=sky_model_projected,
+        gains=gains_randomized,
+        verbose=True,
+        use_redundancy=False,
+        sky_model=sky_model_projected,
+        freeze_model=True,
+        maxsteps=10000,
+        correct_resid=False,
+        correct_model=False,
+        weights=weights,
+        use_tensorflow_to_derive_modeling_comps=use_tensorflow,
+    )
+    # post hoc correction
+    resid = cal_utils.apply_gains(resid, gains)
+    model = cal_utils.apply_gains(model, gains)
+    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert len(fit_history) == 1
     assert len(fit_history[0]) == 1

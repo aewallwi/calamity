@@ -20,8 +20,7 @@ def sky_model():
 
 @pytest.mark.parametrize(
     "use_tensorflow, horizon, offset, min_dly, ant_dly",
-    [(True, 1.0, 20.0, 0.0, 0.0), (False, 0.8, 123.0, 200.0, 0.0),
-     (True, 1.0, 0.0, 0.0, 2 / .3)],
+    [(True, 1.0, 20.0, 0.0, 0.0), (False, 0.8, 123.0, 200.0, 0.0), (True, 1.0, 0.0, 0.0, 2 / 0.3)],
 )
 def test_simple_cov(use_tensorflow, horizon, offset, min_dly, sky_model, ant_dly):
     sky_model.select(bls=[(0, 1)])

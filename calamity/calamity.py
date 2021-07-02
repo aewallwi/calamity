@@ -1625,10 +1625,16 @@ def calibrate_and_model_mixed(
     horizon=1.0,
     min_dly=0.0,
     offset=0.0,
+    ant_dly=0.0,
     include_autos=False,
     verbose=False,
     red_tol=1.0,
     red_tol_freq=0.5,
+    n_angle_bins=200,
+    notebook_progressbar=False,
+    use_redundancy=False,
+    use_tensorflow_to_derive_modeling_comps=False,
+    eigenval_cutoff=1e-10,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with a mix of DPSS vectors
@@ -1652,6 +1658,10 @@ def calibrate_and_model_mixed(
         offset off of horizon wedge to include in dpss delay range.
         in units of ns.
         default is 0.
+    ant_dly: float, optional
+        intrinsic chromaticity of each antenna element
+        in units of ns.
+        default is 0.
     include_autos: bool, optional
         if true, include autocorrelations in fitting.
         default is False.
@@ -1665,13 +1675,78 @@ def calibrate_and_model_mixed(
         tolerance for treating two baselines as having some
         frequency redundancy. When frequency redundancy exists, baselines
         will be modeled jointly.
-    fitting_kwargs: kwarg dict
-        additional kwargs for calibrate_and_model.
-        see docstring of calibrate_and_model.
-    """
-    #model_comps = modeling.yield_mixed_comps()
+    n_angle_bins: int, optional
+        number of angular bins to use between -pi and pi to compare baselines
+        default is 200
+    notebook_progressbar: bool, optional
+        if True, show graphical notebook progress bar that looks good in jupyter.
+        default is False.
+    use_redundancy: bool, optional
+        If True, model all baselines within each redundant group with the same components
+        If False, model each baseline within each redundant group with sepearate components.
+        default is False.
+    use_tensorflow_to_derive_modeling_comps: bool, optional
+        Use tensorflow methods to derive multi-baseline modeling components.
+        recommended if you have a GPU with enough memory to perform spectral decomposition
+        of multi-baseline covariance matrices.
+    eigenval_cutoff: float, optional
+      threshold of eigenvectors to include in modeling components.
 
-    #return model, resid, gains, fitted_info
+    fitting_kwargs: kwarg dict
+        additional kwargs for calibrate_and_model_sparse.
+        see docstring of calibrate_and_model_sparse.
+
+    Returns
+    -------
+    model: UVData object
+        uvdata object containing DPSS model of intrinsic foregrounds.
+    resid: UVData object
+        uvdata object containing residuals after subtracting model times gains and applying gains.
+    gains: UVCal object
+        uvcal object containing fitted gains.
+    fit_history:
+        dictionary containing fit history for each time-step and polarization in the data with fields:
+        'loss_history': list of values of the loss function in each minimization iteration.
+        if record_var_history is True:
+            each of the following fields is included which points to an Nstep x Nvar array of values
+            'fg_r': real part of foreground coeffs
+            'fg_i': imag part of foreground coeffs
+            'g_r': real part of gains.
+            'g_i': imag part of gains
+    """
+    # get fitting groups
+    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
+        uvdata,
+        remove_redundancy=not (use_redundancy),
+        red_tol=red_tol,
+        include_autos=include_autos,
+        red_tol_freq=red_tol_freq,
+        n_angle_bins=n_angle_bins,
+        notebook_progressbar=notebook_progressbar,
+    )
+    model_comps = modeling.yield_mixed_comps(
+        fitting_grps,
+        blvecs,
+        uvdata.freq_array[0],
+        eigenval_cutoff=eigenval_cutoff,
+        use_tensorflow=use_tensorflow_to_derive_modeling_comps,
+        ant_dly=ant_dly,
+        horizon=horizon,
+        offset=offset,
+        min_dly=min_dly,
+        verbose=verbose,
+        notebook_progressbar=notebook_progressbar,
+    )
+
+    (model, resid, gains, fitted_info,) = calibrate_and_model_sparse(
+        uvdata=uvdata,
+        fg_model_comps=model_comps,
+        include_autos=include_autos,
+        verbose=verbose,
+        notebook_progressbar=notebook_progressbar,
+        **fitting_kwargs,
+    )
+    return model, resid, gains, fitted_info
 
 
 def calibrate_and_model_dpss(
