@@ -439,7 +439,7 @@ def yield_mixed_comps(
             modeling_vectors[fit_grp] = yield_dpss_model_comps_bl_grp(
                 freqs=freqs,
                 length=bllens[0],
-                offset=offset,
+                offset=ant_dly,
                 horizon=horizon,
                 min_dly=min_dly,
                 operator_cache=operator_cache,
