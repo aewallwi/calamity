@@ -639,7 +639,7 @@ def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized
     model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
         min_dly=2.0 / 0.3,
         offset=2.0 / 0.3,
-        red_tol_freq=0.0,
+        red_tol_freq=0.5,
         uvdata=sky_model_projected,
         gains=gains_randomized,
         verbose=True,
