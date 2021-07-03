@@ -1,3 +1,4 @@
+
 import numpy as np
 import tensorflow as tf
 from pyuvdata import UVData, UVCal, UVFlag
@@ -91,7 +92,7 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
                 i, j = ants_map[ap[0]], ants_map[ap[1]]
                 modeling_grps[(i, j)] = modeling_grp
                 red_grp_nums[(i, j)] = red_grp_num
-    ordered_ijs = sorted(list(map_ij.keys()))
+    ordered_ijs = sorted(list(modeling_grps.keys()))
     use_sparse = sparseness <= sparse_threshold
     if use_sparse:
         echo(
@@ -108,22 +109,22 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
     echo(f"{datetime.datetime.now()} Filling out modeling vectors...\n", verbose=verbose)
     for i, j in PBARS[notebook_progressbar](ordered_ijs):
         blind = i * nants_data + j
-        grpnum = red_grp_nums[(i, j)
+        grpnum = red_grp_nums[(i, j)]
         fitgrp = modeling_grps[(i, j)]
         for f in range(nfreqs):
             dind = blind * nfreqs + f
-            for vind in range(fg_model_comps[map_ij[i, j]].shape[1]):
+            for vind in range(fg_model_comps[modeling_grp[i, j]].shape[1]):
                 if use_sparse:
                     comp_vals[spind] = fg_model_comps[fitgrp][grpnum * nfreqs + f, vind].astype(dtype)
                     comp_inds[spind, 0], comp_inds[spind, 1] = dind, vind
                 else:
-                    fg_model_mat[dind, vind] = fg_model_comps[fit_grp][grp_num * nfreqs + f, vind].astype(dtype)
+                    fg_model_mat[dind, vind] = fg_model_comps[fitgrp][grpnum * nfreqs + f, vind].astype(dtype)
                 spind += 1
     if use_sparse:
         fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
     else:
         fg_model_mat = tf.convert_to_tensor(fg_model_mat, dtype=dtype)
-    return sparse_fg_model_mat
+    return fg_model_mat
 
 
 def tensorize_data(
@@ -1889,6 +1890,7 @@ def calibrate_and_model_dpss(
             **fitting_kwargs,
         )
     return model, resid, gains, fitted_info
+
 
 
 def read_calibrate_and_model_pbl(
