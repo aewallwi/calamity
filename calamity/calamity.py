@@ -320,7 +320,7 @@ def tensorize_pbl_model_comps_dictionary(fg_model_comps, dtype=np.float32):
     return fg_range_map, model_comp_tensor_map
 
 
-def yield_fg_pbl_model_sparse_tensor(fg_comps, fg_coeffs, nants, nfreqs):
+def yield_fg_model_tensor(fg_comps, fg_coeffs, nants, nfreqs):
     """Compute sparse tensor foreground model.
 
     Parameters
@@ -343,11 +343,14 @@ def yield_fg_pbl_model_sparse_tensor(fg_comps, fg_coeffs, nants, nfreqs):
     model: tf.Tensor object
         nants x nants x nfreqs model of the visibility data
     """
-    model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
+    if isinstance(fg_comps, tf.sparse.SparseTensor):
+        model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
+    else:
+        model = tf.reshape(tf.linalg.matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
     return model
 
 
-def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs):
+def yield_data_model_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs):
     """Compute an uncalibrated data model with gains and foreground coefficients.
 
     Parameters
@@ -356,7 +359,7 @@ def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs
         real part of gains, Nants 1d tensor.
     g_i: tf.Tensor object
         imag part of gains, Nants 1d tensor.
-    fg_comps: tf.sparse.SparseTensor object
+    fg_comps: tf.Tensor or tf.sparse.SparseTensor object
         tf.sparse.SparseTensor object holding foreground modeling components
         (Nants^2 * Nfreqs) x Ncomponents
     fg_r: tf.Tensor object
@@ -383,14 +386,14 @@ def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs
     gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
     grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
     gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
-    vr = yield_fg_pbl_model_sparse_tensor(fg_comps, fg_r, nants, nfreqs)
-    vi = yield_fg_pbl_model_sparse_tensor(fg_comps, fg_i, nants, nfreqs)
+    vr = yield_fg_model_tensor(fg_comps, fg_r, nants, nfreqs)
+    vi = yield_fg_model_tensor(fg_comps, fg_i, nants, nfreqs)
     model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
     model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
     return model_r, model_i
 
 
-def cal_loss_sparse_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs):
+def cal_loss_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs):
     """MSE Loss function for sparse tensor representation of visibilities.
 
     Parameters
@@ -428,7 +431,7 @@ def cal_loss_sparse_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r,
         MSE loss between model given by g_r, g_i, fg_model_comps, fg_r, fg_i
         and data provided through data_r, data_i
     """
-    model_r, model_i = yield_data_model_sparse_tensor(g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs)
+    model_r, model_i = yield_data_model_tensor(g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs)
     return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
 
 
@@ -1255,8 +1258,7 @@ def calibrate_and_model_sparse(
         f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
         verbose=verbose,
     )
-    dense_number_of_elements = np.prod(fg_comp_tensor.dense_shape.numpy())
-    sparse_number_of_elements = len(fg_comp_tensor.values)
+
 
     # loop through polarization and times.
     for polnum, pol in enumerate(uvdata.get_pols()):
@@ -1307,7 +1309,7 @@ def calibrate_and_model_sparse(
                 force2d=True,
             )
 
-            cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_sparse_tensor(
+            cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_tensor(
                 data_r=data_r,
                 data_i=data_i,
                 wgts=wgts,
@@ -1344,8 +1346,8 @@ def calibrate_and_model_sparse(
                 polarization=pol,
                 ants_map=ants_map,
                 red_grps=red_grps,
-                model_r=yield_fg_pbl_model_sparse_tensor(fg_comp_tensor, fg_r, uvdata.Nants_data, uvdata.Nfreqs),
-                model_i=yield_fg_pbl_model_sparse_tensor(fg_comp_tensor, fg_i, uvdata.Nants_data, uvdata.Nfreqs),
+                model_r=yield_fg_model_tensor(fg_comp_tensor, fg_r, uvdata.Nants_data, uvdata.Nfreqs),
+                model_i=yield_fg_model_tensor(fg_comp_tensor, fg_i, uvdata.Nants_data, uvdata.Nfreqs),
                 scale_factor=rmsdata,
             )
             # insert gains into uvcal
