@@ -131,8 +131,7 @@ def test_tensorize_pbl_model_comps_dictionary(sky_model_projected, dpss_vectors,
             rmsdata = np.mean(np.abs(tdata) ** 2.0) ** 0.5
             assert np.allclose(model, tdata, rtol=0.0, atol=1e-5 * rmsdata)
 
-
-def test_sparse_tensorize_pbl_fg_model_comps(sky_model_projected, dpss_vectors, redundant_groups, gains):
+def test_tensorize_fg_model_comps_dpsss(sky_model_projected, dpss_vectors, redundant_groups, gains):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     fg_comp_tensor = calamity.tensorize_fg_model_comps(
         fg_model_comps=dpss_vectors,
@@ -151,7 +150,7 @@ def test_sparse_tensorize_pbl_fg_model_comps(sky_model_projected, dpss_vectors, 
         for i, j in enumerate(range(start_index, end_index)):
             vreduced = fg_comp_tensor[:, j]
             vreduced = vreduced[np.abs(vreduced) > 0]
-        assert np.allclose(vreduced, vdpss[:, i])
+            assert np.allclose(vreduced, vdpss[:, i])
         start_index = end_index
 
 

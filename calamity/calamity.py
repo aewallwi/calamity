@@ -86,12 +86,19 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
     )
     modeling_grps = {}
     red_grp_nums = {}
+    start_inds = {}
+    stop_inds = {}
+    start_ind = 0
     for modeling_grp in fg_model_comps:
+        stop_ind = start_ind + fg_model_comps[modeling_grp].shape[1]
         for red_grp_num, red_grp in enumerate(modeling_grp):
             for ap in red_grp:
                 i, j = ants_map[ap[0]], ants_map[ap[1]]
                 modeling_grps[(i, j)] = modeling_grp
                 red_grp_nums[(i, j)] = red_grp_num
+                start_inds[(i, j)] = start_ind
+                stop_inds[(i, j)] = stop_ind
+        start_ind = stop_ind
     ordered_ijs = sorted(list(modeling_grps.keys()))
     use_sparse = sparseness <= sparse_threshold
     if use_sparse:
@@ -104,21 +111,23 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
         echo(
             "Using Dense Representation.", verbose=verbose
         )
-        fg_model_mat = np.zeros(dense_number_of_elements, nvectors, dtype=dtype)
+        fg_model_mat = np.zeros(dense_shape, nvectors, dtype=dtype)
     spind = 0
     echo(f"{datetime.datetime.now()} Filling out modeling vectors...\n", verbose=verbose)
     for i, j in PBARS[notebook_progressbar](ordered_ijs):
         blind = i * nants_data + j
         grpnum = red_grp_nums[(i, j)]
         fitgrp = modeling_grps[(i, j)]
+        start_ind = start_inds[(i, j)]
+        stop_ind = stop_inds[(i, j)]
         for f in range(nfreqs):
             dind = blind * nfreqs + f
-            for vind in range(fg_model_comps[modeling_grp[i, j]].shape[1]):
+            for vind, matcol  in enumerate(range(start_ind, stop_ind)):
                 if use_sparse:
                     comp_vals[spind] = fg_model_comps[fitgrp][grpnum * nfreqs + f, vind].astype(dtype)
-                    comp_inds[spind, 0], comp_inds[spind, 1] = dind, vind
+                    comp_inds[spind, 0], comp_inds[spind, 1] = dind, matcol
                 else:
-                    fg_model_mat[dind, vind] = fg_model_comps[fitgrp][grpnum * nfreqs + f, vind].astype(dtype)
+                    fg_model_mat[dind, matcol] = fg_model_comps[fitgrp][grpnum * nfreqs + f, vind].astype(dtype)
                 spind += 1
     if use_sparse:
         fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
