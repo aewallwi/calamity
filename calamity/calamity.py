@@ -1,3 +1,4 @@
+
 import numpy as np
 import tensorflow as tf
 from pyuvdata import UVData, UVCal, UVFlag
@@ -23,8 +24,8 @@ OPTIMIZERS = {
 }
 
 
-def sparse_tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, dtype=np.float32):
-    """Convert per-baseline model components into a sparse Ndata x Ncomponent tensor
+def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=1e-1, dtype=np.float32, notebook_progressbar=False, verbose=False):
+    """Convert per-baseline model components into a Ndata x Ncomponent tensor
 
     Parameters
     ----------
@@ -41,43 +42,98 @@ def sparse_tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, dtype=np.f
         (typically the index of each antenna in ants_map)
     nfreqs: int, optional
         number of frequency channels
-
+    sparse_threshold: float, optional
+        if the number of non-zero elements / total number of elements is greater
+        then this value, then use a dense representation rather then a sparse representation.
     dtype: numpy.dtype
         data-type to store in sparse tensor.
         default is np.float32
 
     Returns
     -------
-    sparse_fg_model_mat: tf.sparse.SparseTensor object
+    fg_model_mat: tf.sparse.SparseTensor object (if number of nonzero elements below sparse threshold)
+                         or tf.Tensor object (if number of nonzero elements above sparse threshold)
         sparse tensor object holding foreground modeling vectors with a dense shape of
         Nants^2 x Nfreqs x Nfg_comps ~ Nbls^4 x Nfreqs
     """
-    sparse_number_of_elements = 0.0
-    comp_inds = []
-    comp_vals = []
-    fgvind = 0
+    echo(
+        f"{datetime.datetime.now()} Computing sparse foreground components matrix...\n",
+        verbose=verbose,
+    )
+
+    sparse_number_of_elements = 0
+    nvectors = 0
     nants_data = len(ants_map)
-    for modeling_grp in fg_model_comps:
-        # calculate Ncomponents Ndata sparse vectors per modeling group
+
+    echo("Determining number of non-zero elements", verbose=verbose)
+    for modeling_grp in PBARS[notebook_progressbar](fg_model_comps):
         for vind in range(fg_model_comps[modeling_grp].shape[1]):
-            # visibilities in each redundant group have identical copies
-            # of each per-baseline Nfreq spectra in a modeling component
             for grpnum, red_grp in enumerate(modeling_grp):
-                for ap in red_grp:
-                    i, j = ants_map[ap[0]], ants_map[ap[1]]
-                    blind = i * nants_data + j
-                    for f in range(nfreqs):
-                        comp_inds.append([blind * nfreqs + f, fgvind])
-                        comp_vals.append(fg_model_comps[modeling_grp][grpnum * nfreqs + f, vind].astype(dtype))
-                        sparse_number_of_elements += 1
-            fgvind += 1
-    # sort by comp_inds.
-    sort_order = sorted(range(len(comp_inds)), key=comp_inds.__getitem__)
-    comp_vals = [comp_vals[ind] for ind in sort_order]
-    comp_inds = [comp_inds[ind] for ind in sort_order]
-    dense_shape = (int(nants_data ** 2.0 * nfreqs), fgvind)
-    sparse_fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
-    return sparse_fg_model_mat
+                for f in range(nfreqs):
+                    sparse_number_of_elements += 1
+            nvectors += 1
+
+
+    dense_shape = (int(nants_data ** 2.0 * nfreqs), nvectors)
+    dense_number_of_elements = dense_shape[0] * dense_shape[1]
+
+    sparseness = sparse_number_of_elements / dense_number_of_elements
+    echo(
+        f"Fraction of modeling matrix with nonzero values is {(sparseness):.4e}", verbose=verbose
+    )
+    echo(
+        f"Generating map between i,j indices and foreground modeling keys", verbose=verbose
+    )
+    modeling_grps = {}
+    red_grp_nums = {}
+    start_inds = {}
+    stop_inds = {}
+    start_ind = 0
+    for modeling_grp in fg_model_comps:
+        stop_ind = start_ind + fg_model_comps[modeling_grp].shape[1]
+        for red_grp_num, red_grp in enumerate(modeling_grp):
+            for ap in red_grp:
+                i, j = ants_map[ap[0]], ants_map[ap[1]]
+                modeling_grps[(i, j)] = modeling_grp
+                red_grp_nums[(i, j)] = red_grp_num
+                start_inds[(i, j)] = start_ind
+                stop_inds[(i, j)] = stop_ind
+        start_ind = stop_ind
+    ordered_ijs = sorted(list(modeling_grps.keys()))
+    use_sparse = sparseness <= sparse_threshold
+    if use_sparse:
+        echo(
+            "Using Sparse Representation."
+        )
+        comp_inds = np.zeros((sparse_number_of_elements, 2), dtype=np.int32)
+        comp_vals = np.zeros(sparse_number_of_elements, dtype=dtype)
+    else:
+        echo(
+            "Using Dense Representation.", verbose=verbose
+        )
+        fg_model_mat = np.zeros(dense_shape, dtype=dtype)
+    spind = 0
+    echo(f"{datetime.datetime.now()} Filling out modeling vectors...\n", verbose=verbose)
+    for i, j in PBARS[notebook_progressbar](ordered_ijs):
+        blind = i * nants_data + j
+        grpnum = red_grp_nums[(i, j)]
+        fitgrp = modeling_grps[(i, j)]
+        start_ind = start_inds[(i, j)]
+        stop_ind = stop_inds[(i, j)]
+        for f in range(nfreqs):
+            dind = blind * nfreqs + f
+            for vind, matcol  in enumerate(range(start_ind, stop_ind)):
+                if use_sparse:
+                    comp_vals[spind] = fg_model_comps[fitgrp][grpnum * nfreqs + f, vind].astype(dtype)
+                    comp_inds[spind, 0], comp_inds[spind, 1] = dind, matcol
+                else:
+                    fg_model_mat[dind, matcol] = fg_model_comps[fitgrp][grpnum * nfreqs + f, vind].astype(dtype)
+                spind += 1
+    if use_sparse:
+        fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
+    else:
+        fg_model_mat = tf.convert_to_tensor(fg_model_mat, dtype=dtype)
+    return fg_model_mat
 
 
 def tensorize_data(
@@ -274,7 +330,7 @@ def tensorize_pbl_model_comps_dictionary(fg_model_comps, dtype=np.float32):
     return fg_range_map, model_comp_tensor_map
 
 
-def yield_fg_pbl_model_sparse_tensor(fg_comps, fg_coeffs, nants, nfreqs):
+def yield_fg_model_tensor(fg_comps, fg_coeffs, nants, nfreqs):
     """Compute sparse tensor foreground model.
 
     Parameters
@@ -297,11 +353,14 @@ def yield_fg_pbl_model_sparse_tensor(fg_comps, fg_coeffs, nants, nfreqs):
     model: tf.Tensor object
         nants x nants x nfreqs model of the visibility data
     """
-    model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
+    if isinstance(fg_comps, tf.sparse.SparseTensor):
+        model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
+    else:
+        model = tf.reshape(tf.linalg.matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
     return model
 
 
-def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs):
+def yield_data_model_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs):
     """Compute an uncalibrated data model with gains and foreground coefficients.
 
     Parameters
@@ -310,7 +369,7 @@ def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs
         real part of gains, Nants 1d tensor.
     g_i: tf.Tensor object
         imag part of gains, Nants 1d tensor.
-    fg_comps: tf.sparse.SparseTensor object
+    fg_comps: tf.Tensor or tf.sparse.SparseTensor object
         tf.sparse.SparseTensor object holding foreground modeling components
         (Nants^2 * Nfreqs) x Ncomponents
     fg_r: tf.Tensor object
@@ -337,14 +396,14 @@ def yield_data_model_sparse_tensor(g_r, g_i, fg_comps, fg_r, fg_i, nants, nfreqs
     gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
     grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
     gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
-    vr = yield_fg_pbl_model_sparse_tensor(fg_comps, fg_r, nants, nfreqs)
-    vi = yield_fg_pbl_model_sparse_tensor(fg_comps, fg_i, nants, nfreqs)
+    vr = yield_fg_model_tensor(fg_comps, fg_r, nants, nfreqs)
+    vi = yield_fg_model_tensor(fg_comps, fg_i, nants, nfreqs)
     model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
     model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
     return model_r, model_i
 
 
-def cal_loss_sparse_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs):
+def cal_loss_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs):
     """MSE Loss function for sparse tensor representation of visibilities.
 
     Parameters
@@ -382,7 +441,7 @@ def cal_loss_sparse_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r,
         MSE loss between model given by g_r, g_i, fg_model_comps, fg_r, fg_i
         and data provided through data_r, data_i
     """
-    model_r, model_i = yield_data_model_sparse_tensor(g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs)
+    model_r, model_i = yield_data_model_tensor(g_r, g_i, fg_model_comps, fg_r, fg_i, nants, nfreqs)
     return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
 
 
@@ -1048,7 +1107,7 @@ def tensorize_fg_coeffs(
     return fg_coeffs_re, fg_coeffs_im
 
 
-def calibrate_and_model_sparse(
+def calibrate_and_model_tensor(
     uvdata,
     fg_model_comps,
     gains=None,
@@ -1068,6 +1127,7 @@ def calibrate_and_model_sparse(
     correct_resid=False,
     correct_model=False,
     weights=None,
+    sparse_threshold=1e-1,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using sparse tensors.
@@ -1152,6 +1212,13 @@ def calibrate_and_model_sparse(
     weights: UVFlag object, optional.
         UVFlag weights object containing weights to use for data fitting.
         default is None -> use nsamples * ~flags
+    sparse_threshold: float, optional
+        if fraction of elements in foreground modeling vector matrix that are non-zero
+        is greater then this value, then use a dense representation.
+        Otherwise use a sparse representation.
+        default is 1e-1
+    opt_kwargs: kwarg_dict
+        kwargs for tf.optimizers
 
     Returns
     -------
@@ -1202,22 +1269,15 @@ def calibrate_and_model_sparse(
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     # generate sparse tensor to hold foreground components.
-    echo(
-        f"{datetime.datetime.now()} Computing sparse foreground components matrix...\n",
-        verbose=verbose,
-    )
-    fg_comp_tensor = sparse_tensorize_fg_model_comps(
-        fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype, nfreqs=sky_model.Nfreqs
+    fg_comp_tensor = tensorize_fg_model_comps(
+        fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype, nfreqs=sky_model.Nfreqs, verbose=verbose, notebook_progressbar=notebook_progressbar, sparse_threshold=sparse_threshold,
     )
     echo(
         f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
         verbose=verbose,
     )
-    dense_number_of_elements = np.prod(fg_comp_tensor.dense_shape.numpy())
-    sparse_number_of_elements = len(fg_comp_tensor.values)
-    echo(
-        f"Fraction of sparse matrix with nonzero values is {(sparse_number_of_elements / dense_number_of_elements):.4e}"
-    )
+
+
     # loop through polarization and times.
     for polnum, pol in enumerate(uvdata.get_pols()):
         echo(
@@ -1267,7 +1327,7 @@ def calibrate_and_model_sparse(
                 force2d=True,
             )
 
-            cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_sparse_tensor(
+            cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_tensor(
                 data_r=data_r,
                 data_i=data_i,
                 wgts=wgts,
@@ -1304,8 +1364,8 @@ def calibrate_and_model_sparse(
                 polarization=pol,
                 ants_map=ants_map,
                 red_grps=red_grps,
-                model_r=yield_fg_pbl_model_sparse_tensor(fg_comp_tensor, fg_r, uvdata.Nants_data, uvdata.Nfreqs),
-                model_i=yield_fg_pbl_model_sparse_tensor(fg_comp_tensor, fg_i, uvdata.Nants_data, uvdata.Nfreqs),
+                model_r=yield_fg_model_tensor(fg_comp_tensor, fg_r, uvdata.Nants_data, uvdata.Nfreqs),
+                model_i=yield_fg_model_tensor(fg_comp_tensor, fg_i, uvdata.Nants_data, uvdata.Nfreqs),
                 scale_factor=rmsdata,
             )
             # insert gains into uvcal
@@ -1361,7 +1421,7 @@ def calibrate_and_model_pbl_dictionary_method(
     """Perform simultaneous calibration and fitting of foregrounds using method that loops over baselines.
 
     This approach gives up on trying to invert the wedge but can be used on practically any array.
-    Use this in place of calibrate_and_model_sparse when working on CPUs but
+    Use this in place of calibrate_and_model_tensor when working on CPUs but
     use the latter with GPUs.
 
     Parameters
@@ -1693,8 +1753,8 @@ def calibrate_and_model_mixed(
       threshold of eigenvectors to include in modeling components.
 
     fitting_kwargs: kwarg dict
-        additional kwargs for calibrate_and_model_sparse.
-        see docstring of calibrate_and_model_sparse.
+        additional kwargs for calibrate_and_model_tensor.
+        see docstring of calibrate_and_model_tensor.
 
     Returns
     -------
@@ -1738,7 +1798,7 @@ def calibrate_and_model_mixed(
         notebook_progressbar=notebook_progressbar,
     )
 
-    (model, resid, gains, fitted_info,) = calibrate_and_model_sparse(
+    (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
         uvdata=uvdata,
         fg_model_comps=model_comps,
         include_autos=include_autos,
@@ -1839,7 +1899,7 @@ def calibrate_and_model_dpss(
             **fitting_kwargs,
         )
     elif modeling_paradigm == "sparse_tensor":
-        (model, resid, gains, fitted_info,) = calibrate_and_model_sparse(
+        (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,
             include_autos=include_autos,
@@ -1847,6 +1907,7 @@ def calibrate_and_model_dpss(
             **fitting_kwargs,
         )
     return model, resid, gains, fitted_info
+
 
 
 def read_calibrate_and_model_pbl(
