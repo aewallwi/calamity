@@ -111,7 +111,7 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
         echo(
             "Using Dense Representation.", verbose=verbose
         )
-        fg_model_mat = np.zeros(dense_shape, nvectors, dtype=dtype)
+        fg_model_mat = np.zeros(dense_shape, dtype=dtype)
     spind = 0
     echo(f"{datetime.datetime.now()} Filling out modeling vectors...\n", verbose=verbose)
     for i, j in PBARS[notebook_progressbar](ordered_ijs):
@@ -1107,7 +1107,7 @@ def tensorize_fg_coeffs(
     return fg_coeffs_re, fg_coeffs_im
 
 
-def calibrate_and_model_sparse(
+def calibrate_and_model_tensor(
     uvdata,
     fg_model_comps,
     gains=None,
@@ -1127,6 +1127,7 @@ def calibrate_and_model_sparse(
     correct_resid=False,
     correct_model=False,
     weights=None,
+    sparse_threshold=1e-1,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using sparse tensors.
@@ -1211,6 +1212,13 @@ def calibrate_and_model_sparse(
     weights: UVFlag object, optional.
         UVFlag weights object containing weights to use for data fitting.
         default is None -> use nsamples * ~flags
+    sparse_threshold: float, optional
+        if fraction of elements in foreground modeling vector matrix that are non-zero
+        is greater then this value, then use a dense representation.
+        Otherwise use a sparse representation.
+        default is 1e-1
+    opt_kwargs: kwarg_dict
+        kwargs for tf.optimizers
 
     Returns
     -------
@@ -1262,7 +1270,7 @@ def calibrate_and_model_sparse(
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     # generate sparse tensor to hold foreground components.
     fg_comp_tensor = tensorize_fg_model_comps(
-        fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype, nfreqs=sky_model.Nfreqs, verbose=verbose, notebook_progressbar=notebook_progressbar,
+        fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype, nfreqs=sky_model.Nfreqs, verbose=verbose, notebook_progressbar=notebook_progressbar, sparse_threshold=sparse_threshold,
     )
     echo(
         f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
@@ -1413,7 +1421,7 @@ def calibrate_and_model_pbl_dictionary_method(
     """Perform simultaneous calibration and fitting of foregrounds using method that loops over baselines.
 
     This approach gives up on trying to invert the wedge but can be used on practically any array.
-    Use this in place of calibrate_and_model_sparse when working on CPUs but
+    Use this in place of calibrate_and_model_tensor when working on CPUs but
     use the latter with GPUs.
 
     Parameters
@@ -1745,8 +1753,8 @@ def calibrate_and_model_mixed(
       threshold of eigenvectors to include in modeling components.
 
     fitting_kwargs: kwarg dict
-        additional kwargs for calibrate_and_model_sparse.
-        see docstring of calibrate_and_model_sparse.
+        additional kwargs for calibrate_and_model_tensor.
+        see docstring of calibrate_and_model_tensor.
 
     Returns
     -------
@@ -1790,7 +1798,7 @@ def calibrate_and_model_mixed(
         notebook_progressbar=notebook_progressbar,
     )
 
-    (model, resid, gains, fitted_info,) = calibrate_and_model_sparse(
+    (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
         uvdata=uvdata,
         fg_model_comps=model_comps,
         include_autos=include_autos,
@@ -1891,7 +1899,7 @@ def calibrate_and_model_dpss(
             **fitting_kwargs,
         )
     elif modeling_paradigm == "sparse_tensor":
-        (model, resid, gains, fitted_info,) = calibrate_and_model_sparse(
+        (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
             uvdata=uvdata,
             fg_model_comps=dpss_model_comps,
             include_autos=include_autos,
