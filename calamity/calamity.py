@@ -64,7 +64,6 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
     sparse_number_of_elements = 0
     nvectors = 0
     nants_data = len(ants_map)
-
     echo("Determining number of non-zero elements", verbose=verbose)
     for modeling_grp in PBARS[notebook_progressbar](fg_model_comps):
         for vind in range(fg_model_comps[modeling_grp].shape[1]):
@@ -112,7 +111,7 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
             "Using Dense Representation.", verbose=verbose
         )
         fg_model_mat = np.zeros(dense_shape, dtype=dtype)
-    spind = 0
+    spinds = [0]
     echo(f"{datetime.datetime.now()} Filling out modeling vectors...\n", verbose=verbose)
     for i, j in PBARS[notebook_progressbar](ordered_ijs):
         blind = i * nants_data + j
@@ -120,15 +119,16 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
         fitgrp = modeling_grps[(i, j)]
         start_ind = start_inds[(i, j)]
         stop_ind = stop_inds[(i, j)]
-        for f in range(nfreqs):
-            dind = blind * nfreqs + f
-            for vind, matcol  in enumerate(range(start_ind, stop_ind)):
-                if use_sparse:
-                    comp_vals[spind] = fg_model_comps[fitgrp][grpnum * nfreqs + f, vind].astype(dtype)
-                    comp_inds[spind, 0], comp_inds[spind, 1] = dind, matcol
-                else:
-                    fg_model_mat[dind, matcol] = fg_model_comps[fitgrp][grpnum * nfreqs + f, vind].astype(dtype)
-                spind += 1
+        dinds = np.hstack([np.arange(blind * nfreqs, (blind + 1) * nfreqs) for i in np.arange(start_ind, stop_ind)]).astype(np.int32)
+        matcols = np.hstack([np.arange(start_ind, stop_ind) for np.arange(nfreqs)]).astype(np.int32)
+        spinds = np.arange(len(dinds)) + spinds[-1].astype(int32)
+        if use_sparse:
+            spinds = sparse_indices[(i, j)]
+            comp_vals[spinds] = fg_model_comps[fitgrp][grpnum*nfreqs: (grpnum+1)*nfreqs]
+            comp_inds[spinds, 0], comp_inds[spinds, 1] = dinds, matcols
+        else:
+            fg_model_mat[dinds, matcols] = fg_model_comps[fitgrp][grpnum*nfreqs: (grpnum+1)*nfreqs]
+
     if use_sparse:
         fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
     else:
@@ -189,9 +189,9 @@ def tensorize_data(
     for red_grp in red_grps:
         for ap in red_grp:
             bl = ap + (polarization,)
-            data = uvdata.get_data(bl) / data_scale_factor
-            iflags = (~uvdata.get_flags(bl)).astype(dtype)
-            nsamples = uvdata.get_nsamples(bl).astype(dtype)
+            data = uvdata.get_data(bl)[time_index] / data_scale_factor
+            iflags = (~uvdata.get_flags(bl))[time_index].astype(dtype)
+            nsamples = uvdata.get_nsamples(bl)[time_index].astype(dtype)
             i, j = ants_map[ap[0]], ants_map[ap[1]]
             data_r[i, j] = data.real.astype(dtype)
             data_i[i, j] = data.imag.astype(dtype)
@@ -205,7 +205,7 @@ def tensorize_data(
                 polnum = np.where(
                     weights.polarization_array == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation)
                 )[0][0]
-                wgts[i, j] = weights.weights_array[dinds, 0, :, polnum].astype(dtype) * iflags
+                wgts[i, j] = weights.weights_array[dinds[time_index], 0, :, polnum].astype(dtype) * iflags
             wgtsum += np.sum(wgts[i, j])
     data_r = tf.convert_to_tensor(data_r, dtype=dtype)
     data_i = tf.convert_to_tensor(data_i, dtype=dtype)
