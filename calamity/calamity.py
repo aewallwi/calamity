@@ -471,6 +471,7 @@ def cal_loss_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, 
     return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
 
 
+
 def fit_gains_and_foregrounds(
     g_r,
     g_i,
