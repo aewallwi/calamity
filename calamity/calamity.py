@@ -52,10 +52,14 @@ def tensorize_fg_model_comps(
 
     Returns
     -------
-    fg_model_mat: tf.sparse.SparseTensor object (if number of nonzero elements below sparse threshold)
-                         or tf.Tensor object (if number of nonzero elements above sparse threshold)
+    fg_model_mat:
+        If number of nonzero elements is above sparse threshold: tf.sparse.SparseTensor
         sparse tensor object holding foreground modeling vectors with a dense shape of
-        Nants^2 x Nfreqs x Nfg_comps ~ Nbls^4 x Nfreqs
+        Nants^2 x Nfreqs x Nfg_comps
+
+        If number of nonzero elements is not above sparse threshold: tf.Tensor
+        object holding foreground modeling vectors with shape of
+        Nants x Nants x Nfreqs x Nfg_comps
     """
     echo(
         f"{datetime.datetime.now()} Computing sparse foreground components matrix...\n",
