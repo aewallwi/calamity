@@ -1248,7 +1248,6 @@ def calibrate_and_model_tensor(
         for red_grp in fit_grp:
             red_grps.append(red_grp)
     uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
-    sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
     if gains is None:
@@ -1264,7 +1263,7 @@ def calibrate_and_model_tensor(
             verbose=verbose,
         )
         sky_model = cal_utils.apply_gains(uvdata, gains)
-
+    sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     # generate sparse tensor to hold foreground components.
