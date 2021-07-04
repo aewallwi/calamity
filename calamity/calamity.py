@@ -1823,8 +1823,8 @@ def calibrate_and_model_mixed(
             )
 
         proc = multiprocessing.Process(target=compute_model_comps, args=(0, return_dict))
-        p.start()
-        p.join()
+        proc.start()
+        proc.join()
         model_comps = return_dict[0]
 
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
