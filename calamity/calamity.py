@@ -366,7 +366,7 @@ def yield_fg_model_tensor(fg_comps, fg_coeffs, nants, nfreqs):
     if isinstance(fg_comps, tf.sparse.SparseTensor):
         model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
     else:
-        model = tf.reduce_sum(fg_comps, fg_coeffs, axis=3)
+        model = tf.reduce_sum(fg_comps * fg_coeffs, axis=3)
     return model
 
 
