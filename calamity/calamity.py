@@ -1748,16 +1748,15 @@ def calibrate_and_model_mixed(
         If True, model all baselines within each redundant group with the same components
         If False, model each baseline within each redundant group with sepearate components.
         default is False.
-    dtype_matinv: numpy.dtype, optional
-        data type to use for deriving modeling components.
-        default is np.float64 (need higher precision for cov-mat like calculation)
     use_tensorflow_to_derive_modeling_comps: bool, optional
         Use tensorflow methods to derive multi-baseline modeling components.
         recommended if you have a GPU with enough memory to perform spectral decomposition
         of multi-baseline covariance matrices.
     eigenval_cutoff: float, optional
-      threshold of eigenvectors to include in modeling components.
-
+        threshold of eigenvectors to include in modeling components.
+    dtype_matinv: numpy.dtype, optional
+        data type to use for deriving modeling components.
+        default is np.float64 (need higher precision for cov-mat like calculation)
     fitting_kwargs: kwarg dict
         additional kwargs for calibrate_and_model_tensor.
         see docstring of calibrate_and_model_tensor.
