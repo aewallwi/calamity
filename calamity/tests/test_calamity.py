@@ -610,7 +610,7 @@ def test_calibrate_and_model_dpss_freeze_model(
         gains=gains_randomized,
         verbose=True,
         use_redundancy=use_redundancy,
-        sky_model=sky_model_projected,
+        sky_model=None,
         freeze_model=True,
         maxsteps=10000,
         modeling_paradigm=method,
