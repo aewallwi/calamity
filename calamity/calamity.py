@@ -1,4 +1,3 @@
-
 import numpy as np
 import tensorflow as tf
 from pyuvdata import UVData, UVCal, UVFlag
@@ -24,7 +23,9 @@ OPTIMIZERS = {
 }
 
 
-def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=1e-1, dtype=np.float32, notebook_progressbar=False, verbose=False):
+def tensorize_fg_model_comps(
+    fg_model_comps, ants_map, nfreqs, sparse_threshold=1e-1, dtype=np.float32, notebook_progressbar=False, verbose=False
+):
     """Convert per-baseline model components into a Ndata x Ncomponent tensor
 
     Parameters
@@ -72,17 +73,12 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
                     sparse_number_of_elements += 1
             nvectors += 1
 
-
     dense_shape = (int(nants_data ** 2.0 * nfreqs), nvectors)
     dense_number_of_elements = dense_shape[0] * dense_shape[1]
 
     sparseness = sparse_number_of_elements / dense_number_of_elements
-    echo(
-        f"Fraction of modeling matrix with nonzero values is {(sparseness):.4e}", verbose=verbose
-    )
-    echo(
-        f"Generating map between i,j indices and foreground modeling keys", verbose=verbose
-    )
+    echo(f"Fraction of modeling matrix with nonzero values is {(sparseness):.4e}", verbose=verbose)
+    echo(f"Generating map between i,j indices and foreground modeling keys", verbose=verbose)
     modeling_grps = {}
     red_grp_nums = {}
     start_inds = {}
@@ -101,17 +97,13 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
     ordered_ijs = sorted(list(modeling_grps.keys()))
     use_sparse = sparseness <= sparse_threshold
     if use_sparse:
-        echo(
-            "Using Sparse Representation."
-        )
+        echo("Using Sparse Representation.")
         comp_inds = np.zeros((sparse_number_of_elements, 2), dtype=np.int32)
         comp_vals = np.zeros(sparse_number_of_elements, dtype=dtype)
     else:
-        echo(
-            "Using Dense Representation.", verbose=verbose
-        )
+        echo("Using Dense Representation.", verbose=verbose)
         fg_model_mat = np.zeros(dense_shape, dtype=dtype)
-    spinds = [0]
+    spinds = None
     echo(f"{datetime.datetime.now()} Filling out modeling vectors...\n", verbose=verbose)
     for i, j in PBARS[notebook_progressbar](ordered_ijs):
         blind = i * nants_data + j
@@ -119,15 +111,22 @@ def tensorize_fg_model_comps(fg_model_comps, ants_map, nfreqs, sparse_threshold=
         fitgrp = modeling_grps[(i, j)]
         start_ind = start_inds[(i, j)]
         stop_ind = stop_inds[(i, j)]
-        dinds = np.hstack([np.arange(blind * nfreqs, (blind + 1) * nfreqs) for i in np.arange(start_ind, stop_ind)]).astype(np.int32)
-        matcols = np.hstack([np.arange(start_ind, stop_ind) for np.arange(nfreqs)]).astype(np.int32)
-        spinds = np.arange(len(dinds)) + spinds[-1].astype(int32)
+        nvecs = stop_ind - start_ind
+        dinds = np.hstack([np.ones(nvecs) * dind for dind in np.arange(blind * nfreqs, (blind + 1) * nfreqs)]).astype(
+            np.int32
+        )
+        matcols = np.hstack([np.arange(start_ind, stop_ind) for i in np.arange(nfreqs)]).astype(np.int32)
+        bl_mvec = fg_model_comps[fitgrp][grpnum * nfreqs : (grpnum + 1) * nfreqs].astype(dtype).flatten()
+        ninds = len(dinds)
         if use_sparse:
-            spinds = sparse_indices[(i, j)]
-            comp_vals[spinds] = fg_model_comps[fitgrp][grpnum*nfreqs: (grpnum+1)*nfreqs]
+            if spinds is None:
+                spinds = np.arange(ninds).astype(np.int32)
+            else:
+                spinds = np.arange(ninds).astype(np.int32) + spinds[-1] + 1
+            comp_vals[spinds] = bl_mvec
             comp_inds[spinds, 0], comp_inds[spinds, 1] = dinds, matcols
         else:
-            fg_model_mat[dinds, matcols] = fg_model_comps[fitgrp][grpnum*nfreqs: (grpnum+1)*nfreqs]
+            fg_model_mat[dinds, matcols] = bl_mvec
 
     if use_sparse:
         fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
@@ -1270,13 +1269,18 @@ def calibrate_and_model_tensor(
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     # generate sparse tensor to hold foreground components.
     fg_comp_tensor = tensorize_fg_model_comps(
-        fg_model_comps=fg_model_comps, ants_map=ants_map, dtype=dtype, nfreqs=sky_model.Nfreqs, verbose=verbose, notebook_progressbar=notebook_progressbar, sparse_threshold=sparse_threshold,
+        fg_model_comps=fg_model_comps,
+        ants_map=ants_map,
+        dtype=dtype,
+        nfreqs=sky_model.Nfreqs,
+        verbose=verbose,
+        notebook_progressbar=notebook_progressbar,
+        sparse_threshold=sparse_threshold,
     )
     echo(
         f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
         verbose=verbose,
     )
-
 
     # loop through polarization and times.
     for polnum, pol in enumerate(uvdata.get_pols()):
@@ -1907,7 +1911,6 @@ def calibrate_and_model_dpss(
             **fitting_kwargs,
         )
     return model, resid, gains, fitted_info
-
 
 
 def read_calibrate_and_model_pbl(

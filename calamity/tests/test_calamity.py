@@ -131,6 +131,7 @@ def test_tensorize_pbl_model_comps_dictionary(sky_model_projected, dpss_vectors,
             rmsdata = np.mean(np.abs(tdata) ** 2.0) ** 0.5
             assert np.allclose(model, tdata, rtol=0.0, atol=1e-5 * rmsdata)
 
+
 def test_tensorize_fg_model_comps_dpsss(sky_model_projected, dpss_vectors, redundant_groups, gains):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     fg_comp_tensor = calamity.tensorize_fg_model_comps(
@@ -636,9 +637,9 @@ def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized
 
     # check that mixec components and dpss components give similar resids
     model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
-        min_dly=0.,
-        offset=0.,
-        ant_dly=2. / 3.,
+        min_dly=0.0,
+        offset=0.0,
+        ant_dly=2.0 / 3.0,
         red_tol_freq=0.5,
         uvdata=sky_model_projected,
         gains=gains_randomized,

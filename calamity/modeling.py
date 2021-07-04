@@ -457,6 +457,6 @@ def yield_mixed_comps(
                 freqs=freqs,
                 eigenval_cutoff=eigenval_cutoff,
                 use_tensorflow=use_tensorflow,
-                verbose=verbose
+                verbose=verbose,
             )
     return modeling_vectors
