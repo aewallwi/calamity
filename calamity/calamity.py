@@ -1529,7 +1529,6 @@ def calibrate_and_model_pbl_dictionary_method(
         for red_grp in fit_grp:
             red_grps.append(red_grp)
     uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
-    sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
     if gains is None:
@@ -1544,7 +1543,7 @@ def calibrate_and_model_pbl_dictionary_method(
             verbose=verbose,
         )
         sky_model = cal_utils.apply_gains(uvdata, gains)
-
+    sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
     fit_history = {}
     echo(
         f"{datetime.datetime.now()} Generating map between antenna pairs and modeling vectors...\n",
