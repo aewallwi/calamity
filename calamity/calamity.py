@@ -11,6 +11,8 @@ from .utils import echo
 from .utils import PBARS
 from . import cal_utils
 from . import modeling
+import multiprocessing
+
 
 
 OPTIMIZERS = {
