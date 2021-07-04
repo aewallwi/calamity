@@ -25,7 +25,7 @@ OPTIMIZERS = {
 
 
 def tensorize_fg_model_comps(
-    fg_model_comps, ants_map, nfreqs, sparse_threshold=1e-1, dtype=np.float32, notebook_progressbar=False, verbose=False
+    fg_model_comps, ants_map, nfreqs, sparse_threshold=1e-1, dtype=np.float32, notebook_progressbar=False, verbose=False, use_sparse=None,
 ):
     """Convert per-baseline model components into a Ndata x Ncomponent tensor
 
@@ -50,6 +50,9 @@ def tensorize_fg_model_comps(
     dtype: numpy.dtype
         data-type to store in sparse tensor.
         default is np.float32
+    use_sparse: bool, optional
+        use sparse representation if True.
+        default is None -> use sparse_threshold to determine whether to use sparse representation.
 
     Returns
     -------
@@ -100,7 +103,8 @@ def tensorize_fg_model_comps(
                 stop_inds[(i, j)] = stop_ind
         start_ind = stop_ind
     ordered_ijs = sorted(list(modeling_grps.keys()))
-    use_sparse = sparseness <= sparse_threshold
+    if use_sparse is None:
+        use_sparse = sparseness <= sparse_threshold
     if use_sparse:
         echo("Using Sparse Representation.")
         comp_inds = np.zeros((sparse_number_of_elements, 2), dtype=np.int32)
@@ -1171,6 +1175,7 @@ def calibrate_and_model_tensor(
     correct_model=False,
     weights=None,
     sparse_threshold=1e-1,
+    use_sparse=None,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using sparse tensors.
@@ -1260,6 +1265,9 @@ def calibrate_and_model_tensor(
         is greater then this value, then use a dense representation.
         Otherwise use a sparse representation.
         default is 1e-1
+    use_sparse: bool, optional
+        use sparse representation if True.
+        default is None -> use sparse_threshold to determine whether to use sparse representation.
     opt_kwargs: kwarg_dict
         kwargs for tf.optimizers
 
@@ -1319,6 +1327,7 @@ def calibrate_and_model_tensor(
         verbose=verbose,
         notebook_progressbar=notebook_progressbar,
         sparse_threshold=sparse_threshold,
+        use_sparse=use_sparse,
     )
     echo(
         f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
