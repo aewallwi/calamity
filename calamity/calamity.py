@@ -1697,6 +1697,7 @@ def calibrate_and_model_mixed(
     use_redundancy=False,
     use_tensorflow_to_derive_modeling_comps=False,
     eigenval_cutoff=1e-10,
+    dtype_matinv=np.float64,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with a mix of DPSS vectors
@@ -1747,6 +1748,9 @@ def calibrate_and_model_mixed(
         If True, model all baselines within each redundant group with the same components
         If False, model each baseline within each redundant group with sepearate components.
         default is False.
+    dtype_matinv: numpy.dtype, optional
+        data type to use for deriving modeling components.
+        default is np.float64 (need higher precision for cov-mat like calculation)
     use_tensorflow_to_derive_modeling_comps: bool, optional
         Use tensorflow methods to derive multi-baseline modeling components.
         recommended if you have a GPU with enough memory to perform spectral decomposition
@@ -1797,6 +1801,7 @@ def calibrate_and_model_mixed(
         offset=offset,
         min_dly=min_dly,
         verbose=verbose,
+        dtype=dtype_matinv,
         notebook_progressbar=notebook_progressbar,
     )
 

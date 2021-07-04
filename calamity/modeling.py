@@ -378,7 +378,7 @@ def yield_mixed_comps(
     offset=0.0,
     min_dly=0.0,
     verbose=False,
-    dtype=np.float32,
+    dtype=np.float64,
     notebook_progressbar=False,
     use_tensorflow=False,
 ):
@@ -415,8 +415,9 @@ def yield_mixed_comps(
         default is 0.0
     verbose: bool, optional
       produce text outputs.
-    dtype: numpy.dtype
+    dtype: numpy.dtype, optional
       data type in which to compute model eigenvectors.
+      default is np.float64
 
     Returns
     -------

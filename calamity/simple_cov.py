@@ -11,7 +11,7 @@ def simple_cov_matrix(
     horizon=1.0,
     offset=0.0,
     min_dly=0.0,
-    dtype=np.float32,
+    dtype=np.float64,
     use_tensorflow=False,
     verbose=False,
 ):
@@ -60,7 +60,7 @@ def simple_cov_matrix(
     freqs = freqs.astype(dtype)
     absdiff = np.zeros((nbls * nfreqs, nbls * nfreqs), dtype=dtype)
     if use_tensorflow:
-        freqs = tf.convert_to_tensor(freqs, dtype)
+        freqs = tf.convert_to_tensor(freqs, dtype=dtype)
         absdiff = tf.convert_to_tensor(absdiff, dtype=dtype)
     for uvw_ind in range(3):
         if use_tensorflow:
@@ -75,19 +75,19 @@ def simple_cov_matrix(
         absdiff = tf.math.sqrt(absdiff) * horizon
         fvals = tf.reshape(tf.experimental.numpy.outer(tf.ones(nbls, dtype=dtype), freqs), (nbls * nfreqs,))
         fg0, fg1 = tf.meshgrid(fvals, fvals, indexing="ij")
-        dfg = tf.abs(fg0 - fg1)
+        dfg = tf.abs(fg0 - fg1) / 1e9
     else:
         absdiff = np.sqrt(absdiff) * horizon
         fvals = np.reshape(np.outer(np.ones(nbls, dtype=dtype), freqs), (nbls * nfreqs,))
         fg0, fg1 = np.meshgrid(fvals, fvals, indexing="ij")
-        dfg = np.abs(fg0 - fg1)
+        dfg = np.abs(fg0 - fg1) / 1e9
 
     del fg0, fg1
-    absdiff += dfg * offset / 1e9
+    absdiff += dfg * offset
     if use_tensorflow:
-        cmat = tf.experimental.numpy.sinc(2 * tf.maximum(absdiff, min_dly * dfg / 1e9))
+        cmat = tf.experimental.numpy.sinc(2 * tf.maximum(absdiff, min_dly * dfg))
     else:
-        cmat = np.sinc(2 * np.maximum(min_dly * dfg / 1e9, absdiff))
+        cmat = np.sinc(2 * np.maximum(min_dly * dfg, absdiff))
     del absdiff
     if use_tensorflow:
         cmat = cmat * tf.experimental.numpy.sinc(2 * dfg * ant_dly)
@@ -104,7 +104,7 @@ def yield_simple_multi_baseline_model_comps(
     horizon=1.0,
     offset=0.0,
     min_dly=0.0,
-    dtype=np.float32,
+    dtype=np.float64,
     verbose=False,
     use_tensorflow=False,
     eigenval_cutoff=1e-10,
