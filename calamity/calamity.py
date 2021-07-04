@@ -131,7 +131,8 @@ def tensorize_fg_model_comps(
     if use_sparse:
         fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
     else:
-        fg_model_mat = tf.convert_to_tensor(fg_model_mat, dtype=dtype)
+        # convert to 4-tensor if not using sparse representation.
+        fg_model_mat = tf.convert_to_tensor(fg_model_mat, dtype=dtype).reshape(nants_data, nants_data, nfreqs, dense_shape[1])
     return fg_model_mat
 
 
@@ -355,7 +356,7 @@ def yield_fg_model_tensor(fg_comps, fg_coeffs, nants, nfreqs):
     if isinstance(fg_comps, tf.sparse.SparseTensor):
         model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
     else:
-        model = tf.reshape(tf.linalg.matmul(fg_comps, fg_coeffs), (nants, nants, nfreqs))
+        model = tf.reduce_sum(fg_comps, fg_coeffs, axis=3)
     return model
 
 
@@ -1327,7 +1328,7 @@ def calibrate_and_model_tensor(
                 time_index=time_index,
                 polarization=pol,
                 scale_factor=rmsdata,
-                force2d=True,
+                force2d=isinstance(fg_comp_tensor, tf.sparse.SparseTensor),
             )
 
             cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_tensor(
