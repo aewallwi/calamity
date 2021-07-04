@@ -457,12 +457,17 @@ def cal_loss_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, 
     return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
 
 
+
 def fit_gains_and_foregrounds(
     g_r,
     g_i,
     fg_r,
     fg_i,
-    loss_function,
+    data_r=None,
+    data_i=None,
+    wgts=None,
+    fg_comps=None,
+    loss_function=None,
     use_min=False,
     tol=1e-14,
     maxsteps=10000,
@@ -568,11 +573,35 @@ def fit_gains_and_foregrounds(
         f"{datetime.datetime.now()} Building Computational Graph...\n",
         verbose=verbose,
     )
-
-    @tf.function
-    def cal_loss():
-        return loss_function(g_r=g_r, g_i=g_i, fg_i=fg_i, fg_r=fg_r)
-
+    nants = g_r.shape[0]
+    nfreqs = g_r.shape[1]
+    if loss_function is not None:
+        @tf.function
+        def cal_loss():
+            return loss_function(g_r=g_r, g_i=g_i, fg_i=fg_i, fg_r=fg_r)
+    else:
+        if isinstance(fg_comps, tf.Tensor):
+            def cal_loss():
+                grgr = tf.einsum('ik,jk->ijk',gr, gr)
+                gigi = tf.einsum('ik,jk->ijk',gi, gi)
+                grgi = tf.einsum('ik,jk->ijk',gr, gi)
+                gigr = tf.einsum('ik,jk->ijk',gi, gr)
+                vr = tf.reduce_sum(fg_comps * fg_r, axis=3)
+                vi = tf.reduce_sum(fg_comps * fg_i, axis=3)
+                model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
+                model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
+                return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
+        elif isinstance(fg_comps, tf.sparse.SparseTensor):
+            def cal_loss():
+                grgr = tf.einsum('ik,jk->ijk',gr, gr)
+                gigi = tf.einsum('ik,jk->ijk',gi, gi)
+                grgi = tf.einsum('ik,jk->ijk',gr, gi)
+                gigr = tf.einsum('ik,jk->ijk',gi, gr)
+                model_r = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_r), (nants, nants, nfreqs))
+                model_i = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_i), (nants, nants, nfreqs))
+                model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
+                model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
+                return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
     loss_i = cal_loss().numpy()
     echo(
         f"{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss_i:.2e}...\n",
@@ -1361,7 +1390,10 @@ def calibrate_and_model_tensor(
                 g_i=gains_i,
                 fg_r=fg_r,
                 fg_i=fg_i,
-                loss_function=cal_loss,
+                data_r=data_r,
+                data_i=data_i,
+                wgts=wgts,
+                #loss_function=cal_loss,
                 record_var_history=record_var_history,
                 record_var_history_interval=record_var_history_interval,
                 optimizer=optimizer,
