@@ -578,6 +578,9 @@ def fit_gains_and_foregrounds(
         @tf.function
         def cal_loss():
             return loss_function(g_r=g_r, g_i=g_i, fg_i=fg_i, fg_r=fg_r)
+    # if you are wondering why we are manually defining the loss-function here
+    # instead of the user defined function, the reason is that for some reason
+    # in dense tensor mode on a GPU, things run ~10x as fast. Not sure why.
     else:
         if isinstance(fg_comps, tf.Tensor):
             def cal_loss():
