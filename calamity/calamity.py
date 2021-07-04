@@ -11,7 +11,6 @@ from .utils import echo
 from .utils import PBARS
 from . import cal_utils
 from . import modeling
-import multiprocessing
 
 
 OPTIMIZERS = {
@@ -1744,7 +1743,6 @@ def calibrate_and_model_mixed(
     use_tensorflow_to_derive_modeling_comps=False,
     eigenval_cutoff=1e-10,
     dtype_matinv=np.float64,
-    model_comps=None,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with a mix of DPSS vectors
@@ -1836,29 +1834,21 @@ def calibrate_and_model_mixed(
         n_angle_bins=n_angle_bins,
         notebook_progressbar=notebook_progressbar,
     )
-    if model_comps is None:
-        #manager = multiprocessing.Manager()
-        #return_dict = manager.dict()
-        #def compute_model_comps(procnum, return_dict):
-        model_comps = modeling.yield_mixed_comps(
-            fitting_grps,
-            blvecs,
-            uvdata.freq_array[0],
-            eigenval_cutoff=eigenval_cutoff,
-            use_tensorflow=use_tensorflow_to_derive_modeling_comps,
-            ant_dly=ant_dly,
-            horizon=horizon,
-            offset=offset,
-            min_dly=min_dly,
-            verbose=verbose,
-            dtype=dtype_matinv,
-            notebook_progressbar=notebook_progressbar,
-            )
 
-        #proc = multiprocessing.Process(target=compute_model_comps, args=(0, return_dict))
-        #proc.start()
-        #proc.join()
-        #model_comps = return_dict[0]
+    model_comps = modeling.yield_mixed_comps(
+        fitting_grps,
+        blvecs,
+        uvdata.freq_array[0],
+        eigenval_cutoff=eigenval_cutoff,
+        use_tensorflow=use_tensorflow_to_derive_modeling_comps,
+        ant_dly=ant_dly,
+        horizon=horizon,
+        offset=offset,
+        min_dly=min_dly,
+        verbose=verbose,
+        dtype=dtype_matinv,
+        notebook_progressbar=notebook_progressbar,
+        )
 
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
         uvdata=uvdata,
@@ -1880,6 +1870,7 @@ def calibrate_and_model_dpss(
     verbose=False,
     modeling_paradigm="dictionary",
     red_tol=1.0,
+    notebook_progressbar=False,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with DPSS vectors.
@@ -1950,6 +1941,7 @@ def calibrate_and_model_dpss(
         offset=offset,
         include_autos=include_autos,
         red_tol=red_tol,
+        notebook_progressbar=notebook_progressbar,
     )
     if modeling_paradigm == "dictionary":
         # get rid of fitting group level for the dictionary method.
