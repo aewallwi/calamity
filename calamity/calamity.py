@@ -1837,28 +1837,28 @@ def calibrate_and_model_mixed(
         notebook_progressbar=notebook_progressbar,
     )
     if model_comps is None:
-        manager = multiprocessing.Manager()
-        return_dict = manager.dict()
-        def compute_model_comps(procnum, return_dict):
-            return_dict[procnum] = modeling.yield_mixed_comps(
-                fitting_grps,
-                blvecs,
-                uvdata.freq_array[0],
-                eigenval_cutoff=eigenval_cutoff,
-                use_tensorflow=use_tensorflow_to_derive_modeling_comps,
-                ant_dly=ant_dly,
-                horizon=horizon,
-                offset=offset,
-                min_dly=min_dly,
-                verbose=verbose,
-                dtype=dtype_matinv,
-                notebook_progressbar=notebook_progressbar,
+        #manager = multiprocessing.Manager()
+        #return_dict = manager.dict()
+        #def compute_model_comps(procnum, return_dict):
+        model_comps = modeling.yield_mixed_comps(
+            fitting_grps,
+            blvecs,
+            uvdata.freq_array[0],
+            eigenval_cutoff=eigenval_cutoff,
+            use_tensorflow=use_tensorflow_to_derive_modeling_comps,
+            ant_dly=ant_dly,
+            horizon=horizon,
+            offset=offset,
+            min_dly=min_dly,
+            verbose=verbose,
+            dtype=dtype_matinv,
+            notebook_progressbar=notebook_progressbar,
             )
 
-        proc = multiprocessing.Process(target=compute_model_comps, args=(0, return_dict))
-        proc.start()
-        proc.join()
-        model_comps = return_dict[0]
+        #proc = multiprocessing.Process(target=compute_model_comps, args=(0, return_dict))
+        #proc.start()
+        #proc.join()
+        #model_comps = return_dict[0]
 
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
         uvdata=uvdata,
