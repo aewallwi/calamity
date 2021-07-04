@@ -339,14 +339,20 @@ def yield_fg_model_tensor(fg_comps, fg_coeffs, nants, nfreqs):
 
     Parameters
     ----------
-    fg_comps: tf.sparse.SparseTensor object
-        Sparse tensor with dense shape of  (Nants^2 * Nfreqs) x Ncomponents
-        Each column is a different data modeling component. The first axis ravels
-        the data by ant1, ant2, freq. In the per-baseline
-        modeling case, each column will be non-zero only over a single baseline.
+    fg_comps: tf.sparse.SparseTensor or tf.Tensor object
+        If tf.sparse.SparseTensor:
+            Sparse tensor with dense shape of  (Nants^2 * Nfreqs) x Ncomponents
+            Each column is a different data modeling component. The first axis ravels
+            the data by ant1, ant2, freq. In the per-baseline
+            modeling case, each column will be non-zero only over a single baseline.
+        If tf.Tensor
+            Tensor with shape Nants x Nants x Nfreqs x Ncomponents
     fg_coeffs: tf.Tensor object.
-        An Ncomponents x 1 tf.Tensor representing either the real or imag component
-        of visibilities.
+        if fg_comps is tf.sparse.SparseTensor:
+            An Ncomponents x 1 tf.Tensor representing either the real or imag component
+            of visibilities.
+        if fg_comps is a tf.Tensor:
+            An Ncomponents tf.Tensor representing either real or imag vis components.
     nants: int
         number of antennas in data to model.
     freqs: int
