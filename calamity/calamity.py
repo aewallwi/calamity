@@ -136,7 +136,7 @@ def tensorize_fg_model_comps(
         fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
     else:
         # convert to 4-tensor if not using sparse representation.
-        fg_model_mat = tf.convert_to_tensor(fg_model_mat, dtype=dtype).reshape(nants_data, nants_data, nfreqs, dense_shape[1])
+        fg_model_mat = tf.convert_to_tensor(fg_model_mat.reshape(nants_data, nants_data, nfreqs, dense_shape[1]), dtype=dtype)
     return fg_model_mat
 
 
