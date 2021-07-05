@@ -1864,8 +1864,6 @@ def calibrate_and_model_mixed(
         verbose=verbose,
         dtype=dtype_matinv,
         notebook_progressbar=notebook_progressbar,
-        require_exact_angle_match=require_exact_angle_match,
-        angle_match_tol=angle_match_tol,
         )
 
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(

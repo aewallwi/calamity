@@ -390,8 +390,6 @@ def yield_mixed_comps(
     dtype=np.float64,
     notebook_progressbar=False,
     use_tensorflow=False,
-    require_exact_angle_match=True,
-    angle_match_tol=1e-3,
 ):
     """Generate modeling components that include jointly modeled baselines.
 
@@ -471,7 +469,5 @@ def yield_mixed_comps(
                 use_tensorflow=use_tensorflow,
                 verbose=verbose,
                 notebook_progressbar=notebook_progressbar,
-                require_exact_angle_match=require_exact_angle_match,
-                angle_match_tol=angle_match_tol
             )
     return modeling_vectors
