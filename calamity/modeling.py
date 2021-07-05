@@ -81,11 +81,17 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
     # remove_redundancy is True.
     if remove_redundancy:
         red_grps_t = []
-        for red_grp in red_grps:
+        vec_bin_centers_t = []
+        lengths_t = []
+        for red_grp, vbc, length in zip(red_grps, vec_bin_centers, lengths):
             for ap in red_grp:
                 red_grps_t.append([ap])
+                vec_bin_centers_t.append(vbc)
+                lengths_t.append(length)
         red_grps = red_grps_t
-        del red_grps_t
+        lengths = lengths_t
+        vec_bin_centers = vec_bin_centers_t
+        del red_grps_t, lengths_t, vec_bin_centers_t
 
     return antpairs, red_grps, vec_bin_centers, lengths
 
