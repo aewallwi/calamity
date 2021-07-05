@@ -77,8 +77,8 @@ def tensorize_fg_model_comps(
     for modeling_grp in PBARS[notebook_progressbar](fg_model_comps):
         for vind in range(fg_model_comps[modeling_grp].shape[1]):
             for grpnum, red_grp in enumerate(modeling_grp):
-                for f in range(nfreqs):
-                    sparse_number_of_elements += 1
+                for ap in red_grp:
+                    sparse_number_of_elements += nfreqs
             nvectors += 1
 
     dense_shape = (int(nants_data ** 2.0 * nfreqs), nvectors)
