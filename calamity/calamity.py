@@ -1755,6 +1755,8 @@ def calibrate_and_model_mixed(
     use_tensorflow_to_derive_modeling_comps=False,
     eigenval_cutoff=1e-10,
     dtype_matinv=np.float64,
+    require_exact_angle_match=True,
+    angle_match_tol=1e-3,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with a mix of DPSS vectors
@@ -1845,6 +1847,8 @@ def calibrate_and_model_mixed(
         red_tol_freq=red_tol_freq,
         n_angle_bins=n_angle_bins,
         notebook_progressbar=notebook_progressbar,
+        require_exact_angle_match=require_exact_angle_match,
+        angle_match_tol=angle_match_tol,
     )
 
     model_comps = modeling.yield_mixed_comps(
@@ -1860,6 +1864,8 @@ def calibrate_and_model_mixed(
         verbose=verbose,
         dtype=dtype_matinv,
         notebook_progressbar=notebook_progressbar,
+        require_exact_angle_match=require_exact_angle_match,
+        angle_match_tol=angle_match_tol,
         )
 
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
