@@ -468,6 +468,5 @@ def yield_mixed_comps(
                 eigenval_cutoff=eigenval_cutoff,
                 use_tensorflow=use_tensorflow,
                 verbose=verbose,
-                notebook_progressbar=notebook_progressbar,
             )
     return modeling_vectors
