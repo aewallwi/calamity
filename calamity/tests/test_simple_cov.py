@@ -28,7 +28,7 @@ def test_simple_cov(use_tensorflow, horizon, offset, min_dly, sky_model, ant_dly
     freqs = sky_model.freq_array[0]
     nfreqs = len(freqs)
     fg0, fg1 = np.meshgrid(freqs, freqs)
-    bldly = np.max([np.linalg.norm(blvecs[0]) * horizon / .3 + offset, min_dly])
+    bldly = np.max([np.linalg.norm(blvecs[0]) * horizon / 0.3 + offset, min_dly])
     tcov = np.sinc(2 * bldly * (fg0 - fg1) / 1e9)
     if ant_dly > 0:
         tcov *= np.sinc(2 * (fg0 - fg1) / 1e9 * ant_dly)

@@ -25,7 +25,14 @@ OPTIMIZERS = {
 
 
 def tensorize_fg_model_comps(
-    fg_model_comps, ants_map, nfreqs, sparse_threshold=1e-1, dtype=np.float32, notebook_progressbar=False, verbose=False, use_sparse=None,
+    fg_model_comps,
+    ants_map,
+    nfreqs,
+    sparse_threshold=1e-1,
+    dtype=np.float32,
+    notebook_progressbar=False,
+    verbose=False,
+    use_sparse=None,
 ):
     """Convert per-baseline model components into a Ndata x Ncomponent tensor
 
@@ -141,7 +148,9 @@ def tensorize_fg_model_comps(
         fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
     else:
         # convert to 4-tensor if not using sparse representation.
-        fg_model_mat = tf.convert_to_tensor(fg_model_mat.reshape(nants_data, nants_data, nfreqs, dense_shape[1]), dtype=dtype)
+        fg_model_mat = tf.convert_to_tensor(
+            fg_model_mat.reshape(nants_data, nants_data, nfreqs, dense_shape[1]), dtype=dtype
+        )
     return fg_model_mat
 
 
@@ -460,7 +469,6 @@ def cal_loss_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, 
     return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
 
 
-
 def fit_gains_and_foregrounds(
     g_r,
     g_i,
@@ -579,35 +587,41 @@ def fit_gains_and_foregrounds(
     nants = g_r.shape[0]
     nfreqs = g_r.shape[1]
     if loss_function is not None:
+
         @tf.function
         def cal_loss():
             return loss_function(g_r=g_r, g_i=g_i, fg_i=fg_i, fg_r=fg_r)
+
     # if you are wondering why we are manually defining the loss-function here
     # instead of the user defined function, the reason is that for some reason
     # in dense tensor mode on a GPU, things run ~10x as fast. Not sure why.
     else:
         if isinstance(fg_comps, tf.Tensor):
+
             def cal_loss():
-                grgr = tf.einsum('ik,jk->ijk',g_r, g_r)
-                gigi = tf.einsum('ik,jk->ijk',g_i, g_i)
-                grgi = tf.einsum('ik,jk->ijk',g_r, g_i)
-                gigr = tf.einsum('ik,jk->ijk',g_i, g_r)
+                grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
+                gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
+                grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
+                gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
                 vr = tf.reduce_sum(fg_comps * fg_r, axis=3)
                 vi = tf.reduce_sum(fg_comps * fg_i, axis=3)
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
                 model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
                 return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
+
         elif isinstance(fg_comps, tf.sparse.SparseTensor):
+
             def cal_loss():
-                grgr = tf.einsum('ik,jk->ijk',g_r, g_r)
-                gigi = tf.einsum('ik,jk->ijk',g_i, g_i)
-                grgi = tf.einsum('ik,jk->ijk',g_r, g_i)
-                gigr = tf.einsum('ik,jk->ijk',g_i, g_r)
+                grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
+                gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
+                grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
+                gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
                 vr = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_r), (nants, nants, nfreqs))
                 vi = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_i), (nants, nants, nfreqs))
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
                 model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
                 return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
+
     loss_i = cal_loss().numpy()
     echo(
         f"{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss_i:.2e}...\n",
@@ -1383,7 +1397,7 @@ def calibrate_and_model_tensor(
                 force2d=isinstance(fg_comp_tensor, tf.sparse.SparseTensor),
             )
 
-            #cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_tensor(
+            # cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_tensor(
             #    data_r=data_r,
             #    data_i=data_i,
             #    wgts=wgts,
@@ -1394,7 +1408,7 @@ def calibrate_and_model_tensor(
             #    fg_model_comps=fg_comp_tensor,
             #    nants=uvdata.Nants_data,
             #    nfreqs=uvdata.Nfreqs,
-            #)
+            # )
             # derive optimal gains and foregrounds
             (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                 g_r=gains_r,
@@ -1405,7 +1419,7 @@ def calibrate_and_model_tensor(
                 data_i=data_i,
                 wgts=wgts,
                 fg_comps=fg_comp_tensor,
-                #loss_function=cal_loss,
+                # loss_function=cal_loss,
                 record_var_history=record_var_history,
                 record_var_history_interval=record_var_history_interval,
                 optimizer=optimizer,
@@ -1864,7 +1878,7 @@ def calibrate_and_model_mixed(
         verbose=verbose,
         dtype=dtype_matinv,
         notebook_progressbar=notebook_progressbar,
-        )
+    )
 
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
         uvdata=uvdata,

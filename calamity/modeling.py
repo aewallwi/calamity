@@ -183,7 +183,10 @@ def get_uv_overlapping_grps_conjugated(
                 uvwmax0 = fmax * np.linalg.norm(vbc0) / 3e8
                 uvwmax1 = fmax * np.linalg.norm(vbc1) / 3e8
                 if (uvwmin0 > uvwmin1 and uvwmin0 < uvwmax1) or (uvwmin1 > uvwmin0 and uvwmin1 < uvwmax0):
-                    if not require_exact_angle_match or np.abs(np.arctan(vbc0[1] / vbc0[0]) - np.arctan(vbc1[1] / vbc1[0])) <= angle_match_tol:
+                    if (
+                        not require_exact_angle_match
+                        or np.abs(np.arctan(vbc0[1] / vbc0[0]) - np.arctan(vbc1[1] / vbc1[0])) <= angle_match_tol
+                    ):
                         u0 = vbc0[0] * uvdata.freq_array[0] / 3e8
                         v0 = vbc0[1] * uvdata.freq_array[0] / 3e8
                         u1 = vbc1[0] * uvdata.freq_array[0] / 3e8

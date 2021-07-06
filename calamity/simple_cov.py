@@ -174,7 +174,9 @@ def yield_simple_multi_baseline_model_comps(
     else:
         evals, evecs = np.linalg.eigh(cmat)
     selection = evals / evals[-1] >= eigenval_cutoff
-    echo(f"{datetime.datetime.now()} Finished spectral decomposition. Using {np.count_nonzero(selection)} of {len(selection)} eigenvectors to model foregrounds...\n")
+    echo(
+        f"{datetime.datetime.now()} Finished spectral decomposition. Using {np.count_nonzero(selection)} of {len(selection)} eigenvectors to model foregrounds...\n"
+    )
     evals = evals[selection][::-1]
     evecs = evecs[:, selection][:, ::-1]
     return evecs
