@@ -64,35 +64,44 @@ def tensorize_fg_model_comps(
 
     Returns
     -------
-    fg_model_mat:
-        If number of nonzero elements is above sparse threshold: tf.sparse.SparseTensor
-        sparse tensor object holding foreground modeling vectors with a dense shape of
-        Nants^2 x Nfreqs x Nfg_comps
-
-        If number of nonzero elements is not above sparse threshold: tf.Tensor
-        object holding foreground modeling vectors with shape of
-        Nants x Nants x Nfreqs x Nfg_comps
+    fg_mats: list
+        list of tf.Tensor objects representing each fitting group with more then a single baseline
+        or tf.sparse.SparseTensor objects representing all single baseline fitting groups together.
+        Shape of each tf.Tensor object is Ndata x Ncomponents (where Ndata = Nbls * Nfreqs and Nbls is number of baselines in modeling group)
+        Shape of each tf.sparse.Sparse Tensor object is (Nant * Nant * Nfreq) x Ncomponents
+    data_inds:
+        list of float32 tf.Tensor objects representing data_indices (in 1d raveled baseline * nfreqs + freq) format
+    vector_inds:
+        list of float32 tf.Tensor objects representing vector indices
     """
     echo(
-        f"{datetime.datetime.now()} Computing sparse foreground components matrix...\n",
+        f"{datetime.datetime.now()} Computing foreground components matrices...\n",
         verbose=verbose,
     )
 
+    fg_mats = []
+    data_inds = []
+    vec_inds = []
+
+    # do a forward pass and determine dense shape of the sparse matrix
     sparse_number_of_elements = 0
     nvectors = 0
     nants_data = len(ants_map)
     echo("Determining number of non-zero elements", verbose=verbose)
     for modeling_grp in PBARS[notebook_progressbar](fg_model_comps):
-        for vind in range(fg_model_comps[modeling_grp].shape[1]):
-            for grpnum, red_grp in enumerate(modeling_grp):
-                for ap in red_grp:
-                    sparse_number_of_elements += nfreqs
-            nvectors += 1
+        if len(modeling_grp) == 1:
+            for vind in range(fg_model_comps[modeling_grp].shape[1]):
+                for grpnum, red_grp in enumerate(modeling_grp):
+                    for ap in red_grp:
+                        sparse_number_of_elements += nfreqs
+                nvectors += 1
 
     dense_shape = (int(nants_data ** 2.0 * nfreqs), nvectors)
     dense_number_of_elements = dense_shape[0] * dense_shape[1]
 
     sparseness = sparse_number_of_elements / dense_number_of_elements
+    # build maps between i, j correlation indices and single baselines
+    # so we can build up sparse matrix representation of non-overlapping baselines.
     echo(f"Fraction of modeling matrix with nonzero values is {(sparseness):.4e}", verbose=verbose)
     echo(f"Generating map between i,j indices and foreground modeling keys", verbose=verbose)
     modeling_grps = {}
@@ -102,26 +111,23 @@ def tensorize_fg_model_comps(
     start_ind = 0
     for modeling_grp in fg_model_comps:
         stop_ind = start_ind + fg_model_comps[modeling_grp].shape[1]
-        for red_grp_num, red_grp in enumerate(modeling_grp):
-            for ap in red_grp:
-                i, j = ants_map[ap[0]], ants_map[ap[1]]
-                modeling_grps[(i, j)] = modeling_grp
-                red_grp_nums[(i, j)] = red_grp_num
-                start_inds[(i, j)] = start_ind
-                stop_inds[(i, j)] = stop_ind
+        if len(modeling_grp) == 1:
+            for red_grp_num, red_grp in enumerate(modeling_grp):
+                for ap in red_grp:
+                    i, j = ants_map[ap[0]], ants_map[ap[1]]
+                    modeling_grps[(i, j)] = modeling_grp
+                    red_grp_nums[(i, j)] = red_grp_num
+                    start_inds[(i, j)] = start_ind
+                    stop_inds[(i, j)] = stop_ind
+
         start_ind = stop_ind
     ordered_ijs = sorted(list(modeling_grps.keys()))
-    if use_sparse is None:
-        use_sparse = sparseness <= sparse_threshold
-    if use_sparse:
-        echo("Using Sparse Representation.")
-        comp_inds = np.zeros((sparse_number_of_elements, 2), dtype=np.int32)
-        comp_vals = np.zeros(sparse_number_of_elements, dtype=dtype)
-    else:
-        echo("Using Dense Representation.", verbose=verbose)
-        fg_model_mat = np.zeros(dense_shape, dtype=dtype)
-    spinds = None
-    echo(f"{datetime.datetime.now()} Filling out modeling vectors...\n", verbose=verbose)
+
+    comp_inds = np.zeros((sparse_number_of_elements, 2), dtype=np.int32)
+    comp_vals = np.zeros(sparse_number_of_elements, dtype=dtype)
+
+    echo(f"{datetime.datetime.now()} Filling out modeling vectors for non-overlapping baselines...\n", verbose=verbose)
+
     for i, j in PBARS[notebook_progressbar](ordered_ijs):
         blind = i * nants_data + j
         grpnum = red_grp_nums[(i, j)]
@@ -135,18 +141,33 @@ def tensorize_fg_model_comps(
         matcols = np.hstack([np.arange(start_ind, stop_ind) for i in np.arange(nfreqs)]).astype(np.int32)
         bl_mvec = fg_model_comps[fitgrp][grpnum * nfreqs : (grpnum + 1) * nfreqs].astype(dtype).flatten()
         ninds = len(dinds)
-        if use_sparse:
-            if spinds is None:
-                spinds = np.arange(ninds).astype(np.int32)
-            else:
-                spinds = np.arange(ninds).astype(np.int32) + spinds[-1] + 1
-            comp_vals[spinds] = bl_mvec
-            comp_inds[spinds, 0], comp_inds[spinds, 1] = dinds, matcols
+        if spinds is None:
+            spinds = np.arange(ninds).astype(np.int32)
         else:
-            fg_model_mat[dinds, matcols] = bl_mvec
+            spinds = np.arange(ninds).astype(np.int32) + spinds[-1] + 1
+        comp_vals[spinds] = bl_mvec
+        comp_inds[spinds, 0], comp_inds[spinds, 1] = dinds, matcols
 
-    if use_sparse:
-        fg_model_mat = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
+
+    fg_mats.append(tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape))
+    data_inds.append(tf.convert_to_tensor(comp_inds[:, 0], dtype=np.int32))
+    vec_inds.append(tf.convert_to_tensor(comp_inds[:, 1], dtype=np.int32))
+
+    # now go through the fitting_groups that are not length-1
+    for modeling_grp in modeling_grps:
+        if len(modeling_grp) > 1:
+            i0, j0 = ants_map[modeling_grp[0][0][0]], ants_map[modeling_grp[0][0][1]]
+            start_ind = start_inds[i0, j0]
+            stop_ind = start_ind + fg_model_comps[modeling_grp].shape[1]
+            # get data inds
+            vec_inds.append(tf.convert_to_tensor(np.arange(start_ind, stop_ind), dtype=np.int32))
+            fg_mats.append(tf.convert_to_tensor(fg_model_comps[modeling_grp], dtype=dtype))
+
+
+
+
+
+
     else:
         # convert to 4-tensor if not using sparse representation.
         fg_model_mat = tf.convert_to_tensor(
