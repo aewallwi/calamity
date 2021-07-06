@@ -148,7 +148,6 @@ def tensorize_fg_model_comps(
         comp_vals[spinds] = bl_mvec
         comp_inds[spinds, 0], comp_inds[spinds, 1] = dinds, matcols
 
-
     fg_mats.append(tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape))
     data_inds.append(tf.convert_to_tensor(comp_inds[:, 0], dtype=np.int32))
     vec_inds.append(tf.convert_to_tensor(comp_inds[:, 1], dtype=np.int32))
@@ -159,21 +158,18 @@ def tensorize_fg_model_comps(
             i0, j0 = ants_map[modeling_grp[0][0][0]], ants_map[modeling_grp[0][0][1]]
             start_ind = start_inds[i0, j0]
             stop_ind = start_ind + fg_model_comps[modeling_grp].shape[1]
-            # get data inds
             vec_inds.append(tf.convert_to_tensor(np.arange(start_ind, stop_ind), dtype=np.int32))
             fg_mats.append(tf.convert_to_tensor(fg_model_comps[modeling_grp], dtype=dtype))
+            # calculate data indices
+            dinds = []
+            for red_grp in modeling_grp:
+                for ap in red_grp:
+                    i, j = ants_map[ap[0]], ants_map[ap[1]]
+                    blind = i * nants_data + j
+                    dinds.extend(list(np.arange(blind * nfreqs, blind).astype(np.int32)))
+            data_inds.append(tf.convert_to_tensor(dinds, dtype=np.int32))
 
-
-
-
-
-
-    else:
-        # convert to 4-tensor if not using sparse representation.
-        fg_model_mat = tf.convert_to_tensor(
-            fg_model_mat.reshape(nants_data, nants_data, nfreqs, dense_shape[1]), dtype=dtype
-        )
-    return fg_model_mat
+    return fg_mats, data_inds, vec_inds
 
 
 def tensorize_data(
@@ -338,36 +334,6 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
     gains_re = tf.convert_to_tensor(uvcal.gain_array[:, 0, :, time_index, polnum].squeeze().real, dtype=dtype)
     gains_im = tf.convert_to_tensor(uvcal.gain_array[:, 0, :, time_index, polnum].squeeze().imag, dtype=dtype)
     return gains_re, gains_im
-
-
-def tensorize_pbl_model_comps_dictionary(fg_model_comps, dtype=np.float32):
-    """Helper function generating mappings for per-baseline foreground modeling.
-
-    Generates mappings between antenna pairs and foreground basis vectors accounting for redundancies.
-
-    Parameters
-    ----------
-    fg_model_comps: dict with tuples of tuples of 2-tuples as keys and np.ndarrays as values.
-
-    Returns
-    -------
-    fg_range_map: dict with int 2-tuples as keys and int 2-tuples as values.
-        dictionary mapping antenna pairs to index ranges of a foreground coefficient vector raveled by baseline and baseline eigenvector number.
-    model_comp_tensor_map: diction with 2-tuples as keys an tf.Tensor objects as values.
-        dictionary mapping antenna pairs to
-    """
-    model_comp_tensor_map = {}
-    fg_range_map = {}
-    startind = 0
-    for grpnum, red_grp in enumerate(fg_model_comps.keys()):
-        # set fg_range_map value based on first antenna-pair in redundant group.
-        ncomponents = fg_model_comps[red_grp].shape[1]
-        fg_range_map[red_grp[0][0]] = (startind, startind + ncomponents)
-        startind += ncomponents
-        for ap in red_grp[0]:
-            model_comp_tensor_map[ap] = tf.convert_to_tensor(fg_model_comps[red_grp], dtype=dtype)
-            fg_range_map[ap] = fg_range_map[red_grp[0][0]]
-    return fg_range_map, model_comp_tensor_map
 
 
 def yield_fg_model_tensor(fg_comps, fg_coeffs, nants, nfreqs):
@@ -701,62 +667,6 @@ def fit_gains_and_foregrounds(
     return g_r_opt, g_i_opt, fg_r_opt, fg_i_opt, fit_history
 
 
-def yield_fg_model_pbl_dictionary_method(
-    i,
-    j,
-    fg_coeffs_re,
-    fg_coeffs_im,
-    fg_range_map,
-    components_map,
-):
-    """Helper function for retrieving a per-baseline foreground model using the dictionary mapping technique
-
-    From empirical experimentation, this technique works best in graph mode on CPUs. We recommend
-    the array method if working with GPUs.
-
-    Parameters
-    ----------
-    i: int
-        i correlation index
-    j: int
-        j correlation index
-    fg_coeffs_re: tf.Tensor object
-        an Nforegrounds tensorflow tensor
-        storing the real components of coeffs multiplying foreground
-        basis vectors.
-    fg_coeffs_im: tf.Tensor object
-        an Nforegrounds tensorflow tensor
-        storing the imaginary components of coeffs multiplying foreground
-        basis vectors.
-    fg_range_map: dict with 2-tuple int keys and 2-int tuple values
-        dictionary with keys that are (i, j) pairs of correlation indices which map to
-        integer 2-tuples (index_low, index_high) representing the lower and upper indices of
-        the fg_coeffs tensor. Lower index is inclusive, upper index is exclusive
-        (consistent with python indexing convention).
-    components_map: dict of 2-tuple int keys and tf.Tensor object values.
-        dictionary with keys that are (i, j) integer pairs of correlation indices which map to
-        Nfreq x Nforeground tensorflow tensor where each column is a separate per-baseline
-        foreground basis component.
-
-    Returns
-    -------
-    fg_model_re: tf.Tensor object
-        Nfreq 1d tensorflow tensor model of the real part of the (i, j) correlation.
-    fg_model_im: tf.Tensor object
-        Nfreq 1d tensorflow tensor model of the imag part of the (i, j) correlation
-
-    """
-    fg_model_re = tf.reduce_sum(
-        components_map[i, j] * fg_coeffs_re[fg_range_map[(i, j)][0] : fg_range_map[(i, j)][1]],
-        axis=1,
-    )  # real part of fg model.
-    fg_model_im = tf.reduce_sum(
-        components_map[i, j] * fg_coeffs_im[fg_range_map[(i, j)][0] : fg_range_map[(i, j)][1]],
-        axis=1,
-    )  # imag part of fg model.
-    return fg_model_re, fg_model_im
-
-
 def insert_model_into_uvdata_tensor(
     uvdata,
     time_index,
@@ -812,64 +722,6 @@ def insert_model_into_uvdata_tensor(
             uvdata.data_array[dinds, 0, :, polnum] = model * scale_factor
 
 
-def insert_model_into_uvdata_dictionary(
-    uvdata,
-    time_index,
-    polarization,
-    fg_range_map,
-    model_comps_map,
-    fg_coeffs_re,
-    fg_coeffs_im,
-    scale_factor=1.0,
-):
-    """Insert tensor values back into uvdata object for dictionary mode.
-
-    Parameters
-    ----------
-    uvdata: UVData object
-        uvdata object to insert model data into.
-    time_index: int
-        time index to insert model data at.
-    polarization: str
-        polarization to insert.
-    fg_range_map: dict with int 2-tuples as keys and int 2-tuples as values.
-        dictionary mapping antenna pairs to index ranges of a foreground coefficient vector raveled by baseline and baseline model component number.
-    components_map: dict of 2-tuple int keys and tf.Tensor object values.
-        dictionary with keys that are (i, j) integer pairs of correlation indices which map to
-        Nfreq x Nforeground tensorflow tensor where each column is a separate per-baseline
-        foreground basis component.
-    fg_coeffs_re: tf.Tensor object
-        1d tensor containing real parts of coeffs for each modeling vector.
-        ordering is over foreground modeling vector per redundant group and then
-        redundant group in the order of groups appearing in red_grps
-    fg_coeffs_im: tf.Tensor object
-        1d tensor containing imag parts of coeffs for each modeling vector.
-        ordering is over foreground modeling vector per redundant group and then
-        redundant group in the order of groups appearing in red_grps
-    scale_factor: float
-        scale factor that model was divided by for fitting.
-        default is 1.
-
-    Returns
-    -------
-    N/A. Modifies uvdata in-place.
-    """
-    data_antpairs = uvdata.get_antpairs()
-    polnum = np.where(
-        uvdata.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata.x_orientation)
-    )[0][0]
-    for ap in fg_range_map:
-        fgrange = slice(fg_range_map[ap][0], fg_range_map[ap][1])
-        model = model_comps_map[ap].numpy() @ (fg_coeffs_re.numpy()[fgrange] + 1j * fg_coeffs_im.numpy()[fgrange])
-        model *= scale_factor
-        if ap in data_antpairs:
-            dinds = uvdata.antpair2ind(ap)[time_index]
-        else:
-            dinds = uvdata.antpair2ind(ap[::-1])[time_index]
-            model = np.conj(model)
-        uvdata.data_array[dinds, 0, :, polnum] = model
-
-
 def insert_gains_into_uvcal(uvcal, time_index, polarization, gains_re, gains_im):
     """Insert tensorized gains back into uvcal object
 
@@ -897,225 +749,6 @@ def insert_gains_into_uvcal(uvcal, time_index, polarization, gains_re, gains_im)
         uvcal.gain_array[ant_index, 0, :, time_index, polnum] = (
             gains_re[ant_index].numpy() + 1j * gains_im[ant_index].numpy()
         )
-
-
-# get the calibrated model
-def yield_data_model_pbl_dictionary(
-    i,
-    j,
-    gains_re,
-    gains_im,
-    ants_map,
-    fg_coeffs_re,
-    fg_coeffs_im,
-    fg_range_map,
-    components_map,
-):
-    """Helper function for retrieving a per-baseline uncalibrted foreground model using the dictionary mapping technique
-
-    From empirical experimentation, this technique works best in graph mode on CPUs. We recommend
-    the array method if working with GPUs.
-
-    Parameters
-    ----------
-    i: int
-        i correlation index
-    j: int
-        j correlation index
-    gains_re: dict with int keys and tf.Tensor object values
-        dictionary mapping i antenna numbers to Nfreq 1d tf.Tensor object
-        representing the real component of the complex gain for antenna i.
-    gains_im: dict with int keys and tf.Tensor object values
-        dictionary mapping j antenna numbers to Nfreq 1d tf.Tensor object
-        representing the imag component of the complex gain for antenna j.
-    ants_map: dict mapping integer keys to integer values.
-        dictionary mapping antenna number to antenna index in gains_re and gains_im.
-    fg_coeffs_re: tf.Tensor object
-        an Nforegrounds tensorflow tensor
-        storing the real components of coeffs multiplying foreground
-        basis vectors.
-    fg_coeffs_im: tf.Tensor object
-        an Nforegrounds tensorflow tensor
-        storing the imaginary components of coeffs multiplying foreground
-        basis vectors.
-    fg_range_map: dict with 2-tuple int keys and 2-int tuple values
-        dictionary with keys that are (i, j) pairs of correlation indices which map to
-        integer 2-tuples (index_low, index_high) representing the lower and upper indices of
-        the fg_coeffs tensor. Lower index is inclusive, upper index is exclusive
-        (consistent with python indexing convention).
-    components_map: dict of 2-tuple int keys and tf.Tensor object values.
-        dictionary with keys that are (i, j) integer pairs of correlation indices which map to
-        Nfreq x Nforeground tensorflow tensor where each column is a separate per-baseline
-        foreground basis component.
-
-    Returns
-    -------
-    uncal_model_re: tf.Tensor object
-        Nfreq 1d tensorflow tensor model of the real part of the uncalibrated (i, j) correlation
-        Real(V_{ij}^{true} \times g_i \times conj(g_j))
-    uncal_model_im: tf.Tensor object
-        Nfreq 1d tensorflow tensor model of the imag part of the uncalibrated (i, j) correlation
-        Real(V_{ij}^{true} \times g_i \times conj(g_j))
-    """
-    (fg_model_re, fg_model_im,) = yield_fg_model_pbl_dictionary_method(
-        i,
-        j,
-        fg_coeffs_re=fg_coeffs_re,
-        fg_coeffs_im=fg_coeffs_im,
-        fg_range_map=fg_range_map,
-        components_map=components_map,
-    )
-    i, j = ants_map[i], ants_map[j]
-    uncal_model_re = (gains_re[i] * gains_re[j] + gains_im[i] * gains_im[j]) * fg_model_re + (
-        gains_re[i] * gains_im[j] - gains_im[i] * gains_re[j]
-    ) * fg_model_im  # real part of model with gains
-    uncal_model_im = (gains_re[i] * gains_re[j] + gains_im[i] * gains_im[j]) * fg_model_im + (
-        gains_im[i] * gains_re[j] - gains_re[i] * gains_im[j]
-    ) * fg_model_re  # imag part of model with gains
-    return uncal_model_re, uncal_model_im
-
-
-def cal_loss_dictionary(
-    gains_re,
-    gains_im,
-    fg_coeffs_re,
-    fg_coeffs_im,
-    data_re,
-    data_im,
-    wgts,
-    ants_map,
-    fg_range_map,
-    components_map,
-):
-    """MSE loss-function for dictionary method of computing data model.
-
-    Parameters
-    ----------
-    gains_re: dictionary with ints as keys and tf.Tensor objects as values.
-        dictionary mapping antenna numbers to Nfreq 1d tensors representing the
-        real part of the model for each antenna.
-    gains_im: dictionary with ints as keys and tf.Tensor objects as values.
-        dictionary mapping antenna numbers to Nfreq 1d tensors representing the
-        imag part of the model for each antenna.
-    fg_coeffs_re: dictionary with int 2-tuples as keys and tf.Tensor objects as values.
-        dictionary mapping antenna-pairs to N-foreground-coeff 1d tensors representing the
-        real part of the model for each antenna.
-    fg_coeffs_im: dictionary with int 2-tuples as keys and tf.Tensor objects as values.
-        dictionary mapping antenna-pairs to N-foreground-coeff 1d tensors representing the
-        imag part of the model for each antenna.
-    data_re: dictionary with int 2-tuples as keys and tf.Tensor objects as values.
-        dictionary mapping antenna-pairs to Nfreq 1d tensors containing
-        the real part of the target data for each baseline.
-    data_im: dictionary with int 2-tuples as keys and tf.Tensor objects as values.
-        dictionary mapping antenna-pairs to Nfreq 1d tensors containing
-        the imag part of the target data for each baseline.
-    wgts: dictionary with int 2-tuples as keys and tf.Tensor objects as values.
-        dictionary mapping antenna-pairs to Nfreq 1d tensors containing
-        per-frequency weights for each baseline contributing to the loss function.
-    ants_map: dict mapping integer keys to integer values.
-        dictionary mapping antenna number to antenna index in gains_re and gains_im.
-    fg_range_map: dict with int 2-tuples as keys and int 2-tuples as values.
-        dictionary mapping antenna pairs to index ranges of a foreground coefficient vector raveled by baseline and baseline eigenvector number.
-
-    Returns
-    -------
-    loss_total: tf.Tensor scalar
-        The MSE (mean-squared-error) loss value for the input model parameters and data.
-    """
-    loss_total = 0.0
-    for i, j in fg_range_map:
-        model_r, model_i = yield_data_model_pbl_dictionary(
-            i,
-            j,
-            gains_re=gains_re,
-            gains_im=gains_im,
-            ants_map=ants_map,
-            fg_coeffs_re=fg_coeffs_re,
-            fg_coeffs_im=fg_coeffs_im,
-            fg_range_map=fg_range_map,
-            components_map=components_map,
-        )
-        loss_total += tf.reduce_sum(tf.square(model_r - data_re[i, j]) * wgts[i, j])
-        # imag part of loss
-        loss_total += tf.reduce_sum(tf.square(model_i - data_im[i, j]) * wgts[i, j])
-    return loss_total
-
-
-def tensorize_pbl_data_dictionary(
-    uvdata,
-    polarization,
-    time_index,
-    red_grps,
-    scale_factor=1.0,
-    weights=None,
-    dtype=np.float32,
-):
-    """extract data from uvdata object into a dict of tensors for fitting.
-
-    Produce dictionaries of data tensors to be used in fitting for the dictionary
-    variant which works best on CPUs.
-
-    Parameters
-    ----------
-    uvdata: UVData object.
-        UVData object with data to extract tensors from.
-    polarization: str.
-        String encoding polarization to extract from data.
-    time_index: int.
-        integer index of time to extract (assumes times sorted ascending).
-    red_grps: list of lists of int 2-tuples
-        list of lists where each sublist is a redundant group with antenna
-        pairs ordered such that there are no conjugates of eachother within
-        each group.
-    data_scale_factor: float, optional
-        overall scaling factor to divide tensorized data by.
-        default is 1.0
-    dtype: np.dtype
-        data type to store tensorized data in.
-
-    Returns
-    -------
-    data_re: dict with int 2-tuple keys and tf.Tensor values
-        dictionary mapping antenna 2-tuples to Nfreq tf.Tensor objects with each
-        representing the real part of the spectum for baseline (i, j) with pol
-        polarization at time-index time_index.
-    data_im: dict with int 2-tuple keys and tf.Tensor values
-        dictionary mapping antenna 2-tuples to Nfreq tf.Tensor objects with each
-        representing the imag part of the spectum for baseline (i, j) with pol
-        polarization at time-index time_index.
-    wgts: dict with int 2-tuple keys and tf.Tensor values.
-        dictionary mapping antenna 2-tuples to Nfreq tf.Tensor objects with each representing
-        the real weigths
-
-    """
-    data_re = {}
-    data_im = {}
-    wgts = {}
-    wgtsum = 0.0
-    for red_grp in red_grps:
-        for ap in red_grp:
-            bl = ap + (polarization,)
-            data_re[ap] = tf.convert_to_tensor(uvdata.get_data(bl)[time_index].real / scale_factor, dtype=dtype)
-            data_im[ap] = tf.convert_to_tensor(uvdata.get_data(bl)[time_index].imag / scale_factor, dtype=dtype)
-            if weights is None:
-                wgts[ap] = tf.convert_to_tensor(
-                    ~uvdata.get_flags(bl)[time_index] * uvdata.get_nsamples(bl)[time_index], dtype=dtype
-                )
-            else:
-                if ap in weights.get_antpairs():
-                    dinds = weights.antpair2ind(*ap)
-                else:
-                    dinds = weights.antpair2ind(*ap[::-1])
-                polnum = np.where(
-                    weights.polarization_array == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation)
-                )[0][0]
-                wgts[ap] = weights.weights_array[dinds, 0, :, polnum].astype(dtype) * ~uvdata.get_flags(bl)[time_index]
-                wgts[ap] = tf.convert_to_tensor(wgts[ap], dtype=dtype)
-            wgtsum += np.sum(wgts[ap])
-    for ap in wgts:
-        wgts[ap] /= wgtsum
-
-    return data_re, data_im, wgts
 
 
 def tensorize_fg_coeffs(
@@ -1216,8 +849,6 @@ def calibrate_and_model_tensor(
 ):
     """Perform simultaneous calibration and foreground fitting using sparse tensors.
 
-    This method should be used in place of calibrate_and_model_pbl_dictionary_method
-    when using GPUs while the latter tends to perform better on CPUs.
 
     Parameters
     ----------
@@ -1491,290 +1122,6 @@ def calibrate_and_model_tensor(
     return model, resid, gains, fit_history
 
 
-def calibrate_and_model_pbl_dictionary_method(
-    uvdata,
-    fg_model_comps,
-    gains=None,
-    freeze_model=False,
-    optimizer="Adamax",
-    tol=1e-14,
-    maxsteps=10000,
-    include_autos=False,
-    verbose=False,
-    sky_model=None,
-    dtype=np.float32,
-    use_min=False,
-    record_var_history=False,
-    record_var_history_interval=1,
-    use_redundancy=False,
-    notebook_progressbar=False,
-    red_tol=1.0,
-    correct_resid=False,
-    correct_model=False,
-    weights=None,
-    **opt_kwargs,
-):
-    """Perform simultaneous calibration and fitting of foregrounds using method that loops over baselines.
-
-    This approach gives up on trying to invert the wedge but can be used on practically any array.
-    Use this in place of calibrate_and_model_tensor when working on CPUs but
-    use the latter with GPUs.
-
-    Parameters
-    ----------
-    uvdata: UVData object
-        uvdata objet of data to be calibrated.
-    fg_model_comps: dictionary
-        dictionary containing Nfreq x Nbasis design matrices
-        describing the basis vectors being used to model each baseline with keys corresponding
-        antenna pairs.
-    gains: UVCal object
-        UVCal with initial gain estimates.
-        There many smart ways to obtain initial gain estimates
-        but this is beyond the scope of calamity (for example, firstcal, logcal, sky-based cal).
-        Users can determine initial gains with their favorite established cal algorithm.
-        default is None -> start with unity gains.
-        WARNING: At the present, the flags in gains are not propagated/used! Make sure flags in uvdata object!
-    freeze_model: bool, optional
-        Only optimize loss function wrt gain variables. This is effectively traditional model-based calibration
-        with sky_model as the model (but projected onto the foreground basis vectors).
-        default is False.
-    optimizer: string
-        Name of optimizer. See OPTIMIZERS dictionary which contains optimizers described in
-        https://www.tensorflow.org/api_docs/python/tf/keras/optimizers
-        default is 'Adamax'
-    tol: float, optional
-        halting condition for optimizer loop. Stop loop when the change in the cost function falls
-        below tol.
-        default is 1e-14
-    maxsteps: int, optional
-        maximum number of opt.minimize calls before halting.
-        default is 10000
-    include_autos: bool, optional
-        include autocorrelations in fitting.
-        default is False.
-    verbose: bool, optional
-        generate lots of text.
-        default is False.
-    sky_model: UVData object, optional
-        a sky-model to use for initial estimates of foreground coeffs and
-        to set overall flux scale and phases.
-        Note that this model is not used to obtain initial gain estimates.
-        These must be provided through the gains argument.
-    dtype: numpy dtype, optional
-        the float precision to be used in tensorflow gradient descent.
-        runtime scales roughly inversely linear with precision.
-        default is np.float32
-    use_min: bool, optional
-        If True, use the set of parameters that determine minimum as the ML params
-        If False, use the last set of parameters visited by the optimization loop.
-    record_var_history: bool, optional
-        keep detailed record of optimization history of variables.
-        default is False.
-    record_var_history_interval: int optional
-        store var history in detailed record every record_var_history_interval steps.
-        default is 1.
-    use_redundancy: bool, optional
-        if true, solve for one set of foreground coeffs per redundant baseline group
-        instead of per baseline.
-    notebook_progressbar: bool, optional
-        use progress bar optimized for notebook output.
-        default is False.
-    red_tol: float, optional
-        tolerance for treating baselines as redundant (meters)
-        default is 1.0
-    correct_resid: bool, optional
-        if True, gain correct residual.
-        default is False
-    correct_model: bool, optional
-        if True, gain correct model.
-        default is False
-    weights: UVFlag object, optional.
-        UVFlag weights object containing weights to use for data fitting.
-        default is None -> use nsamples * ~flags
-
-    Returns
-    -------
-    model: UVData object
-        uvdata object containing model of the foregrounds
-    resid: UVData object
-        uvdata object containing resids which are the data minus
-        the model with gains multiplied and then with the gains divided out.
-    gains: UVCal object
-        uvcal object containing estimates of the gain solutions. These solutions
-        are not referenced to any sky model and are likely orders of
-    fit_history:
-        dictionary containing fit history with fields:
-        'loss_history': list of values of the loss function in each minimization iteration.
-        if record_var_history is True:
-            each of the following fields is included which points to an Nstep x Nvar array of values
-            'fg_r': real part of foreground coeffs
-            'fg_i': imag part of foreground coeffs
-            'g_r': real part of gains.
-            'g_i': imag part of gains
-    """
-    antpairs_data = uvdata.get_antpairs()
-    if not include_autos:
-        antpairs_data = set([ap for ap in antpairs_data if ap[0] != ap[1]])
-    red_grps = []
-    # generate redundant groups
-    for fit_grp in fg_model_comps.keys():
-        for red_grp in fit_grp:
-            red_grps.append(red_grp)
-    uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
-    resid = copy.deepcopy(uvdata)
-    model = copy.deepcopy(uvdata)
-    if gains is None:
-        echo(
-            f"{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n",
-            verbose=verbose,
-        )
-        gains = cal_utils.blank_uvcal_from_uvdata(uvdata)
-    if sky_model is None:
-        echo(
-            f"{datetime.datetime.now()} Sky model is None. Initializing from data...\n",
-            verbose=verbose,
-        )
-        sky_model = cal_utils.apply_gains(uvdata, gains)
-    sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
-    fit_history = {}
-    echo(
-        f"{datetime.datetime.now()} Generating map between antenna pairs and modeling vectors...\n",
-        verbose=verbose,
-    )
-    (
-        fg_range_map,
-        model_comps_map,
-    ) = tensorize_pbl_model_comps_dictionary(fg_model_comps, dtype=dtype)
-    # index antenna numbers (in gain vectors).
-    ants_map = {gains.antenna_numbers[i]: i for i in range(len(gains.antenna_numbers))}
-    # We do fitting per time and per polarization and time.
-    for polnum, pol in enumerate(uvdata.get_pols()):
-        echo(
-            f"{datetime.datetime.now()} Working on pol {pol}, {polnum + 1} of {uvdata.Npols}...\n",
-            verbose=verbose,
-        )
-        fit_history_p = {}
-        # declare tensor names outside of time_index loop
-        # so we can reuse them as staring values for each successive time sample.
-        fg_r = None
-        fg_i = None
-        g_r = None
-        fg_i = None
-        for time_index in range(uvdata.Ntimes):
-            rmsdata = np.sqrt(
-                np.mean(
-                    np.abs(
-                        uvdata.data_array[time_index :: uvdata.Ntimes, 0, :, polnum][
-                            ~uvdata.flag_array[time_index :: uvdata.Ntimes, 0, :, polnum]
-                        ]
-                    )
-                    ** 2.0
-                )
-            )
-            echo(
-                f"{datetime.datetime.now()} Working on time {time_index + 1} of {uvdata.Ntimes}...\n",
-                verbose=verbose,
-            )
-            # pull data for pol out of raveled uvdata object and into dicts of 1d tf.Tensor objects for processing..
-            echo(f"{datetime.datetime.now()} Tensorizing Data...\n", verbose=verbose)
-            data_r, data_i, wgts = tensorize_pbl_data_dictionary(
-                uvdata,
-                dtype=dtype,
-                time_index=time_index,
-                polarization=pol,
-                scale_factor=rmsdata,
-                red_grps=red_grps,
-                weights=weights,
-            )
-            echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
-            gains_r, gains_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
-            echo(
-                f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
-                verbose=verbose,
-            )
-            # only generate fresh fg_r, fg_i if time_index == 0
-            # otherwise, use values from previous iteration of loop.
-            if time_index == 0:
-                fg_r, fg_i = tensorize_fg_coeffs(
-                    uvdata=sky_model,
-                    model_component_dict=fg_model_comps,
-                    dtype=dtype,
-                    time_index=time_index,
-                    polarization=pol,
-                    scale_factor=rmsdata,
-                )
-
-            cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_dictionary(
-                gains_re=g_r,
-                gains_im=g_i,
-                ants_map=ants_map,
-                fg_coeffs_re=fg_r,
-                fg_coeffs_im=fg_i,
-                data_re=data_r,
-                data_im=data_i,
-                wgts=wgts,
-                fg_range_map=fg_range_map,
-                components_map=model_comps_map,
-            )
-
-            (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
-                g_r=gains_r,
-                g_i=gains_i,
-                fg_r=fg_r,
-                fg_i=fg_i,
-                loss_function=cal_loss,
-                record_var_history=record_var_history,
-                record_var_history_interval=record_var_history_interval,
-                optimizer=optimizer,
-                use_min=use_min,
-                freeze_model=freeze_model,
-                notebook_progressbar=notebook_progressbar,
-                verbose=verbose,
-                tol=tol,
-                maxsteps=maxsteps,
-                **opt_kwargs,
-            )
-
-            # insert model values.
-            insert_model_into_uvdata_dictionary(
-                uvdata=model,
-                time_index=time_index,
-                polarization=pol,
-                model_comps_map=model_comps_map,
-                fg_coeffs_re=fg_r,
-                fg_coeffs_im=fg_i,
-                scale_factor=rmsdata,
-                fg_range_map=fg_range_map,
-            )
-            insert_gains_into_uvcal(
-                uvcal=gains,
-                time_index=time_index,
-                polarization=pol,
-                gains_re=gains_r,
-                gains_im=gains_i,
-            )
-
-        fit_history[polnum] = fit_history_p
-        if not freeze_model:
-            renormalize(
-                uvdata_reference_model=sky_model,
-                uvdata_deconv=model,
-                gains=gains,
-                polarization=pol,
-                uvdata_flags=uvdata,
-            )
-
-    model_with_gains = cal_utils.apply_gains(model, gains, inverse=True)
-    if not correct_model:
-        model = model_with_gains
-    resid.data_array -= model_with_gains.data_array
-    if correct_resid:
-        resid = cal_utils.apply_gains(resid, gains)
-
-    return model, resid, gains, fit_history
-
-
 def calibrate_and_model_mixed(
     uvdata,
     horizon=1.0,
@@ -1995,23 +1342,15 @@ def calibrate_and_model_dpss(
         red_tol=red_tol,
         notebook_progressbar=notebook_progressbar,
     )
-    if modeling_paradigm == "dictionary":
-        # get rid of fitting group level for the dictionary method.
-        (model, resid, gains, fitted_info,) = calibrate_and_model_pbl_dictionary_method(
-            uvdata=uvdata,
-            fg_model_comps=dpss_model_comps,
-            include_autos=include_autos,
-            verbose=verbose,
-            **fitting_kwargs,
-        )
-    elif modeling_paradigm == "sparse_tensor":
-        (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
-            uvdata=uvdata,
-            fg_model_comps=dpss_model_comps,
-            include_autos=include_autos,
-            verbose=verbose,
-            **fitting_kwargs,
-        )
+
+    (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
+        uvdata=uvdata,
+        fg_model_comps=dpss_model_comps,
+        include_autos=include_autos,
+        verbose=verbose,
+        **fitting_kwargs,
+    )
+
     return model, resid, gains, fitted_info
 
 
