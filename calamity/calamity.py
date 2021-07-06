@@ -584,31 +584,30 @@ def fit_gains_and_foregrounds(
     # instead of the user defined function, the reason is that for some reason
     # in dense tensor mode on a GPU, things run ~10x as fast. Not sure why.
     else:
-        if isinstance(fg_comps, tf.Tensor):
+        ncomps = len(fg_comps)
+        nvs = [len(v) for v in vinds]
+        def cal_loss():
+            grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
+            gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
+            grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
+            gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
+            vr = tf.zeros()
+            vi = tf.zeros()
+            for cnum in tf.range(ncomps):
+                if isinstance(fg_comps[cnum], tf.Tensor):
+                    vr[dinds[cnum]] += tf.reduce_sum(fg_comps[cnum] * fg_r[vinds[cnum]], axis=1)
+                    vi[dinds[cnum]] += tf.reduce_sum(fg_comps[cnum] * fg_i[vinds[cnum]], axis=1)
+                elif isinstanc(fg_comps[cnum], tf.sparse.SparseTensor):
+                    vr[dinds[cnum]] += tf.sparse.sparse_dense_matmul(fg_comps[cnum], tf.reshape(fg_r[vinds[cnum]], (nvs[cnum], 1)))
+                    vi[dinds[cnum]] += tf.sparse.sparse_dense_matmul(fg_comps[cnum], tf.reshape(fg_i[vinds[cnum]], (nvs[cnum], 1)))
 
-            def cal_loss():
-                grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
-                gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
-                grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
-                gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
-                vr = tf.reduce_sum(fg_comps * fg_r, axis=3)
-                vi = tf.reduce_sum(fg_comps * fg_i, axis=3)
-                model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
-                model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-                return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
+            vr = tf.reshape(vr, (nants, nants, nfreqs))
+            vi = tf.reshape(vi, (nants, nants, nfreqs))
+            model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
+            model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
+            return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
 
-        elif isinstance(fg_comps, tf.sparse.SparseTensor):
 
-            def cal_loss():
-                grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
-                gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
-                grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
-                gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
-                vr = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_r), (nants, nants, nfreqs))
-                vi = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_i), (nants, nants, nfreqs))
-                model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
-                model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-                return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
 
     loss_i = cal_loss().numpy()
     echo(
