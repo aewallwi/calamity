@@ -81,11 +81,17 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
     # remove_redundancy is True.
     if remove_redundancy:
         red_grps_t = []
-        for red_grp in red_grps:
+        vec_bin_centers_t = []
+        lengths_t = []
+        for red_grp, vbc, length in zip(red_grps, vec_bin_centers, lengths):
             for ap in red_grp:
                 red_grps_t.append([ap])
+                vec_bin_centers_t.append(vbc)
+                lengths_t.append(length)
         red_grps = red_grps_t
-        del red_grps_t
+        lengths = lengths_t
+        vec_bin_centers = vec_bin_centers_t
+        del red_grps_t, lengths_t, vec_bin_centers_t
 
     return antpairs, red_grps, vec_bin_centers, lengths
 
@@ -98,6 +104,8 @@ def get_uv_overlapping_grps_conjugated(
     red_tol_freq=0.5,
     n_angle_bins=200,
     notebook_progressbar=False,
+    require_exact_angle_match=True,
+    angle_match_tol=1e-3,
 ):
     """Derive groups of baselines that overlap in frequency.
 
@@ -175,27 +183,31 @@ def get_uv_overlapping_grps_conjugated(
                 uvwmax0 = fmax * np.linalg.norm(vbc0) / 3e8
                 uvwmax1 = fmax * np.linalg.norm(vbc1) / 3e8
                 if (uvwmin0 > uvwmin1 and uvwmin0 < uvwmax1) or (uvwmin1 > uvwmin0 and uvwmin1 < uvwmax0):
-                    u0 = vbc0[0] * uvdata.freq_array[0] / 3e8
-                    v0 = vbc0[1] * uvdata.freq_array[0] / 3e8
-                    u1 = vbc1[0] * uvdata.freq_array[0] / 3e8
-                    v1 = vbc1[1] * uvdata.freq_array[0] / 3e8
-                    ug0, ug1 = np.meshgrid(u0, u1)
-                    vg0, vg1 = np.meshgrid(v0, v1)
-                    if np.any(np.sqrt(np.abs(ug0 - ug1) ** 2.0 + (vg0 - vg1) ** 2.0) <= red_tol_freq):
-                        connections[tuple(red_grp0)].add(tuple(red_grp1))
-                        if tuple(red_grp1) not in connections:
-                            connections[tuple(red_grp1)] = set({})
-                            vbc_hash[tuple(red_grp1)] = vbc1
-                        connections[tuple(red_grp1)].add(tuple(red_grp0))
-                    elif np.any(np.sqrt(np.abs(ug0 + ug1) ** 2.0 + (vg0 + vg1) ** 2.0) <= red_tol_freq):
-                        red_grps[grp_num1] = [ap[::-1] for ap in red_grps[grp_num1]]
-                        vec_bin_centers[grp_num1] = [-vbc for vbc in vec_bin_centers[grp_num1]]
-                        red_grp1 = red_grps[grp_num1]
-                        connections[tuple(red_grp0)].add(tuple(red_grps[grp_num1]))
-                        if tuple(red_grp1) not in connections:
-                            connections[tuple(red_grp1)] = set({})
-                            vbc_hash[tuple(red_grp1)] = vbc1
-                        connections[tuple(red_grp1)].add(tuple(red_grp0))
+                    if (
+                        not require_exact_angle_match
+                        or np.abs(np.arctan(vbc0[1] / vbc0[0]) - np.arctan(vbc1[1] / vbc1[0])) <= angle_match_tol
+                    ):
+                        u0 = vbc0[0] * uvdata.freq_array[0] / 3e8
+                        v0 = vbc0[1] * uvdata.freq_array[0] / 3e8
+                        u1 = vbc1[0] * uvdata.freq_array[0] / 3e8
+                        v1 = vbc1[1] * uvdata.freq_array[0] / 3e8
+                        ug0, ug1 = np.meshgrid(u0, u1)
+                        vg0, vg1 = np.meshgrid(v0, v1)
+                        if np.any(np.sqrt(np.abs(ug0 - ug1) ** 2.0 + (vg0 - vg1) ** 2.0) <= red_tol_freq):
+                            connections[tuple(red_grp0)].add(tuple(red_grp1))
+                            if tuple(red_grp1) not in connections:
+                                connections[tuple(red_grp1)] = set({})
+                                vbc_hash[tuple(red_grp1)] = vbc1
+                            connections[tuple(red_grp1)].add(tuple(red_grp0))
+                        elif np.any(np.sqrt(np.abs(ug0 + ug1) ** 2.0 + (vg0 + vg1) ** 2.0) <= red_tol_freq):
+                            red_grps[grp_num1] = [ap[::-1] for ap in red_grps[grp_num1]]
+                            vec_bin_centers[grp_num1] = [-vbc for vbc in vec_bin_centers[grp_num1]]
+                            red_grp1 = red_grps[grp_num1]
+                            connections[tuple(red_grp0)].add(tuple(red_grps[grp_num1]))
+                            if tuple(red_grp1) not in connections:
+                                connections[tuple(red_grp1)] = set({})
+                                vbc_hash[tuple(red_grp1)] = vbc1
+                            connections[tuple(red_grp1)].add(tuple(red_grp0))
 
     # now from connections, generate fitting groups.
     fitting_grps = {}  # keeps track of the fitting groups
@@ -378,7 +390,7 @@ def yield_mixed_comps(
     offset=0.0,
     min_dly=0.0,
     verbose=False,
-    dtype=np.float32,
+    dtype=np.float64,
     notebook_progressbar=False,
     use_tensorflow=False,
 ):
@@ -415,8 +427,9 @@ def yield_mixed_comps(
         default is 0.0
     verbose: bool, optional
       produce text outputs.
-    dtype: numpy.dtype
+    dtype: numpy.dtype, optional
       data type in which to compute model eigenvectors.
+      default is np.float64
 
     Returns
     -------
@@ -457,6 +470,6 @@ def yield_mixed_comps(
                 freqs=freqs,
                 eigenval_cutoff=eigenval_cutoff,
                 use_tensorflow=use_tensorflow,
-                verbose=verbose
+                verbose=verbose,
             )
     return modeling_vectors
