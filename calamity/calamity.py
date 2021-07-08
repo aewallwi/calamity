@@ -470,15 +470,16 @@ def cal_loss_tensor(data_r, data_i, wgts, g_r, g_i, fg_model_comps, fg_r, fg_i, 
 def fit_gains_and_foregrounds(
     g_r,
     g_i,
-    fg_r,
-    fg_i,
+    fg_r_rag=None,
+    fg_i_rag=None,
+    fg_r_sparse=None,
+    fg_i_sparse=None,
     data_r=None,
     data_i=None,
     wgts=None,
     fg_mats_sparse=None,
-    vec_inds_sparse=None,
-    fg_mats=None,
-    data_inds=None,
+    fg_mats_rag=None,
+    data_inds_rag=None,
     vec_inds=None,
     loss_function=None,
     use_min=False,
@@ -595,41 +596,34 @@ def fit_gains_and_foregrounds(
     # segment foreground coeffs
     #if loss_function is None:
         # segment data
-    data_r = tf.reshape(data_r, ())
-    data_i = tf.reshape(data_i, ())
-    ncomps = len(fg_mats)
-    data_r_seg = tf.ragged.constant([tf.flatten(tf.gather(data_r, data_inds[cnum]).numpy() for cnum in range(ncomps)])
-    data_i_seg = tf.ragged.constant([tf.flatten(tf.gather(data_i, data_inds[cnum]).numpy() for cnum in range(ncomps)])
-    fg_r_seg = tf.ragged.constant([tf.gather(fg_r, vinds[cnum]).numpy() for cnum in range(ncomps)]])
-    fg_i_seg = tf.ragged.constant([tf.gather(fg_i, vinds[cnum]).numpy() for cnum in range(ncomps)]])
-    ant0_inds = tf.ragged.constant([data_inds[cnum].numpy() // nants for cnum in range(ncomps)])
-    ant1_inds = tf.ragged.constant([tf.math.floormod(data_inds[cnum], nants).numpy() for cnum in range(ncomps)])
 
     ndata = nants * nants * nfreqs
-
-    if vec_inds_sparse is not None:
-        nsparse = len(vec_inds_sparse)
-        fg_r_sparse = tf.reshape(tf.gather(fg_r, vec_inds_sparse), (nsparse, 1))
-        fg_i_sparse = tf.reshape(tf.gather(fg_i, vec_inds_sparse), (nsparse, 1))
+    g_r = tf.Variable(g_r)
+    g_i = tf.Variable(g_i)
+    if not freeze_model:
+        fg_r_rag = tf.Variable(fg_r_rag)
+        fg_i_rag = tf.Variable(fg_i_rag)
+    else:
+        vars = [g_r, g_i]
+    if fg_mats_sparse is not None and fg_mats_rag is not None:
+        ncomps = len(fg_mats)
+        data_r_rag = tf.ragged.constant([tf.flatten(tf.gather(data_r, data_inds[cnum]).numpy() for cnum in range(ncomps)])
+        data_i_rag = tf.ragged.constant([tf.flatten(tf.gather(data_i, data_inds[cnum]).numpy() for cnum in range(ncomps)])
+        ant0_inds = tf.ragged.constant([data_inds[cnum].numpy() // nants for cnum in range(ncomps)])
+        ant1_inds = tf.ragged.constant([tf.math.floormod(data_inds[cnum], nants).numpy() for cnum in range(ncomps)])
+        if not freeze_model:
+            fg_r_sparse = tf.Variable(fg_r_sparse)
+            fg_i_sparse = tf.Variable(fg_i_sparse)
+            vars = [g_r, g_i, fg_r_rag, fg_i_rag, fg_r_sparse, fg_i_sparse]
+        @tf.function
         def loss_function():
-            g_r = tf.Variable(g_r)
-            g_i = tf.Variable(g_i)
-            if not freeze_model:
-                fg_r_seg = tf.Variable(fg_r_seg)
-                fg_i_seg = tf.Variable(fg_i_seg)
-                fg_r_sparse = tf.Variable(fg_r_sparse)
-                fg_i_sparse = tf.Variable(fg_i_sparse)
-            if freeze_model:
-                vars = [g_r, g_i]
-            else:
-                vars = [g_r, g_i, fg_r_seg, fg_i_seg, fg_r_sparse, fg_i_sparse]
             # start with sparse components.
             grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
             gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
             grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
             gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
-            vr = tf.sparse.sparse_dense_matmul(fg_mats_sparse, tf.reshape(fg_r_sparse, (nsparse, 1)))
-            vi =tf.sparse.sparse_dense_matmul(fg_mats_sparse, tf.reshape(fg_i_sparse, (nsparse, 1)))
+            vr = tf.sparse.sparse_dense_matmul(fg_mats_sparse, fg_r_sparse)
+            vi = tf.sparse.sparse_dense_matmul(fg_mats_sparse, fg_i_sparse)
             cal_loss = tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
             # now deal with dense components
             for cnum in tf.range(ncomps):
@@ -641,22 +635,21 @@ def fit_gains_and_foregrounds(
                 gigi = gi0 * gi1
                 grgi = gr0 * gi1
                 gigr = gi0 * gr1
-                vr = tf.reduce_sum(fg_mats[cnum] * fg_r_seg[cnum], axis=1)
-                vi = tf.reduce_sum(fg_mats[cnum] * fg_i_seg[cnum], axis=1)
+                vr = tf.reduce_sum(fg_mats[cnum] * fg_r_rag[cnum], axis=1)
+                vi = tf.reduce_sum(fg_mats[cnum] * fg_i_rag[cnum], axis=1)
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
                 model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-                cal_loss += tf.reduce_sum((tf.square(data_r_seg[cnum] - model_r)  + tf.square(data_i_seg[cnum] - model_i)) * wgts_seg[cnum])
+                cal_loss += tf.reduce_sum((tf.square(data_r_rag[cnum] - model_r)  + tf.square(data_i_rag[cnum] - model_i)) * wgts_rag[cnum])
             return cal_loss
-    else:
-        g_r = tf.Variable(g_r)
-        g_i = tf.Variable(g_i)
+    elif fg_mats_rag is not None:
+        ncomps = len(fg_mats)
+        data_r_rag = tf.ragged.constant([tf.flatten(tf.gather(data_r, data_inds[cnum]).numpy() for cnum in range(ncomps)])
+        data_i_rag = tf.ragged.constant([tf.flatten(tf.gather(data_i, data_inds[cnum]).numpy() for cnum in range(ncomps)])
+        ant0_inds = tf.ragged.constant([data_inds[cnum].numpy() // nants for cnum in range(ncomps)])
+        ant1_inds = tf.ragged.constant([tf.math.floormod(data_inds[cnum], nants).numpy() for cnum in range(ncomps)])
         if not freeze_model:
-            fg_r_seg = tf.Variable(fg_r_seg)
-            fg_i_seg = tf.Variable(fg_i_seg)
-        if freeze_model:
-            vars = [g_r, g_i]
-        else:
-            vars = [g_r, g_i, fg_r_seg, fg_i_seg]
+            vars = [g_r, g_i, fg_r_rag, fg_i_rag]
+        @tf.function
         def loss_function():
             cal_loss = tf.constant(0., dtype=dtype)
             # now deal with dense components
@@ -669,12 +662,28 @@ def fit_gains_and_foregrounds(
                 gigi = gi0 * gi1
                 grgi = gr0 * gi1
                 gigr = gi0 * gr1
-                vr = tf.reduce_sum(fg_mats[cnum] * fg_r_seg[cnum], axis=1)
-                vi = tf.reduce_sum(fg_mats[cnum] * fg_i_seg[cnum], axis=1)
+                vr = tf.reduce_sum(fg_mats[cnum] * fg_r_rag[cnum], axis=1)
+                vi = tf.reduce_sum(fg_mats[cnum] * fg_i_rag[cnum], axis=1)
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
                 model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-                cal_loss += tf.reduce_sum((tf.square(data_r_seg[cnum] - model_r)  + tf.square(data_i_seg[cnum] - model_i)) * wgts_seg[cnum])
+                cal_loss += tf.reduce_sum((tf.square(data_r_rag[cnum] - model_r)  + tf.square(data_i_rag[cnum] - model_i)) * wgts_rag[cnum])
             return cal_loss
+    elif fg_mats_sparse is not None:
+        if not freeze_model:
+            fg_r_sparse = tf.Variable(fg_r_sparse)
+            fg_i_sparse = tf.Variable(fg_i_sparse)
+            vars = [g_r, g_i, fg_r_sparse, fg_i_sparse]
+            @tf.function
+            def loss_function():
+                # start with sparse components.
+                grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
+                gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
+                grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
+                gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
+                vr = tf.sparse.sparse_dense_matmul(fg_mats_sparse, fg_r_sparse)
+                vi = tf.sparse.sparse_dense_matmul(fg_mats_sparse, fg_i_sparse)
+                cal_loss = tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
+                return cal_loss
 
 
     loss_i = loss_function().numpy()
@@ -688,12 +697,6 @@ def fit_gains_and_foregrounds(
         grads = tape.gradient(loss, vars)
         opt.apply_gradients(zip(grads, vars))
         fit_history["loss"].append(loss.numpy())
-        if record_var_history and step % record_var_history_interval == 0:
-            fit_history["g_r"].append(g_r.numpy())
-            fit_history["g_i"].append(g_i.numpy())
-            if not freeze_model:
-                fit_history["fg_r"].append(fg_r.numpy())
-                fit_history["fg_i"].append(fg_i.numpy())
         if use_min and fit_history["loss"][-1] < min_loss:
             # store the g_r, g_i, fg_r, fg_i values that minimize loss
             # in case of overshoot.
@@ -701,11 +704,12 @@ def fit_gains_and_foregrounds(
             g_r_opt = g_r.value()
             g_i_opt = g_i.value()
             if not freeze_model:
-                fg_r_opt = fg_r.value()
-                fg_i_opt = fg_i.value()
-            else:
-                fg_r_opt = fg_r
-                fg_i_opt = fg_i
+                if fg_mats_rag is not None:
+                    fg_r_rag_opt = fg_r_rag.value()
+                    fg_i_rag_opt = fg_i_rag.value()
+                if fg_mats_sparse is not None:
+                    fg_r_sparse_opt = fg_r_sparse.value()
+                    fg_i_sparse_opt = fg_i_sparse.value()
 
         if step >= 1 and np.abs(fit_history["loss"][-1] - fit_history["loss"][-2]) < tol:
             echo(
@@ -722,16 +726,17 @@ def fit_gains_and_foregrounds(
         g_r_opt = g_r.value()
         g_i_opt = g_i.value()
         if not freeze_model:
-            fg_r_opt = fg_r.value()
-            fg_i_opt = fg_i.value()
-        else:
-            fg_r_opt = fg_r
-            fg_i_opt = fg_i
+            if fg_mats_rag is not None:
+                fg_r_rag_opt = fg_r_rag.value()
+                fg_i_rag_opt = fg_i_rag.value()
+            if fg_mats_sparse is not None:
+                fg_r_sparse_opt = fg_r_sparse.value()
+                fg_i_sparse_opt = fg_i_sparse.value()
     echo(
         f"{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n",
         verbose=verbose,
     )
-    return g_r_opt, g_i_opt, fg_r_opt, fg_i_opt, fit_history
+    return g_r_opt, g_i_opt, fg_r_rag_opt, fg_i_rag_opt, fg_r_sparse_opt, fg_i_sparse_opt, fit_history
 
 
 def insert_model_into_uvdata_tensor(
@@ -826,7 +831,7 @@ def tensorize_fg_coeffs(
     scale_factor=1.0,
     force2d=False,
     dtype=np.float32,
-    single_bls_as_sparse=False,
+    single_bls_as_sparse
 ):
     """Initialize foreground coefficient tensors from uvdata and modeling component dictionaries.
 
@@ -864,25 +869,34 @@ def tensorize_fg_coeffs(
 
     fg_coeffs_re = []
     fg_coeffs_im = []
-    # first get sparse
+    fg_coeffs_re_sparse = []
+    fg_coeffs_im_sparse = []
+    # first get non-sparse components
     for fit_grp in model_component_dict:
-        fg_coeff = 0.0
-        blnum = 0
-        for red_grp in fit_grp:
-            for ap in red_grp:
-                bl = ap + (polarization,)
-                fg_coeff += (
-                    uvdata.get_data(bl)[time_index] * ~uvdata.get_flags(bl)[time_index]
-                ) @ model_component_dict[fit_grp][blnum * uvdata.Nfreqs : (blnum + 1) * uvdata.Nfreqs]
-            blnum += 1
-        fg_coeffs_re.extend(fg_coeff.real)
-        fg_coeffs_im.extend(fg_coeff.imag)
+            blnum = 0
+            fg_coeff = 0.0
+            for red_grp in fit_grp:
+                for ap in red_grp:
+                    bl = ap + (polarization,)
+                    fg_coeff += (
+                        uvdata.get_data(bl)[time_index] * ~uvdata.get_flags(bl)[time_index]
+                    ) @ model_component_dict[fit_grp][blnum * uvdata.Nfreqs : (blnum + 1) * uvdata.Nfreqs]
+                blnum += 1
+            if len(fit_grp) > 1 or not single_bls_as_sparse:
+                fg_coeffs_re.append(fg_coeff.real.astype(dtype) / scale_factor)
+                fg_coeffs_im.append(fg_coeff.imag.astype(dtype) / scale_factor)
+            else:
+                fg_coeffs_re_sparse.extend(list(fg_coeff.real))
+                fg_coeffs_im_sparse.extend(list(fg_coeff.imag))
 
-    fg_coeffs_re = np.asarray(fg_coeffs_re) / scale_factor
-    fg_coeffs_im = np.asarray(fg_coeffs_im) / scale_factor
-    fg_coeffs_re = tf.convert_to_tensor(fg_coeffs_re, dtype=dtype)
-    fg_coeffs_im = tf.convert_to_tensor(fg_coeffs_im, dtype=dtype)
 
+
+    fg_coeffs_re = tf.ragged.constant(fg_coeffs_re)
+    fg_coeffs_im = tf.ragged.constant(fg_coeffs_im)
+    fg_coeffs_re_sparse = tf.convert_to_tensor(fg_coeffs_re_sparse, dtype=dtype)
+    fg_coeffs_re_sparse = tf.reshape(fg_coeffs_re_sparse, (fg_coeffs_re_sparse.shape[0], 1))
+    fg_coeffs_im_sparse = tf.convert_to_tensor(fg_coeffs_im_sparse, dtype=dtype)
+    fg_coeffs_im_sparse = tf.reshape(fg_coffs_im_sparse, (fg_coeffs_im_sparse.shape[0], 1))
     return fg_coeffs_re, fg_coeffs_im, fg_coeffs_re_sparse, fg_coeffs_im_sparse
 
 
@@ -1105,13 +1119,12 @@ def calibrate_and_model_tensor(
             )
             fg_r, fg_i, fg_r_sparse, fg_i_sparse = tensorize_fg_coeffs(
                 uvdata=sky_model,
-                model_components=fg_mats,
-                data_inds=data_inds
-                sparse_model_comps=sparse_model_comps,
+                fg_model_comps=fg_mats,
                 dtype=dtype,
                 time_index=time_index,
                 polarization=pol,
                 scale_factor=rmsdata,
+                single_bls_as_sparse
             )
 
             # cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_tensor(
