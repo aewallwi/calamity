@@ -33,7 +33,7 @@ def tensorize_fg_model_comps(
     dtype=np.float32,
     notebook_progressbar=False,
     verbose=False,
-    use_sparse=None,
+    single_bls_as_sparse=True,
 ):
     """Convert per-baseline model components into a Ndata x Ncomponent tensor
 
@@ -58,9 +58,8 @@ def tensorize_fg_model_comps(
     dtype: numpy.dtype
         data-type to store in sparse tensor.
         default is np.float32
-    use_sparse: bool, optional
-        use sparse representation if True.
-        default is None -> use sparse_threshold to determine whether to use sparse representation.
+    single_bls_as_sparse: bool, optional
+        if True, store single baselines in a sparse tensor
 
     Returns
     -------
@@ -128,38 +127,40 @@ def tensorize_fg_model_comps(
 
     echo(f"{datetime.datetime.now()} Filling out modeling vectors for non-overlapping baselines...\n", verbose=verbose)
 
-    for i, j in PBARS[notebook_progressbar](ordered_ijs):
-        blind = i * nants_data + j
-        grpnum = red_grp_nums[(i, j)]
-        fitgrp = modeling_grps[(i, j)]
-        start_ind = start_inds[(i, j)]
-        stop_ind = stop_inds[(i, j)]
-        nvecs = stop_ind - start_ind
-        dinds = np.hstack([np.ones(nvecs) * dind for dind in np.arange(blind * nfreqs, (blind + 1) * nfreqs)]).astype(
-            np.int32
-        )
-        matcols = np.hstack([np.arange(start_ind, stop_ind) for i in np.arange(nfreqs)]).astype(np.int32)
-        bl_mvec = fg_model_comps[fitgrp][grpnum * nfreqs : (grpnum + 1) * nfreqs].astype(dtype).flatten()
-        ninds = len(dinds)
-        if spinds is None:
-            spinds = np.arange(ninds).astype(np.int32)
-        else:
-            spinds = np.arange(ninds).astype(np.int32) + spinds[-1] + 1
-        comp_vals[spinds] = bl_mvec
-        comp_inds[spinds, 0], comp_inds[spinds, 1] = dinds, matcols
+    if single_bls_as_sparse:
+        spinds = None
+        for i, j in PBARS[notebook_progressbar](ordered_ijs):
+            blind = i * nants_data + j
+            grpnum = red_grp_nums[(i, j)]
+            fitgrp = modeling_grps[(i, j)]
+            start_ind = start_inds[(i, j)]
+            stop_ind = stop_inds[(i, j)]
+            nvecs = stop_ind - start_ind
+            dinds = np.hstack([np.ones(nvecs) * dind for dind in np.arange(blind * nfreqs, (blind + 1) * nfreqs)]).astype(
+                np.int32
+            )
+            matcols = np.hstack([np.arange(start_ind, stop_ind) for i in np.arange(nfreqs)]).astype(np.int32)
+            bl_mvec = fg_model_comps[fitgrp][grpnum * nfreqs : (grpnum + 1) * nfreqs].astype(dtype).flatten()
+            ninds = len(dinds)
+            if spinds is None:
+                spinds = np.arange(ninds).astype(np.int32)
+            else:
+                spinds = np.arange(ninds).astype(np.int32) + spinds[-1] + 1
+            comp_vals[spinds] = bl_mvec
+            comp_inds[spinds, 0], comp_inds[spinds, 1] = dinds, matcols
 
-    fg_mats.append(tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape))
-    data_inds.append(tf.convert_to_tensor(comp_inds[:, 0], dtype=np.int32))
-    vec_inds.append(tf.convert_to_tensor(comp_inds[:, 1], dtype=np.int32))
+        fg_mats_sparse = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
+        data_inds_sparse = tf.convert_to_tensor(comp_inds[:, 0], dtype=np.int32)
+        vec_inds_sparse = tf.convert_to_tensor(comp_inds[:, 1], dtype=np.int32)
 
     # now go through the fitting_groups that are not length-1
-    for modeling_grp in modeling_grps:
-        if len(modeling_grp) > 1:
+    for modeling_grp in fg_model_comps:
+        if len(modeling_grp) > 1 or not single_bls_as_sparse:
             i0, j0 = ants_map[modeling_grp[0][0][0]], ants_map[modeling_grp[0][0][1]]
             start_ind = start_inds[i0, j0]
             stop_ind = start_ind + fg_model_comps[modeling_grp].shape[1]
-            vec_inds.append(tf.convert_to_tensor(np.arange(start_ind, stop_ind), dtype=np.int32))
-            fg_mats.append(tf.convert_to_tensor(fg_model_comps[modeling_grp], dtype=dtype))
+            vec_inds.append(np.arange(start_ind, stop_ind), dtype=np.int32)
+            fg_mats.append(fg_model_comps[modeling_grp].astype(dtype))
             # calculate data indices
             dinds = []
             for red_grp in modeling_grp:
@@ -167,10 +168,11 @@ def tensorize_fg_model_comps(
                     i, j = ants_map[ap[0]], ants_map[ap[1]]
                     blind = i * nants_data + j
                     dinds.extend(list(np.arange(blind * nfreqs, blind).astype(np.int32)))
-            data_inds.append(tf.convert_to_tensor(dinds, dtype=np.int32))
-
-    return fg_mats, data_inds, vec_inds
-
+            data_inds.append(np.asarray(dinds, dtype=np.int32))
+    if single_bls_as_sparse:
+        return fg_mats_sparse, data_inds_sparse, vec_inds_sparse, tf.ragged.constant(fg_mats), tf.ragged.constant(data_inds), tf.ragged.constant(vec_inds)
+    else:
+        return  tf.ragged.constant(fg_mats), tf.ragged.constant(data_inds), tf.ragged.constant(vec_inds)
 
 def tensorize_data(
     uvdata,
@@ -465,7 +467,11 @@ def fit_gains_and_foregrounds(
     data_r=None,
     data_i=None,
     wgts=None,
-    fg_comps=None,
+    fg_mats_sparse=None,
+    vec_inds_sparse=None,
+    fg_mats=None,
+    data_inds=None,
+    vec_inds=None,
     loss_function=None,
     use_min=False,
     tol=1e-14,
@@ -476,6 +482,7 @@ def fit_gains_and_foregrounds(
     record_var_history_interval=1,
     verbose=False,
     notebook_progressbar=False,
+    dtype=np.float32,
     **opt_kwargs,
 ):
     """Run optimization loop to fit gains and foreground components.
@@ -546,11 +553,7 @@ def fit_gains_and_foregrounds(
             'g_r': real part of gains.
             'g_i': imag part of gains
     """
-    g_r = tf.Variable(g_r)
-    g_i = tf.Variable(g_i)
-    if not freeze_model:
-        fg_r = tf.Variable(fg_r)
-        fg_i = tf.Variable(fg_i)
+
     # initialize the optimizer.
     opt = OPTIMIZERS[optimizer](**opt_kwargs)
     # set up history recording
@@ -562,11 +565,7 @@ def fit_gains_and_foregrounds(
             fit_history["fg_r"] = []
             fit_history["fg_i"] = []
 
-    # perform optimization loop.
-    if freeze_model:
-        vars = [g_r, g_i]
-    else:
-        vars = [g_r, g_i, fg_r, fg_i]
+
     min_loss = 9e99
     echo(
         f"{datetime.datetime.now()} Building Computational Graph...\n",
@@ -574,49 +573,110 @@ def fit_gains_and_foregrounds(
     )
     nants = g_r.shape[0]
     nfreqs = g_r.shape[1]
-    if loss_function is not None:
+    #if loss_function is not None:
 
-        @tf.function
-        def cal_loss():
-            return loss_function(g_r=g_r, g_i=g_i, fg_i=fg_i, fg_r=fg_r)
+        #@tf.function
+        #def cal_loss():
+    #        return loss_function(g_r=g_r, g_i=g_i, fg_i=fg_i, fg_r=fg_r)
 
     # if you are wondering why we are manually defining the loss-function here
     # instead of the user defined function, the reason is that for some reason
     # in dense tensor mode on a GPU, things run ~10x as fast. Not sure why.
-    else:
-        ncomps = len(fg_comps)
-        nvs = [len(v) for v in vinds]
-        def cal_loss():
+
+
+    # segment foreground coeffs
+    #if loss_function is None:
+        # segment data
+    data_r = tf.reshape(data_r, ())
+    data_i = tf.reshape(data_i, ())
+    ncomps = len(fg_mats)
+    data_r_seg = tf.ragged.constant([tf.flatten(tf.gather(data_r, data_inds[cnum]).numpy() for cnum in range(ncomps)])
+    data_i_seg = tf.ragged.constant([tf.flatten(tf.gather(data_i, data_inds[cnum]).numpy() for cnum in range(ncomps)])
+    fg_r_seg = tf.ragged.constant([tf.gather(fg_r, vinds[cnum]).numpy() for cnum in range(ncomps)]])
+    fg_i_seg = tf.ragged.constant([tf.gather(fg_i, vinds[cnum]).numpy() for cnum in range(ncomps)]])
+    ant0_inds = tf.ragged.constant([data_inds[cnum].numpy() // nants for cnum in range(ncomps)])
+    ant1_inds = tf.ragged.constant([tf.math.floormod(data_inds[cnum], nants).numpy() for cnum in range(ncomps)])
+
+    ndata = nants * nants * nfreqs
+
+    if vec_inds_sparse is not None:
+        nsparse = len(vec_inds_sparse)
+        fg_r_sparse = tf.reshape(tf.gather(fg_r, vec_inds_sparse), (nsparse, 1))
+        fg_i_sparse = tf.reshape(tf.gather(fg_i, vec_inds_sparse), (nsparse, 1))
+        def loss_function():
+            g_r = tf.Variable(g_r)
+            g_i = tf.Variable(g_i)
+            if not freeze_model:
+                fg_r_seg = tf.Variable(fg_r_seg)
+                fg_i_seg = tf.Variable(fg_i_seg)
+                fg_r_sparse = tf.Variable(fg_r_sparse)
+                fg_i_sparse = tf.Variable(fg_i_sparse)
+            if freeze_model:
+                vars = [g_r, g_i]
+            else:
+                vars = [g_r, g_i, fg_r_seg, fg_i_seg, fg_r_sparse, fg_i_sparse]
+            # start with sparse components.
             grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
             gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
             grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
             gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
-            vr = tf.zeros()
-            vi = tf.zeros()
+            vr = tf.sparse.sparse_dense_matmul(fg_mats_sparse, tf.reshape(fg_r_sparse, (nsparse, 1)))
+            vi =tf.sparse.sparse_dense_matmul(fg_mats_sparse, tf.reshape(fg_i_sparse, (nsparse, 1)))
+            cal_loss = tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
+            # now deal with dense components
             for cnum in tf.range(ncomps):
-                if isinstance(fg_comps[cnum], tf.Tensor):
-                    vr[dinds[cnum]] += tf.reduce_sum(fg_comps[cnum] * fg_r[vinds[cnum]], axis=1)
-                    vi[dinds[cnum]] += tf.reduce_sum(fg_comps[cnum] * fg_i[vinds[cnum]], axis=1)
-                elif isinstanc(fg_comps[cnum], tf.sparse.SparseTensor):
-                    vr[dinds[cnum]] += tf.sparse.sparse_dense_matmul(fg_comps[cnum], tf.reshape(fg_r[vinds[cnum]], (nvs[cnum], 1)))
-                    vi[dinds[cnum]] += tf.sparse.sparse_dense_matmul(fg_comps[cnum], tf.reshape(fg_i[vinds[cnum]], (nvs[cnum], 1)))
+                gr0 = tf.gather(gr, ant0_inds[cnum])
+                gr1 = tf.gather(gr, ant1_inds[cnum])
+                gi0 = tf.gather(gi, ant0_inds[cnum])
+                gi1 = tf.gather(gi, ant1_inds[cnum])
+                grgr = gr0 * gr1
+                gigi = gi0 * gi1
+                grgi = gr0 * gi1
+                gigr = gi0 * gr1
+                vr = tf.reduce_sum(fg_mats[cnum] * fg_r_seg[cnum], axis=1)
+                vi = tf.reduce_sum(fg_mats[cnum] * fg_i_seg[cnum], axis=1)
+                model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
+                model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
+                cal_loss += tf.reduce_sum((tf.square(data_r_seg[cnum] - model_r)  + tf.square(data_i_seg[cnum] - model_i)) * wgts_seg[cnum])
+            return cal_loss
+    else:
+        g_r = tf.Variable(g_r)
+        g_i = tf.Variable(g_i)
+        if not freeze_model:
+            fg_r_seg = tf.Variable(fg_r_seg)
+            fg_i_seg = tf.Variable(fg_i_seg)
+        if freeze_model:
+            vars = [g_r, g_i]
+        else:
+            vars = [g_r, g_i, fg_r_seg, fg_i_seg]
+        def loss_function():
+            cal_loss = tf.constant(0., dtype=dtype)
+            # now deal with dense components
+            for cnum in tf.range(ncomps):
+                gr0 = tf.gather(gr, ant0_inds[cnum])
+                gr1 = tf.gather(gr, ant1_inds[cnum])
+                gi0 = tf.gather(gi, ant0_inds[cnum])
+                gi1 = tf.gather(gi, ant1_inds[cnum])
+                grgr = gr0 * gr1
+                gigi = gi0 * gi1
+                grgi = gr0 * gi1
+                gigr = gi0 * gr1
+                vr = tf.reduce_sum(fg_mats[cnum] * fg_r_seg[cnum], axis=1)
+                vi = tf.reduce_sum(fg_mats[cnum] * fg_i_seg[cnum], axis=1)
+                model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
+                model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
+                cal_loss += tf.reduce_sum((tf.square(data_r_seg[cnum] - model_r)  + tf.square(data_i_seg[cnum] - model_i)) * wgts_seg[cnum])
+            return cal_loss
 
-            vr = tf.reshape(vr, (nants, nants, nfreqs))
-            vi = tf.reshape(vi, (nants, nants, nfreqs))
-            model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
-            model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-            return tf.reduce_sum(tf.square(data_r - model_r) * wgts + tf.square(data_i - model_i) * wgts)
 
-
-
-    loss_i = cal_loss().numpy()
+    loss_i = loss_function().numpy()
     echo(
         f"{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss_i:.2e}...\n",
         verbose=verbose,
     )
     for step in PBARS[notebook_progressbar](range(maxsteps)):
         with tf.GradientTape() as tape:
-            loss = cal_loss()
+            loss = loss_function()
         grads = tape.gradient(loss, vars)
         opt.apply_gradients(zip(grads, vars))
         fit_history["loss"].append(loss.numpy())
@@ -778,10 +838,6 @@ def tensorize_fg_coeffs(
     scale_factor: float, optional
         factor to scale data by.
         default is 1.
-    force2d: bool, optional
-        if True, add additional dummy dimension to make 2d
-        this is necessary for sparse matrix representation.
-        default is False.
     dtype: numpy.dtype
         data type to store tensors.
 
@@ -813,9 +869,6 @@ def tensorize_fg_coeffs(
 
     fg_coeffs_re = np.asarray(fg_coeffs_re) / scale_factor
     fg_coeffs_im = np.asarray(fg_coeffs_im) / scale_factor
-    if force2d:
-        fg_coeffs_re = fg_coeffs_re.reshape((len(fg_coeffs_re), 1))
-        fg_coeffs_im = fg_coeffs_im.reshape((len(fg_coeffs_im), 1))
     fg_coeffs_re = tf.convert_to_tensor(fg_coeffs_re, dtype=dtype)
     fg_coeffs_im = tf.convert_to_tensor(fg_coeffs_im, dtype=dtype)
 
@@ -843,7 +896,7 @@ def calibrate_and_model_tensor(
     correct_model=False,
     weights=None,
     sparse_threshold=1e-1,
-    use_sparse=None,
+    single_bls_as_sparse=True,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using sparse tensors.
@@ -985,7 +1038,8 @@ def calibrate_and_model_tensor(
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     # generate sparse tensor to hold foreground components.
-    fg_comp_tensor = tensorize_fg_model_comps(
+    if single_bls_as_sparse:
+        fg_mats_sparse, _, vec_inds_sparse, fg_mats, data_inds, vec_inds = tensorize_fg_model_comps(
         fg_model_comps=fg_model_comps,
         ants_map=ants_map,
         dtype=dtype,
@@ -993,8 +1047,20 @@ def calibrate_and_model_tensor(
         verbose=verbose,
         notebook_progressbar=notebook_progressbar,
         sparse_threshold=sparse_threshold,
-        use_sparse=use_sparse,
+        single_bls_as_sparse=single_bls_as_sparse,
     )
+    else:
+        fg_mats, data_inds, vec_inds = tensorize_fg_model_comps(
+        fg_model_comps=fg_model_comps,
+        ants_map=ants_map,
+        dtype=dtype,
+        nfreqs=sky_model.Nfreqs,
+        verbose=verbose,
+        notebook_progressbar=notebook_progressbar,
+        sparse_threshold=sparse_threshold,
+        single_bls_as_sparse=single_bls_as_sparse,
+        )
+        fg_mats_sparse, data_inds_sparse, vec_inds_sparse = None, None, None
     echo(
         f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
         verbose=verbose,
@@ -1046,7 +1112,6 @@ def calibrate_and_model_tensor(
                 time_index=time_index,
                 polarization=pol,
                 scale_factor=rmsdata,
-                force2d=isinstance(fg_comp_tensor, tf.sparse.SparseTensor),
             )
 
             # cal_loss = lambda g_r, g_i, fg_r, fg_i: cal_loss_tensor(
@@ -1062,6 +1127,7 @@ def calibrate_and_model_tensor(
             #    nfreqs=uvdata.Nfreqs,
             # )
             # derive optimal gains and foregrounds
+
             (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                 g_r=gains_r,
                 g_i=gains_i,
@@ -1070,8 +1136,11 @@ def calibrate_and_model_tensor(
                 data_r=data_r,
                 data_i=data_i,
                 wgts=wgts,
-                fg_comps=fg_comp_tensor,
-                # loss_function=cal_loss,
+                fg_mats_sparse=fg_mats_sparse,
+                vec_inds_sparse=vec_inds_sparse,
+                fg_mats=fg_mats,
+                data_inds=data_inds,
+                vec_inds=vec_inds,                # loss_function=cal_loss,
                 record_var_history=record_var_history,
                 record_var_history_interval=record_var_history_interval,
                 optimizer=optimizer,
@@ -1080,6 +1149,7 @@ def calibrate_and_model_tensor(
                 notebook_progressbar=notebook_progressbar,
                 verbose=verbose,
                 tol=tol,
+                dtype=dtype,
                 maxsteps=maxsteps,
                 **opt_kwargs,
             )
