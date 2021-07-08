@@ -152,7 +152,8 @@ def tensorize_fg_model_comps(
         fg_mats_sparse = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
         data_inds_sparse = tf.convert_to_tensor(comp_inds[:, 0], dtype=np.int32)
         vec_inds_sparse = tf.convert_to_tensor(comp_inds[:, 1], dtype=np.int32)
-
+    else:
+        fg_mats_sparse = None
     # now go through the fitting_groups that are not length-1
     for modeling_grp in fg_model_comps:
         if len(modeling_grp) > 1 or not single_bls_as_sparse:
@@ -169,10 +170,9 @@ def tensorize_fg_model_comps(
                     blind = i * nants_data + j
                     dinds.extend(list(np.arange(blind * nfreqs, blind).astype(np.int32)))
             data_inds.append(np.asarray(dinds, dtype=np.int32))
-    if single_bls_as_sparse:
-        return fg_mats_sparse, data_inds_sparse, vec_inds_sparse, tf.ragged.constant(fg_mats), tf.ragged.constant(data_inds), tf.ragged.constant(vec_inds)
-    else:
-        return  tf.ragged.constant(fg_mats), tf.ragged.constant(data_inds), tf.ragged.constant(vec_inds)
+
+    return fg_mats_sparse, tf.ragged.constant(fg_mats), tf.ragged.constant(data_inds)
+
 
 def tensorize_data(
     uvdata,
@@ -338,12 +338,20 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
     return gains_re, gains_im
 
 
-def yield_fg_model_tensor(fg_comps, fg_coeffs, nants, nfreqs):
+def yield_fg_model_tensor(fg_comps, fg_coeffs, sparse_comps=None, sparse_fg_coeffs=None, nants, nfreqs):
     """Compute sparse tensor foreground model.
 
     Parameters
     ----------
-    fg_comps: tf.sparse.SparseTensor or tf.Tensor object
+    data_inds: tf.ragged.RaggedTensor
+
+
+
+    fg_comps: tf.ragged.RaggedTensor
+
+    fg_coeffs: tf.ragged.RaggedTensor
+
+    sparse_comps: tf.sparse.SparseTensor or tf.Tensor object
         If tf.sparse.SparseTensor:
             Sparse tensor with dense shape of  (Nants^2 * Nfreqs) x Ncomponents
             Each column is a different data modeling component. The first axis ravels
@@ -812,12 +820,13 @@ def insert_gains_into_uvcal(uvcal, time_index, polarization, gains_re, gains_im)
 
 def tensorize_fg_coeffs(
     uvdata,
-    model_component_dict,
+    fg_model_comps,
     time_index,
     polarization,
     scale_factor=1.0,
     force2d=False,
     dtype=np.float32,
+    single_bls_as_sparse=False,
 ):
     """Initialize foreground coefficient tensors from uvdata and modeling component dictionaries.
 
@@ -852,8 +861,10 @@ def tensorize_fg_coeffs(
         ordering is over foreground modeling vector per redundant group and then
         redundant group in the order of groups appearing in red_grps
     """
+
     fg_coeffs_re = []
     fg_coeffs_im = []
+    # first get sparse
     for fit_grp in model_component_dict:
         fg_coeff = 0.0
         blnum = 0
@@ -872,7 +883,7 @@ def tensorize_fg_coeffs(
     fg_coeffs_re = tf.convert_to_tensor(fg_coeffs_re, dtype=dtype)
     fg_coeffs_im = tf.convert_to_tensor(fg_coeffs_im, dtype=dtype)
 
-    return fg_coeffs_re, fg_coeffs_im
+    return fg_coeffs_re, fg_coeffs_im, fg_coeffs_re_sparse, fg_coeffs_im_sparse
 
 
 def calibrate_and_model_tensor(
@@ -1038,8 +1049,7 @@ def calibrate_and_model_tensor(
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     # generate sparse tensor to hold foreground components.
-    if single_bls_as_sparse:
-        fg_mats_sparse, _, vec_inds_sparse, fg_mats, data_inds, vec_inds = tensorize_fg_model_comps(
+        fg_mats_sparse, fg_mats, data_inds = tensorize_fg_model_comps(
         fg_model_comps=fg_model_comps,
         ants_map=ants_map,
         dtype=dtype,
@@ -1049,18 +1059,6 @@ def calibrate_and_model_tensor(
         sparse_threshold=sparse_threshold,
         single_bls_as_sparse=single_bls_as_sparse,
     )
-    else:
-        fg_mats, data_inds, vec_inds = tensorize_fg_model_comps(
-        fg_model_comps=fg_model_comps,
-        ants_map=ants_map,
-        dtype=dtype,
-        nfreqs=sky_model.Nfreqs,
-        verbose=verbose,
-        notebook_progressbar=notebook_progressbar,
-        sparse_threshold=sparse_threshold,
-        single_bls_as_sparse=single_bls_as_sparse,
-        )
-        fg_mats_sparse, data_inds_sparse, vec_inds_sparse = None, None, None
     echo(
         f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
         verbose=verbose,
@@ -1105,9 +1103,11 @@ def calibrate_and_model_tensor(
                 f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
                 verbose=verbose,
             )
-            fg_r, fg_i = tensorize_fg_coeffs(
+            fg_r, fg_i, fg_r_sparse, fg_i_sparse = tensorize_fg_coeffs(
                 uvdata=sky_model,
-                model_component_dict=fg_model_comps,
+                model_components=fg_mats,
+                data_inds=data_inds
+                sparse_model_comps=sparse_model_comps,
                 dtype=dtype,
                 time_index=time_index,
                 polarization=pol,
