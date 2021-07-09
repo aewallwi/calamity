@@ -115,10 +115,11 @@ def test_tensorize_gains(gains_antscale):
         assert np.allclose(gains_r.numpy()[ant], ant + 1)
         assert np.allclose(gains_i.numpy()[ant], 0.0)
 
-@pytest.mark.parametrize(
-"single_bls_as_sparse", [True, False]
-)
-def test_tensorize_fg_model_comps_dpsss(sky_model_projected, dpss_vectors, redundant_groups, gains, single_bls_as_sparse):
+
+@pytest.mark.parametrize("single_bls_as_sparse", [True, False])
+def test_tensorize_fg_model_comps_dpsss(
+    sky_model_projected, dpss_vectors, redundant_groups, gains, single_bls_as_sparse
+):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     fg_comp_tensor, fg_comp_tensor_ragged, data_inds_ragged = calamity.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=dpss_vectors,
@@ -150,7 +151,6 @@ def test_tensorize_fg_model_comps_dpsss(sky_model_projected, dpss_vectors, redun
             blind = bl[0] * sky_model_projected.Nants_data + bl[1]
             assert np.allclose(data_inds.numpy(), np.arange(blind * nfreqs, (blind + 1) * nfreqs))
             assert np.allclose(fg_comp_tensor_ragged[gnum].numpy(), dpss_vectors[red_grp])
-
 
 
 def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_groups, sky_model_projected, gains):
@@ -215,8 +215,12 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
     # get model tensor.
     nants = sky_model_projected.Nants_data
     nfreqs = sky_model_projected.Nfreqs
-    model_r = calamity.yield_fg_model_tensor(fg_comps_sparse=fg_comps_tensor, fg_coeffs_sparse=fg_coeffs_re, nants=nants, nfreqs=nfreqs)
-    model_i = calamity.yield_fg_model_tensor(fg_comps_sparse=fg_comps_tensor, fg_coeffs_sparse=fg_coeffs_im, nants=nants, nfreqs=nfreqs)
+    model_r = calamity.yield_fg_model_tensor(
+        fg_comps_sparse=fg_comps_tensor, fg_coeffs_sparse=fg_coeffs_re, nants=nants, nfreqs=nfreqs
+    )
+    model_i = calamity.yield_fg_model_tensor(
+        fg_comps_sparse=fg_comps_tensor, fg_coeffs_sparse=fg_coeffs_im, nants=nants, nfreqs=nfreqs
+    )
     # insert tensors
     calamity.insert_model_into_uvdata_tensor(
         inserted_model,

@@ -77,7 +77,6 @@ def tensorize_fg_model_comps_dict(
         verbose=verbose,
     )
 
-
     # do a forward pass and determine dense shape of the sparse matrix
     sparse_number_of_elements = 0
     nvectors = 0
@@ -504,11 +503,14 @@ def fit_gains_and_foregrounds(
         data_i_chunked = [tf.gather(data_i_chunked, data_inds_chunked[gnum]).numpy().flatten() for gnum in range(ngrps)]
 
         ant0_inds = [list(data_inds_chunked[gnum].numpy()[::nfreqs] // nfreqs // nants) for gnum in range(ngrps)]
-        ant1_inds = [list(tf.math.floormod(data_inds_chunked[gnum][::nfreqs] // nfreqs, nants).numpy()) for gnum in range(ngrps)]
+        ant1_inds = [
+            list(tf.math.floormod(data_inds_chunked[gnum][::nfreqs] // nfreqs, nants).numpy()) for gnum in range(ngrps)
+        ]
 
         wgts_chunked = tf.reshape(wgts, (nants * nants * nfreqs))
-        wgts_chunked = tf.ragged.constant([tf.gather(wgts_chunked, data_inds_chunked[gnum]).numpy().flatten() for gnum in range(ngrps)])
-
+        wgts_chunked = tf.ragged.constant(
+            [tf.gather(wgts_chunked, data_inds_chunked[gnum]).numpy().flatten() for gnum in range(ngrps)]
+        )
 
     g_r = tf.Variable(g_r)
     g_i = tf.Variable(g_i)
@@ -531,7 +533,7 @@ def fit_gains_and_foregrounds(
         vars = [g_r, g_i]
 
     if fg_comps_sparse is not None and fg_comps_chunked is not None:
-        #@tf.function
+        # @tf.function
         def loss_function():
             # start with sparse components.
             grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
@@ -558,12 +560,13 @@ def fit_gains_and_foregrounds(
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
                 model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
                 cal_loss += tf.reduce_sum(
-                    (tf.square(data_r_chunked[gnum] - model_r) + tf.square(data_i_chunked[gnum] - model_i)) * wgts_chunked[gnum]
+                    (tf.square(data_r_chunked[gnum] - model_r) + tf.square(data_i_chunked[gnum] - model_i))
+                    * wgts_chunked[gnum]
                 )
             return cal_loss
 
     elif fg_comps_chunked is not None:
-        #@tf.function
+        # @tf.function
         def loss_function():
             cal_loss = tf.constant(0.0, dtype=dtype)
             # now deal with dense components
@@ -581,12 +584,13 @@ def fit_gains_and_foregrounds(
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
                 model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
                 cal_loss += tf.reduce_sum(
-                    (tf.square(data_r_chunked[gnum] - model_r) + tf.square(data_i_chunked[gnum] - model_i)) * wgts_chunked[gnum]
+                    (tf.square(data_r_chunked[gnum] - model_r) + tf.square(data_i_chunked[gnum] - model_i))
+                    * wgts_chunked[gnum]
                 )
             return cal_loss
 
     elif fg_comps_sparse is not None:
-        #@tf.function
+        # @tf.function
         def loss_function():
             # start with sparse components.
             grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
@@ -800,9 +804,9 @@ def tensorize_fg_coeffs(
         for red_grp in fit_grp:
             for ap in red_grp:
                 bl = ap + (polarization,)
-                fg_coeff += (
-                    uvdata.get_data(bl)[time_index] * ~uvdata.get_flags(bl)[time_index]
-                ) @ fg_model_comps_dict[fit_grp][blnum * uvdata.Nfreqs : (blnum + 1) * uvdata.Nfreqs]
+                fg_coeff += (uvdata.get_data(bl)[time_index] * ~uvdata.get_flags(bl)[time_index]) @ fg_model_comps_dict[
+                    fit_grp
+                ][blnum * uvdata.Nfreqs : (blnum + 1) * uvdata.Nfreqs]
             blnum += 1
         if len(fit_grp) > 1 or not single_bls_as_sparse:
             fg_coeffs_re_chunked.append(tf.convert_to_tensor(fg_coeff.real / scale_factor, dtype=dtype))
@@ -810,7 +814,6 @@ def tensorize_fg_coeffs(
         else:
             fg_coeffs_re_sparse.extend(list(fg_coeff.real / scale_factor))
             fg_coeffs_im_sparse.extend(list(fg_coeff.imag / scale_factor))
-
 
     fg_coeffs_re_sparse = tf.convert_to_tensor(fg_coeffs_re_sparse, dtype=dtype)
     fg_coeffs_re_sparse = tf.reshape(fg_coeffs_re_sparse, (fg_coeffs_re_sparse.shape[0], 1))
