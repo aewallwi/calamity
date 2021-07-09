@@ -384,9 +384,9 @@ def yield_fg_model_tensor(
     """
     model = None
     if fg_comps_sparse is not None:
-        model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps_sparse, fg_coeffs_sparse), (nants, nants, nfreqs))
+        model = tf.Variable(tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps_sparse, fg_coeffs_sparse), (nants, nants, nfreqs)))
     else:
-        model = tf.zeros((nants, nants, nfreqs))
+        model = tf.Variable(tf.zeros((nants, nants, nfreqs), dtype=fg_comps_chunked[0].dtype))
     if fg_comps_chunked is not None:
         ngrps = len(fg_comps_chunked)
         for gnum in tf.range(ngrps):
@@ -397,7 +397,7 @@ def yield_fg_model_tensor(
                 i, j = blind // nants, tf.math.floormod(blind, nants)
                 model[i, j] = gchunk[rnum * nfreqs : (rnum + 1) * nfreqs]
                 rnum += 1
-    return model
+    return model.value()
 
 
 def fit_gains_and_foregrounds(
