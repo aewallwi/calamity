@@ -532,7 +532,6 @@ def fit_gains_and_foregrounds(
         vars = [g_r, g_i]
 
     if fg_comps_sparse is not None:
-        # @tf.function
         def loss_function_sparse():
             # start with sparse components.
             grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
@@ -544,13 +543,13 @@ def fit_gains_and_foregrounds(
             model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
             model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
             cal_loss = tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
+            return cal_loss
     else:
         def loss_function_sparse():
             return tf.constant(0., dtype=dtype)
 
 
     if fg_comps_chunked is not None:
-        # @tf.function
         def loss_function_chunked():
             cal_loss = tf.constant(0.0, dtype=dtype)
             # now deal with dense components

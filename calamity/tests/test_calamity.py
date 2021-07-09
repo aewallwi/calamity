@@ -251,14 +251,6 @@ def test_tensorize_data(sky_model_projected, redundant_groups, gains):
                 )
 
 
-def test_red_calibrate_and_model_dpss_argparser():
-    sys.argv = [sys.argv[0], "infile", "--incalfilename", "calfile"]
-    ap = calamity.red_calibrate_and_model_dpss_argparser()
-    args = ap.parse_args()
-    assert args.infilename == "infile"
-    assert args.incalfilename == "calfile"
-
-
 @pytest.mark.parametrize(
     "use_sparse, use_redundancy, noweights",
     [
