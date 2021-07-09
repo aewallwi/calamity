@@ -337,7 +337,7 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
     return gains_re, gains_im
 
 
-def yield_fg_model_tensor(
+def yield_fg_model_array(
     nants,
     nfreqs,
     fg_comps_chunked=None,
@@ -384,20 +384,20 @@ def yield_fg_model_tensor(
     """
     model = None
     if fg_comps_sparse is not None:
-        model = tf.Variable(tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps_sparse, fg_coeffs_sparse), (nants, nants, nfreqs)))
+        model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps_sparse, fg_coeffs_sparse), (nants, nants, nfreqs)).numpy()
     else:
-        model = tf.Variable(tf.zeros((nants, nants, nfreqs), dtype=fg_comps_chunked[0].dtype))
+        model = np.zeros((nants, nants, nfreqs))
     if fg_comps_chunked is not None:
         ngrps = len(fg_comps_chunked)
         for gnum in tf.range(ngrps):
-            gchunk = tf.reduce_sum(fg_comps_chunked[gnum] * fg_coeffs_chunked[gnum], axis=1)
+            gchunk = tf.reduce_sum(fg_comps_chunked[gnum] * fg_coeffs_chunked[gnum], axis=1).numpy()
             rnum = tf.constant(0)
             for dind in data_inds_chunked[gnum][::nfreqs]:
                 blind = dind // nfreqs
                 i, j = blind // nants, tf.math.floormod(blind, nants)
                 model[i, j] = gchunk[rnum * nfreqs : (rnum + 1) * nfreqs]
                 rnum += 1
-    return model.value()
+    return model
 
 
 def fit_gains_and_foregrounds(
@@ -692,10 +692,10 @@ def insert_model_into_uvdata_tensor(
     red_grps: list of lists of int 2-tuples
         a list of lists of 2-tuples where all antenna pairs within each sublist
         are redundant with eachother. Assumes that conjugates are correctly taken.
-    model_r: tf.Tensor object
-        an Nants_data x Nants_data x Nfreqs tf.Tensor object with real parts of data
-    model_i: tf.Tensor object
-        an Nants_data x Nants_data x Nfreqs tf.Tensor object with imag parts of model
+    model_r: np.ndarray
+        an Nants_data x Nants_data x Nfreqs np.ndarray with real parts of data
+    model_i: np.ndarray
+        an Nants_data x Nants_data x Nfreqs np.ndarray with imag parts of model
     scale_factor: float, optional
         overall scaling factor to divide tensorized data by.
         default is 1.0
@@ -714,10 +714,10 @@ def insert_model_into_uvdata_tensor(
             i, j = ants_map[ap[0]], ants_map[ap[1]]
             if ap in antpairs_data:
                 dinds = uvdata.antpair2ind(ap)[time_index]
-                model = model_r[i, j].numpy() + 1j * model_i[i, j].numpy()
+                model = model_r[i, j] + 1j * model_i[i, j]
             else:
                 dinds = uvdata.antpair2ind(ap[::-1])[time_index]
-                model = model_r[i, j].numpy() - 1j * model_i[i, j].numpy()
+                model = model_r[i, j] - 1j * model_i[i, j]
             uvdata.data_array[dinds, 0, :, polnum] = model * scale_factor
 
 
@@ -1073,7 +1073,7 @@ def calibrate_and_model_tensor(
                 polarization=pol,
                 ants_map=ants_map,
                 red_grps=red_grps,
-                model_r=yield_fg_model_tensor(
+                model_r=yield_fg_model_array(
                     fg_comps_sparse=fg_comps_sparse,
                     fg_comps_chunked=fg_comps_chunked,
                     fg_coeffs_chunked=fg_r_chunked,
@@ -1082,7 +1082,7 @@ def calibrate_and_model_tensor(
                     nants=uvdata.Nants_data,
                     nfreqs=uvdata.Nfreqs,
                 ),
-                model_i=yield_fg_model_tensor(
+                model_i=yield_fg_model_array(
                     fg_comps_sparse=fg_comps_sparse,
                     fg_comps_chunked=fg_comps_chunked,
                     fg_coeffs_chunked=fg_i_chunked,

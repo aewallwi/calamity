@@ -169,13 +169,13 @@ def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_grou
         dtype=np.float64,
     )
     # now retrieve Nants x Nants x Nfreq complex visibility cube from representation.
-    model_r = calamity.yield_fg_model_tensor(
+    model_r = calamity.yield_fg_model_array(
         fg_comps_sparse=fg_comp_tensor,
         fg_coeffs_sparse=fg_coeffs_re,
         nants=sky_model_projected.Nants_data,
         nfreqs=sky_model_projected.Nfreqs,
     )
-    model_i = calamity.yield_fg_model_tensor(
+    model_i = calamity.yield_fg_model_array(
         fg_comps_sparse=fg_comp_tensor,
         fg_coeffs_sparse=fg_coeffs_im,
         nants=sky_model_projected.Nants_data,
@@ -215,10 +215,10 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
     # get model tensor.
     nants = sky_model_projected.Nants_data
     nfreqs = sky_model_projected.Nfreqs
-    model_r = calamity.yield_fg_model_tensor(
+    model_r = calamity.yield_fg_model_array(
         fg_comps_sparse=fg_comps_tensor, fg_coeffs_sparse=fg_coeffs_re, nants=nants, nfreqs=nfreqs
     )
-    model_i = calamity.yield_fg_model_tensor(
+    model_i = calamity.yield_fg_model_array(
         fg_comps_sparse=fg_comps_tensor, fg_coeffs_sparse=fg_coeffs_im, nants=nants, nfreqs=nfreqs
     )
     # insert tensors
