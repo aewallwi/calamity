@@ -154,9 +154,6 @@ def tensorize_fg_model_comps_dict(
     # now go through the fitting_groups that are not length-1
     for modeling_grp in fg_model_comps_dict:
         if len(modeling_grp) > 1 or not single_bls_as_sparse:
-            i0, j0 = ants_map[modeling_grp[0][0][0]], ants_map[modeling_grp[0][0][1]]
-            start_ind = start_inds[i0, j0]
-            stop_ind = start_ind + fg_model_comps_dict[modeling_grp].shape[1]
             fg_comps_chunked.append(tf.convert_to_tensor(fg_model_comps_dict[modeling_grp], dtype=dtype))
             # calculate data indices
             dinds = []
@@ -384,7 +381,9 @@ def yield_fg_model_array(
     """
     model = None
     if fg_comps_sparse is not None:
-        model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps_sparse, fg_coeffs_sparse), (nants, nants, nfreqs)).numpy()
+        model = tf.reshape(
+            tf.sparse.sparse_dense_matmul(fg_comps_sparse, fg_coeffs_sparse), (nants, nants, nfreqs)
+        ).numpy()
     else:
         model = np.zeros((nants, nants, nfreqs))
     if fg_comps_chunked is not None:
@@ -551,10 +550,10 @@ def fit_gains_and_foregrounds(
                 gr1 = tf.gather(g_r, ant1_inds[gnum])
                 gi0 = tf.gather(g_i, ant0_inds[gnum])
                 gi1 = tf.gather(g_i, ant1_inds[gnum])
-                grgr = gr0 * gr1
-                gigi = gi0 * gi1
-                grgi = gr0 * gi1
-                gigr = gi0 * gr1
+                grgr = tf.reshape(gr0 * gr1, [-1])
+                gigi = tf.reshape(gi0 * gi1, [-1])
+                grgi = tf.reshape(gr0 * gi1, [-1])
+                gigr = tf.reshape(gi0 * gr1, [-1])
                 vr = tf.reduce_sum(fg_comps_chunked[gnum] * fg_r_chunked[gnum], axis=1)
                 vi = tf.reduce_sum(fg_comps_chunked[gnum] * fg_i_chunked[gnum], axis=1)
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
@@ -575,10 +574,10 @@ def fit_gains_and_foregrounds(
                 gr1 = tf.gather(g_r, ant1_inds[gnum])
                 gi0 = tf.gather(g_i, ant0_inds[gnum])
                 gi1 = tf.gather(g_i, ant1_inds[gnum])
-                grgr = gr0 * gr1
-                gigi = gi0 * gi1
-                grgi = gr0 * gi1
-                gigr = gi0 * gr1
+                grgr = tf.reshape(gr0 * gr1, [-1])
+                gigi = tf.reshape(gi0 * gi1, [-1])
+                grgi = tf.reshape(gr0 * gi1, [-1])
+                gigr = tf.reshape(gi0 * gr1, [-1])
                 vr = tf.reduce_sum(fg_comps_chunked[gnum] * fg_r_chunked[gnum], axis=1)
                 vi = tf.reduce_sum(fg_comps_chunked[gnum] * fg_i_chunked[gnum], axis=1)
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
@@ -644,20 +643,27 @@ def fit_gains_and_foregrounds(
         min_loss = fit_history["loss"][-1]
         g_r_opt = g_r.value()
         g_i_opt = g_i.value()
-        if fg_comps_chunked is not None:
-            fg_r_chunked_opt = [fgr.value() for fgr in fg_r_chunked]
-            fg_i_chunked_opt = [fgi.value() for fgi in fg_i_chunked]
+        if not freeze_model:
+            if fg_comps_chunked is not None:
+                fg_r_chunked_opt = [fgr.value() for fgr in fg_r_chunked]
+                fg_i_chunked_opt = [fgi.value() for fgi in fg_i_chunked]
+            if fg_comps_sparse is not None:
+                fg_r_sparse_opt = fg_r_sparse.value()
+                fg_i_sparse_opt = fg_i_sparse.value()
+        else:
+            if fg_comps_chunked is not None:
+                fg_r_chunked_opt = fg_r_chunked
+                fg_i_chunked_opt = fg_i_chunked
+            if fg_comps_sparse is not None:
+                fg_r_sparse_opt = fg_r_sparse
+                fg_i_sparse_opt = fg_i_sparse
 
-        if fg_comps_sparse is not None:
-            fg_r_sparse_opt = fg_r_sparse.value()
-            fg_i_sparse_opt = fg_i_sparse.value()
-
-        if fg_comps_sparse is None:
-            fg_r_sparse_opt = None
-            fg_i_sparse_opt = None
-        if fg_comps_chunked is None:
-            fg_r_chunked_opt = None
-            fg_i_chunked_opt = None
+    if fg_comps_sparse is None:
+        fg_r_sparse_opt = None
+        fg_i_sparse_opt = None
+    if fg_comps_chunked is None:
+        fg_r_chunked_opt = None
+        fg_i_chunked_opt = None
 
     echo(
         f"{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n",

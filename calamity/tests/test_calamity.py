@@ -181,7 +181,7 @@ def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_grou
         nants=sky_model_projected.Nants_data,
         nfreqs=sky_model_projected.Nfreqs,
     )
-    model = model_r.numpy() + 1j * model_i.numpy()
+    model = model_r + 1j * model_i
     # and check that the columns in that cube line up with data.
     for grp in redundant_groups:
         for ap in grp:
