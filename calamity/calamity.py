@@ -513,7 +513,17 @@ def fit_gains_and_foregrounds(
         ant1_inds = tf.ragged.constant([tf.math.floormod(data_inds_ragged[gnum], nants).numpy() for gnum in range(ngrps)])
         wgts_ragged = tf.reshape(wgts, (nants * nants * nfreqs))
         wgts_ragged = tf.ragged.constant([tf.gather(wgts_ragged, data_inds_ragged[gnum]).numpy().flatten() for gnum in range(ngrps)])
-
+        start_ragged = []
+        size_ragged = []
+        start = 0
+        for gnum in range(ngrps):
+            start_ragged.append([start])
+            size_ragged.append([fg_comps_ragged[gnum].shape[1]])
+            start += wgts_ragged[gnum].shape[0]
+        start_ragged = tf.convert_to_tensor(np.asarray(start_ragged, dtype=np.int32))
+        size_ragged = tf.convert_to_tensor(np.asarray(size_ragged, dtype=np.int32))
+        fg_r_ragged = tf.convert_to_tensor(np.hstack([fg_r_ragged[gnum] for gnum in range(ngrps)]))
+        fg_i_ragged = tf.convert_to_tensor(np.hstack([fg_i_ragged[gnum] for gnum in range(ngrps)]))
 
     g_r = tf.Variable(g_r)
     g_i = tf.Variable(g_i)
@@ -558,8 +568,8 @@ def fit_gains_and_foregrounds(
                 gigi = gi0 * gi1
                 grgi = gr0 * gi1
                 gigr = gi0 * gr1
-                vr = tf.reduce_sum(fg_comps_ragged[gnum] * fg_r_ragged[gnum], axis=1)
-                vi = tf.reduce_sum(fg_comps_ragged[gnum] * fg_i_ragged[gnum], axis=1)
+                vr = tf.reduce_sum(fg_comps_ragged[gnum] * tf.slice(fg_r_ragged, start_ragged[gnum], size_ragged[gnum]), axis=1)
+                vi = tf.reduce_sum(fg_comps_ragged[gnum] * tf.slice(fg_i_ragged, start_ragged[gnum], size_ragged[gnum]), axis=1)
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
                 model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
                 cal_loss += tf.reduce_sum(
@@ -581,8 +591,8 @@ def fit_gains_and_foregrounds(
                 gigi = gi0 * gi1
                 grgi = gr0 * gi1
                 gigr = gi0 * gr1
-                vr = tf.reduce_sum(fg_comps_ragged[gnum] * fg_r_ragged[gnum], axis=1)
-                vi = tf.reduce_sum(fg_comps_ragged[gnum] * fg_i_ragged[gnum], axis=1)
+                vr = tf.reduce_sum(fg_comps_ragged[gnum] * tf.slice(fg_r_ragged, start_ragged[gnum], size_ragged[gnum]), axis=1)
+                vi = tf.reduce_sum(fg_comps_ragged[gnum] * tf.slice(fg_i_ragged, start_ragged[gnum], size_ragged[gnum]), axis=1)
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
                 model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
                 cal_loss += tf.reduce_sum(
@@ -645,13 +655,16 @@ def fit_gains_and_foregrounds(
         min_loss = fit_history["loss"][-1]
         g_r_opt = g_r.value()
         g_i_opt = g_i.value()
-        if not freeze_model:
-            if fg_comps_ragged is not None:
-                fg_r_ragged_opt = fg_r_ragged.value()
-                fg_i_ragged_opt = fg_i_ragged.value()
-            if fg_comps_sparse is not None:
-                fg_r_sparse_opt = fg_r_sparse.value()
-                fg_i_sparse_opt = fg_i_sparse.value()
+        if fg_comps_ragged is not None:
+            fg_r_ragged_opt = fg_r_ragged.value()
+            fg_i_ragged_opt = fg_i_ragged.value()
+            fg_r_ragged_opt = tf.ragged.constant([fg_r_ragged[start_stop_ragged[gnum, 0]: start_stop_ragged[gnum, 1]].numpy() for gnum in range(ngrps)])
+            fg_i_ragged_opt = tf.ragged.constant([fg_i_ragged[start_stop_ragged[gnum, 0]: start_stop_ragged[gnum, 1]].numpy() for gnum in range(ngrps)])
+
+        if fg_comps_sparse is not None:
+            fg_r_sparse_opt = fg_r_sparse.value()
+            fg_i_sparse_opt = fg_i_sparse.value()
+
         if fg_comps_sparse is None:
             fg_r_sparse_opt = None
             fg_i_sparse_opt = None
