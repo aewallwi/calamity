@@ -62,7 +62,7 @@ def tensorize_fg_model_comps_dict(
 
     Returns
     -------
-    fg_comps_ragged: list
+    fg_comps_chunked: list
         list of tf.Tensor objects representing each fitting group with more then a single baseline
         or tf.sparse.SparseTensor objects representing all single baseline fitting groups together.
         Shape of each tf.Tensor object is Ndata x Ncomponents (where Ndata = Nbls * Nfreqs and Nbls is number of baselines in modeling group)
@@ -150,15 +150,15 @@ def tensorize_fg_model_comps_dict(
     else:
         fg_comps_sparse = None
 
-    fg_comps_ragged = []
-    data_inds_ragged = []
+    fg_comps_chunked = []
+    data_inds_chunked = []
     # now go through the fitting_groups that are not length-1
     for modeling_grp in fg_model_comps_dict:
         if len(modeling_grp) > 1 or not single_bls_as_sparse:
             i0, j0 = ants_map[modeling_grp[0][0][0]], ants_map[modeling_grp[0][0][1]]
             start_ind = start_inds[i0, j0]
             stop_ind = start_ind + fg_model_comps_dict[modeling_grp].shape[1]
-            fg_comps_ragged.append(fg_model_comps_dict[modeling_grp].astype(dtype))
+            fg_comps_chunked.append(tf.convert_to_tensor(fg_model_comps_dict[modeling_grp], dtype=dtype))
             # calculate data indices
             dinds = []
             for red_grp in modeling_grp:
@@ -166,15 +166,12 @@ def tensorize_fg_model_comps_dict(
                     i, j = ants_map[ap[0]], ants_map[ap[1]]
                     blind = i * nants_data + j
                     dinds.extend(list(np.arange(blind * nfreqs, (blind + 1) * nfreqs).astype(np.int32)))
-            data_inds_ragged.append(np.asarray(dinds, dtype=np.int32))
-    if len(fg_comps_ragged) == 0:
-        fg_comps_ragged = None
-        data_inds_ragged = None
-    else:
-        fg_comps_ragged = tf.ragged.constant(fg_comps_ragged)
-        data_inds_ragged = tf.ragged.constant(data_inds_ragged)
+            data_inds_chunked.append(tf.convert_to_tensor(np.asarray(dinds, dtype=np.int32)))
+    if len(fg_comps_chunked) == 0:
+        fg_comps_chunked = None
+        data_inds_chunked = None
 
-    return fg_comps_sparse, fg_comps_ragged, data_inds_ragged
+    return fg_comps_sparse, fg_comps_chunked, data_inds_chunked
 
 
 def tensorize_data(
@@ -344,9 +341,9 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
 def yield_fg_model_tensor(
     nants,
     nfreqs,
-    fg_comps_ragged=None,
-    fg_coeffs_ragged=None,
-    data_inds_ragged=None,
+    fg_comps_chunked=None,
+    fg_coeffs_chunked=None,
+    data_inds_chunked=None,
     fg_comps_sparse=None,
     fg_coeffs_sparse=None,
 ):
@@ -391,12 +388,12 @@ def yield_fg_model_tensor(
         model = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps_sparse, fg_coeffs_sparse), (nants, nants, nfreqs))
     else:
         model = tf.zeros((nants, nants, nfreqs))
-    if fg_comps_ragged is not None:
-        ngrps = fg_comps_ragged.shape[0]
+    if fg_comps_chunked is not None:
+        ngrps = len(fg_comps_chunked)
         for gnum in tf.range(ngrps):
-            gchunk = tf.reduce_sum(fg_comps_ragged[gnum], fg_coeffs_ragged, axis=1)
+            gchunk = tf.reduce_sum(fg_comps_chunked[gnum] * fg_coeffs_chunked, axis=1)
             rnum = tf.constant(0)
-            for dind in data_inds_ragged[gnum][::nfreqs]:
+            for dind in data_inds_chunked[gnum][::nfreqs]:
                 blind = dind // nfreqs
                 i, j = blind // nants, tf.math.floormod(blind, nants)
                 model[i, j] = gchunk[rnum * nfreqs : (rnum + 1) * nfreqs]
@@ -407,16 +404,16 @@ def yield_fg_model_tensor(
 def fit_gains_and_foregrounds(
     g_r,
     g_i,
-    fg_r_ragged=None,
-    fg_i_ragged=None,
+    fg_r_chunked=None,
+    fg_i_chunked=None,
     fg_r_sparse=None,
     fg_i_sparse=None,
     data_r=None,
     data_i=None,
     wgts=None,
     fg_comps_sparse=None,
-    fg_comps_ragged=None,
-    data_inds_ragged=None,
+    fg_comps_chunked=None,
+    data_inds_chunked=None,
     loss_function=None,
     use_min=False,
     tol=1e-14,
@@ -499,54 +496,42 @@ def fit_gains_and_foregrounds(
     nfreqs = g_r.shape[1]
     ndata = nants * nants * nfreqs
     # copy data into ragged tensors for each fitting group if necessary.
-    if fg_comps_ragged is not None:
-        ngrps = fg_comps_ragged.shape[0]
-        data_r_ragged = tf.reshape(data_r, (nants * nants * nfreqs))
-        data_r_ragged = tf.ragged.constant(
-            [tf.gather(data_r_ragged, data_inds_ragged[gnum]).numpy().flatten() for gnum in range(ngrps)]
-        )
-        data_i_ragged = tf.reshape(data_i, (nants * nants * nfreqs))
-        data_i_ragged = tf.ragged.constant(
-            [tf.gather(data_i_ragged, data_inds_ragged[gnum]).numpy().flatten() for gnum in range(ngrps)]
-        )
-        ant0_inds = tf.ragged.constant([data_inds_ragged[gnum].numpy() // nants for gnum in range(ngrps)])
-        ant1_inds = tf.ragged.constant([tf.math.floormod(data_inds_ragged[gnum], nants).numpy() for gnum in range(ngrps)])
-        wgts_ragged = tf.reshape(wgts, (nants * nants * nfreqs))
-        wgts_ragged = tf.ragged.constant([tf.gather(wgts_ragged, data_inds_ragged[gnum]).numpy().flatten() for gnum in range(ngrps)])
-        start_ragged = []
-        size_ragged = []
-        start = 0
-        for gnum in range(ngrps):
-            start_ragged.append([start])
-            size_ragged.append([fg_comps_ragged[gnum].shape[1]])
-            start += wgts_ragged[gnum].shape[0]
-        start_ragged = tf.convert_to_tensor(np.asarray(start_ragged, dtype=np.int32))
-        size_ragged = tf.convert_to_tensor(np.asarray(size_ragged, dtype=np.int32))
-        fg_r_ragged = tf.convert_to_tensor(np.hstack([fg_r_ragged[gnum] for gnum in range(ngrps)]))
-        fg_i_ragged = tf.convert_to_tensor(np.hstack([fg_i_ragged[gnum] for gnum in range(ngrps)]))
+    if fg_comps_chunked is not None:
+        ngrps = len(fg_comps_chunked)
+        data_r_chunked = tf.reshape(data_r, (nants * nants * nfreqs))
+        data_r_chunked = [tf.gather(data_r_chunked, data_inds_chunked[gnum]).numpy().flatten() for gnum in range(ngrps)]
+        data_i_chunked = tf.reshape(data_i, (nants * nants * nfreqs))
+        data_i_chunked = [tf.gather(data_i_chunked, data_inds_chunked[gnum]).numpy().flatten() for gnum in range(ngrps)]
+
+        ant0_inds = [list(data_inds_chunked[gnum].numpy()[::nfreqs] // nfreqs // nants) for gnum in range(ngrps)]
+        ant1_inds = [list(tf.math.floormod(data_inds_chunked[gnum][::nfreqs] // nfreqs, nants).numpy()) for gnum in range(ngrps)]
+
+        wgts_chunked = tf.reshape(wgts, (nants * nants * nfreqs))
+        wgts_chunked = tf.ragged.constant([tf.gather(wgts_chunked, data_inds_chunked[gnum]).numpy().flatten() for gnum in range(ngrps)])
+
 
     g_r = tf.Variable(g_r)
     g_i = tf.Variable(g_i)
     if not freeze_model:
-        if fg_comps_sparse is not None and fg_comps_ragged is None:
+        if fg_comps_sparse is not None and fg_comps_chunked is None:
             fg_r_sparse = tf.Variable(fg_r_sparse)
             fg_i_sparse = tf.Variable(fg_i_sparse)
             vars = [g_r, g_i, fg_r_sparse, fg_i_sparse]
-        elif fg_comps_sparse is None and fg_comps_ragged is not None:
-            fg_r_ragged = tf.Variable(fg_r_ragged)
-            fg_i_ragged = tf.Variable(fg_i_ragged)
-            vars = [g_r, g_i, fg_r_ragged, fg_i_ragged]
+        elif fg_comps_sparse is None and fg_comps_chunked is not None:
+            fg_r_chunked = [tf.Variable(fgr) for fgr in fg_r_chunked]
+            fg_i_chunked = [tf.Variable(fgi) for fgi in fg_i_chunked]
+            vars = [g_r, g_i] + fg_r_chunked + fg_i_chunked
         else:
             fg_r_sparse = tf.Variable(fg_r_sparse)
             fg_i_sparse = tf.Variable(fg_i_sparse)
-            fg_r_ragged = tf.Variable(fg_r_ragged)
-            fg_i_ragged = tf.Variable(fg_i_ragged)
-            vars = [g_r, g_i, fg_r_sparse, fg_i_sparse, fg_r_ragged, fg_i_ragged]
+            fg_r_chunked = [tf.Variable(fgr) for fgr in fg_r_chunked]
+            fg_i_chunked = [tf.Variable(fgi) for fgi in fg_i_chunked]
+            vars = [g_r, g_i, fg_r_sparse, fg_i_sparse] + fg_r_chunked + fg_i_chunked
     else:
         vars = [g_r, g_i]
 
-    if fg_comps_sparse is not None and fg_comps_ragged is not None:
-        @tf.function
+    if fg_comps_sparse is not None and fg_comps_chunked is not None:
+        #@tf.function
         def loss_function():
             # start with sparse components.
             grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
@@ -568,17 +553,17 @@ def fit_gains_and_foregrounds(
                 gigi = gi0 * gi1
                 grgi = gr0 * gi1
                 gigr = gi0 * gr1
-                vr = tf.reduce_sum(fg_comps_ragged[gnum] * tf.slice(fg_r_ragged, start_ragged[gnum], size_ragged[gnum]), axis=1)
-                vi = tf.reduce_sum(fg_comps_ragged[gnum] * tf.slice(fg_i_ragged, start_ragged[gnum], size_ragged[gnum]), axis=1)
+                vr = tf.reduce_sum(fg_comps_chunked[gnum] * fg_r_chunked[gnum], axis=1)
+                vi = tf.reduce_sum(fg_comps_chunked[gnum] * fg_i_chunked[gnum], axis=1)
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
                 model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
                 cal_loss += tf.reduce_sum(
-                    (tf.square(data_r_ragged[gnum] - model_r) + tf.square(data_i_ragged[gnum] - model_i)) * wgts_ragged[gnum]
+                    (tf.square(data_r_chunked[gnum] - model_r) + tf.square(data_i_chunked[gnum] - model_i)) * wgts_chunked[gnum]
                 )
             return cal_loss
 
-    elif fg_comps_ragged is not None:
-        @tf.function
+    elif fg_comps_chunked is not None:
+        #@tf.function
         def loss_function():
             cal_loss = tf.constant(0.0, dtype=dtype)
             # now deal with dense components
@@ -591,17 +576,17 @@ def fit_gains_and_foregrounds(
                 gigi = gi0 * gi1
                 grgi = gr0 * gi1
                 gigr = gi0 * gr1
-                vr = tf.reduce_sum(fg_comps_ragged[gnum] * tf.slice(fg_r_ragged, start_ragged[gnum], size_ragged[gnum]), axis=1)
-                vi = tf.reduce_sum(fg_comps_ragged[gnum] * tf.slice(fg_i_ragged, start_ragged[gnum], size_ragged[gnum]), axis=1)
+                vr = tf.reduce_sum(fg_comps_chunked[gnum] * fg_r_chunked[gnum], axis=1)
+                vi = tf.reduce_sum(fg_comps_chunked[gnum] * fg_i_chunked[gnum], axis=1)
                 model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
                 model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
                 cal_loss += tf.reduce_sum(
-                    (tf.square(data_r_ragged[gnum] - model_r) + tf.square(data_i_ragged[gnum] - model_i)) * wgts_ragged[gnum]
+                    (tf.square(data_r_chunked[gnum] - model_r) + tf.square(data_i_chunked[gnum] - model_i)) * wgts_chunked[gnum]
                 )
             return cal_loss
 
     elif fg_comps_sparse is not None:
-        @tf.function
+        #@tf.function
         def loss_function():
             # start with sparse components.
             grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
@@ -634,9 +619,9 @@ def fit_gains_and_foregrounds(
             g_r_opt = g_r.value()
             g_i_opt = g_i.value()
             if not freeze_model:
-                if fg_comps_ragged is not None:
-                    fg_r_ragged_opt = fg_r_ragged.value()
-                    fg_i_ragged_opt = fg_i_ragged.value()
+                if fg_comps_chunked is not None:
+                    fg_r_chunked_opt = [fgr.value() for fgr in fg_r_chunked]
+                    fg_i_chunked_opt = [fgi.value() for fgi in fg_i_chunked]
                 if fg_comps_sparse is not None:
                     fg_r_sparse_opt = fg_r_sparse.value()
                     fg_i_sparse_opt = fg_i_sparse.value()
@@ -655,11 +640,9 @@ def fit_gains_and_foregrounds(
         min_loss = fit_history["loss"][-1]
         g_r_opt = g_r.value()
         g_i_opt = g_i.value()
-        if fg_comps_ragged is not None:
-            fg_r_ragged_opt = fg_r_ragged.value()
-            fg_i_ragged_opt = fg_i_ragged.value()
-            fg_r_ragged_opt = tf.ragged.constant([fg_r_ragged[start_stop_ragged[gnum, 0]: start_stop_ragged[gnum, 1]].numpy() for gnum in range(ngrps)])
-            fg_i_ragged_opt = tf.ragged.constant([fg_i_ragged[start_stop_ragged[gnum, 0]: start_stop_ragged[gnum, 1]].numpy() for gnum in range(ngrps)])
+        if fg_comps_chunked is not None:
+            fg_r_chunked_opt = [fgr.value() for fgr in fg_r_chunked]
+            fg_i_chunked_opt = [fgi.value() for fgi in fg_i_chunked]
 
         if fg_comps_sparse is not None:
             fg_r_sparse_opt = fg_r_sparse.value()
@@ -668,15 +651,15 @@ def fit_gains_and_foregrounds(
         if fg_comps_sparse is None:
             fg_r_sparse_opt = None
             fg_i_sparse_opt = None
-        if fg_comps_ragged is None:
-            fg_r_ragged_opt = None
-            fg_i_ragged_opt = None
+        if fg_comps_chunked is None:
+            fg_r_chunked_opt = None
+            fg_i_chunked_opt = None
 
     echo(
         f"{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n",
         verbose=verbose,
     )
-    return g_r_opt, g_i_opt, fg_r_ragged_opt, fg_i_ragged_opt, fg_r_sparse_opt, fg_i_sparse_opt, fit_history
+    return g_r_opt, g_i_opt, fg_r_chunked_opt, fg_i_chunked_opt, fg_r_sparse_opt, fg_i_sparse_opt, fit_history
 
 
 def insert_model_into_uvdata_tensor(
@@ -806,8 +789,8 @@ def tensorize_fg_coeffs(
         redundant group in the order of groups appearing in red_grps
     """
 
-    fg_coeffs_re_ragged = []
-    fg_coeffs_im_ragged = []
+    fg_coeffs_re_chunked = []
+    fg_coeffs_im_chunked = []
     fg_coeffs_re_sparse = []
     fg_coeffs_im_sparse = []
     # first get non-sparse components
@@ -822,19 +805,18 @@ def tensorize_fg_coeffs(
                 ) @ fg_model_comps_dict[fit_grp][blnum * uvdata.Nfreqs : (blnum + 1) * uvdata.Nfreqs]
             blnum += 1
         if len(fit_grp) > 1 or not single_bls_as_sparse:
-            fg_coeffs_re_ragged.append(fg_coeff.real.astype(dtype) / scale_factor)
-            fg_coeffs_im_ragged.append(fg_coeff.imag.astype(dtype) / scale_factor)
+            fg_coeffs_re_chunked.append(tf.convert_to_tensor(fg_coeff.real / scale_factor, dtype=dtype))
+            fg_coeffs_im_chunked.append(tf.convert_to_tensor(fg_coeff.imag / scale_factor, dtype=dtype))
         else:
             fg_coeffs_re_sparse.extend(list(fg_coeff.real / scale_factor))
             fg_coeffs_im_sparse.extend(list(fg_coeff.imag / scale_factor))
 
-    fg_coeffs_re_ragged = tf.ragged.constant(fg_coeffs_re_ragged)
-    fg_coeffs_im_ragged = tf.ragged.constant(fg_coeffs_im_ragged)
+
     fg_coeffs_re_sparse = tf.convert_to_tensor(fg_coeffs_re_sparse, dtype=dtype)
     fg_coeffs_re_sparse = tf.reshape(fg_coeffs_re_sparse, (fg_coeffs_re_sparse.shape[0], 1))
     fg_coeffs_im_sparse = tf.convert_to_tensor(fg_coeffs_im_sparse, dtype=dtype)
     fg_coeffs_im_sparse = tf.reshape(fg_coeffs_im_sparse, (fg_coeffs_im_sparse.shape[0], 1))
-    return fg_coeffs_re_sparse, fg_coeffs_im_sparse, fg_coeffs_re_ragged, fg_coeffs_im_ragged
+    return fg_coeffs_re_sparse, fg_coeffs_im_sparse, fg_coeffs_re_chunked, fg_coeffs_im_chunked
 
 
 def calibrate_and_model_tensor(
@@ -986,7 +968,7 @@ def calibrate_and_model_tensor(
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     # generate sparse tensor to hold foreground components.
-    fg_comps_sparse, fg_comps_ragged, data_inds_ragged = tensorize_fg_model_comps_dict(
+    fg_comps_sparse, fg_comps_chunked, data_inds_chunked = tensorize_fg_model_comps_dict(
         fg_model_comps_dict=fg_model_comps_dict,
         ants_map=ants_map,
         dtype=dtype,
@@ -1040,7 +1022,7 @@ def calibrate_and_model_tensor(
                 f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
                 verbose=verbose,
             )
-            fg_r_sparse, fg_i_sparse, fg_r_ragged, fg_i_ragged = tensorize_fg_coeffs(
+            fg_r_sparse, fg_i_sparse, fg_r_chunked, fg_i_chunked = tensorize_fg_coeffs(
                 uvdata=sky_model,
                 fg_model_comps_dict=fg_model_comps_dict,
                 dtype=dtype,
@@ -1053,24 +1035,24 @@ def calibrate_and_model_tensor(
             (
                 gains_r,
                 gains_i,
-                fg_r_ragged,
-                fg_i_ragged,
+                fg_r_chunked,
+                fg_i_chunked,
                 fg_r_sparse,
                 fg_i_sparse,
                 fit_history_p[time_index],
             ) = fit_gains_and_foregrounds(
                 g_r=gains_r,
                 g_i=gains_i,
-                fg_r_ragged=fg_r_ragged,
-                fg_i_ragged=fg_i_ragged,
+                fg_r_chunked=fg_r_chunked,
+                fg_i_chunked=fg_i_chunked,
                 fg_r_sparse=fg_r_sparse,
                 fg_i_sparse=fg_i_sparse,
                 data_r=data_r,
                 data_i=data_i,
                 wgts=wgts,
                 fg_comps_sparse=fg_comps_sparse,
-                fg_comps_ragged=fg_comps_ragged,
-                data_inds_ragged=data_inds_ragged,
+                fg_comps_chunked=fg_comps_chunked,
+                data_inds_chunked=data_inds_chunked,
                 optimizer=optimizer,
                 use_min=use_min,
                 freeze_model=freeze_model,
@@ -1090,19 +1072,19 @@ def calibrate_and_model_tensor(
                 red_grps=red_grps,
                 model_r=yield_fg_model_tensor(
                     fg_comps_sparse=fg_comps_sparse,
-                    fg_comps_ragged=fg_comps_ragged,
-                    fg_coeffs_ragged=fg_r_ragged,
+                    fg_comps_chunked=fg_comps_chunked,
+                    fg_coeffs_chunked=fg_r_chunked,
                     fg_coeffs_sparse=fg_r_sparse,
-                    data_inds_ragged=data_inds_ragged,
+                    data_inds_chunked=data_inds_chunked,
                     nants=uvdata.Nants_data,
                     nfreqs=uvdata.Nfreqs,
                 ),
                 model_i=yield_fg_model_tensor(
                     fg_comps_sparse=fg_comps_sparse,
-                    fg_comps_ragged=fg_comps_ragged,
-                    fg_coeffs_ragged=fg_i_ragged,
+                    fg_comps_chunked=fg_comps_chunked,
+                    fg_coeffs_chunked=fg_i_chunked,
                     fg_coeffs_sparse=fg_i_sparse,
-                    data_inds_ragged=data_inds_ragged,
+                    data_inds_chunked=data_inds_chunked,
                     nants=uvdata.Nants_data,
                     nfreqs=uvdata.Nfreqs,
                 ),
