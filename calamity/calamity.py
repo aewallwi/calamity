@@ -390,7 +390,7 @@ def yield_fg_model_tensor(
     if fg_comps_chunked is not None:
         ngrps = len(fg_comps_chunked)
         for gnum in tf.range(ngrps):
-            gchunk = tf.reduce_sum(fg_comps_chunked[gnum] * fg_coeffs_chunked, axis=1)
+            gchunk = tf.reduce_sum(fg_comps_chunked[gnum] * fg_coeffs_chunked[gnum], axis=1)
             rnum = tf.constant(0)
             for dind in data_inds_chunked[gnum][::nfreqs]:
                 blind = dind // nfreqs
