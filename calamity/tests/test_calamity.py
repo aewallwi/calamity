@@ -422,7 +422,6 @@ def test_calibrate_and_model_dpss_redundant(
     sky_model_projected_redundant,
     gains_randomized_redundant,
     weights_redundant,
-    single_bls_as_sparse,
     use_redundancy,
     use_sparse,
 ):
