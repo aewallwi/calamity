@@ -438,7 +438,6 @@ def test_calibrate_and_model_dpss_redundant(
         single_bls_as_sparse=use_sparse,
         correct_resid=False,
         correct_model=False,
-        weights=weights,
     )
 
     # post hoc correction
@@ -523,10 +522,10 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
 
 
 @pytest.mark.parametrize(
-    "use_tensorflow",
-    [True, False],
+    "use_tensorflow, use_sparse",
+    [(True, True), (True, False), (False, True), (False, False)],
 )
-def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized, weights, use_tensorflow):
+def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized, weights, use_tensorflow, use_sparse):
 
     # check that mixec components and dpss components give similar resids
     model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
@@ -534,7 +533,7 @@ def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized
         offset=0.0,
         ant_dly=2.0 / 3.0,
         red_tol_freq=0.5,
-        uvdata=sky_model_projected,
+        uvdata=uvdata,
         gains=gains_randomized,
         verbose=True,
         use_redundancy=False,
@@ -545,6 +544,7 @@ def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized
         correct_resid=False,
         correct_model=False,
         weights=weights,
+        single_bls_as_sparse=use_sparse,
         use_tensorflow_to_derive_modeling_comps=use_tensorflow,
     )
     # post hoc correction
@@ -557,32 +557,51 @@ def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized
 
 
 @pytest.mark.parametrize(
-    "single_bls_as_sparse",
-    [False, True],
+    "perfect_data, single_bls_as_sparse",
+    [(True, False), (True, True), (False, False), (False, True)],
 )
 def test_calibrate_and_model_mixed_redundant(
-    uvdata_redundant, sky_model_projected_redundant, gains_randomized_redundant, weights_redundant, single_bls_as_sparse
+    uvdata_redundant, sky_model_projected_redundant, gains_randomized_redundant, weights_redundant, single_bls_as_sparse, perfect_data, gains_redundant,
 ):
-
-    # check that mixec components and dpss components give similar resids
-    model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
-        min_dly=0.0,
-        offset=0.0,
-        ant_dly=2.0 / 0.3,
-        red_tol_freq=0.5,
-        uvdata=sky_model_projected_redundant,
-        gains=gains_randomized_redundant,
-        verbose=True,
-        use_redundancy=False,
-        sky_model=None,
-        freeze_model=True,
-        maxsteps=3000,
-        correct_resid=False,
-        correct_model=False,
-        weights=weights_redundant,
-        single_bls_as_sparse=single_bls_as_sparse,
-        use_tensorflow_to_derive_modeling_comps=True,
-    )
+    if not perfect_data:
+        # check that mixec components and dpss components give similar resids
+        model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
+            min_dly=0.0,
+            offset=0.0,
+            ant_dly=2.0 / 0.3,
+            red_tol_freq=0.5,
+            uvdata=uvdata_redundant,
+            gains=gains_randomized_redundant,
+            verbose=True,
+            use_redundancy=False,
+            sky_model=None,
+            freeze_model=True,
+            maxsteps=3000,
+            correct_resid=False,
+            correct_model=False,
+            weights=weights_redundant,
+            single_bls_as_sparse=single_bls_as_sparse,
+            use_tensorflow_to_derive_modeling_comps=True,
+        )
+    else:
+        model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
+            min_dly=0.0,
+            offset=0.0,
+            ant_dly=2.0 / 0.3,
+            red_tol_freq=0.5,
+            uvdata=sky_model_projected_redundant,
+            gains=gains_redundant,
+            verbose=True,
+            use_redundancy=False,
+            sky_model=None,
+            freeze_model=True,
+            maxsteps=3000,
+            correct_resid=False,
+            correct_model=False,
+            weights=weights_redundant,
+            single_bls_as_sparse=single_bls_as_sparse,
+            use_tensorflow_to_derive_modeling_comps=True,
+        )
     # post hoc correction
     # resid = cal_utils.apply_gains(resid, gains)
     # model = cal_utils.apply_gains(model, gains)
