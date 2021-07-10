@@ -361,21 +361,15 @@ def test_tensorize_data(sky_model_projected, redundant_groups, gains):
 
 
 @pytest.mark.parametrize(
-    "use_sparse, use_redundancy, noweights",
+    "use_sparse, noweights",
     [
-        (True, True, True),
-        (True, True, False),
-        (True, False, True),
-        (True, False, False),
-        (False, True, True),
-        (False, True, False),
-        (False, False, True),
-        (False, False, False),
+        (True, True),
+        (True, False),
+        (False, True),
+        (False, False),
     ],
 )
-def test_calibrate_and_model_dpss(
-    uvdata, sky_model_projected, gains_randomized, use_sparse, weights, use_redundancy, noweights
-):
+def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized, use_sparse, weights, noweights):
     if noweights:
         weight = None
     else:
@@ -387,7 +381,7 @@ def test_calibrate_and_model_dpss(
         uvdata=uvdata,
         gains=gains_randomized,
         verbose=True,
-        use_redundancy=use_redundancy,
+        use_redundancy=False,
         sky_model=None,
         maxsteps=10000,
         single_bls_as_sparse=use_sparse,
@@ -402,31 +396,23 @@ def test_calibrate_and_model_dpss(
 
 
 @pytest.mark.parametrize(
-    "use_sparse, use_redundancy, noweights",
-    [
-        (True, True, True),
-        (True, True, False),
-        (True, False, True),
-        (True, False, False),
-        (False, True, True),
-        (False, True, False),
-        (False, False, True),
-        (False, False, False),
-    ],
+    "use_redundancy, use_sparse",
+    [(True, False), (True, True), (False, False), (False, True)],
 )
-def test_calibrate_and_model_dpss_dont_correct_resid(
-    uvdata, sky_model_projected, gains_randomized, use_sparse, weights, use_redundancy, noweights
+def test_calibrate_and_model_dpss_redundant(
+    uvdata_redundant,
+    sky_model_projected_redundant,
+    gains_randomized_redundant,
+    weights_redundant,
+    single_bls_as_sparse,
+    use_redundancy,
+    use_sparse,
 ):
-    # check that resid is much smaller then model and original data.
-    if noweights:
-        weight = None
-    else:
-        weight = weights
     model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
         min_dly=2.0 / 0.3,
         offset=2.0 / 0.3,
-        uvdata=uvdata,
-        gains=gains_randomized,
+        uvdata=uvdata_redundant,
+        gains=gains_randomized_redundant,
         verbose=True,
         use_redundancy=use_redundancy,
         sky_model=None,
@@ -434,7 +420,45 @@ def test_calibrate_and_model_dpss_dont_correct_resid(
         single_bls_as_sparse=use_sparse,
         correct_resid=False,
         correct_model=False,
-        weights=weight,
+        weights=weights,
+    )
+
+    # post hoc correction
+    resid = cal_utils.apply_gains(resid, gains)
+    model = cal_utils.apply_gains(model, gains)
+    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(uvdata_redundant.data_array) ** 2.0)) >= 1e2 * np.sqrt(
+        np.mean(np.abs(resid.data_array) ** 2.0)
+    )
+    assert len(fit_history) == 1
+    assert len(fit_history[0]) == 1
+
+
+@pytest.mark.parametrize(
+    "use_sparse",
+    [True, False],
+)
+def test_calibrate_and_model_dpss_dont_correct_resid(
+    uvdata,
+    sky_model_projected,
+    gains_randomized,
+    use_sparse,
+    weights,
+):
+    # check that resid is much smaller then model and original data.
+    model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+        min_dly=2.0 / 0.3,
+        offset=2.0 / 0.3,
+        uvdata=uvdata,
+        gains=gains_randomized,
+        verbose=True,
+        use_redundancy=False,
+        sky_model=None,
+        maxsteps=10000,
+        single_bls_as_sparse=use_sparse,
+        correct_resid=False,
+        correct_model=False,
+        weights=weights,
     )
 
     # post hoc correction
@@ -447,26 +471,10 @@ def test_calibrate_and_model_dpss_dont_correct_resid(
 
 
 @pytest.mark.parametrize(
-    "use_sparse, use_redundancy, noweights",
-    [
-        (True, True, True),
-        (True, True, False),
-        (True, False, True),
-        (True, False, False),
-        (False, True, True),
-        (False, True, False),
-        (False, False, True),
-        (False, False, False),
-    ],
+    "use_sparse",
+    [True, False],
 )
-def test_calibrate_and_model_dpss_freeze_model(
-    uvdata, sky_model_projected, gains_randomized, use_sparse, weights, use_redundancy, noweights
-):
-    # check that resid is much smaller then model and original data.
-    if noweights:
-        weight = None
-    else:
-        weight = weights
+def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gains_randomized, use_sparse, weights):
     # test that calibrating with a perfect sky model and only optimizing gains yields nearly perfect solutions for the gains.
     model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
         min_dly=2.0 / 0.3,
@@ -474,14 +482,14 @@ def test_calibrate_and_model_dpss_freeze_model(
         uvdata=sky_model_projected,
         gains=gains_randomized,
         verbose=True,
-        use_redundancy=use_redundancy,
+        use_redundancy=False,
         sky_model=sky_model_projected,
         freeze_model=True,
         maxsteps=10000,
         correct_resid=True,
         correct_model=True,
         single_bls_as_sparse=use_sparse,
-        weights=weight,
+        weights=weights,
     )
     assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert np.allclose(

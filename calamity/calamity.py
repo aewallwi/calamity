@@ -496,8 +496,8 @@ def fit_gains_and_foregrounds(
     # copy data into ragged tensors for each fitting group if necessary.
     if fg_comps_chunked is not None:
         ngrps = len(fg_comps_chunked)
-        data_r_chunked = [tf.reshape(tf_gather_nd(data_r, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
-        data_i_chunked = [tf.reshape(tf_gather_nd(data_r, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
+        data_r_chunked = [tf.reshape(tf.gather_nd(data_r, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
+        data_i_chunked = [tf.reshape(tf.gather_nd(data_r, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
         ant0_inds = [list(np.asarray(corr_inds_chunked[gnum])[:, 0]) for gnum in range(ngrps)]
         ant1_inds = [list(np.asarray(corr_inds_chunked[gnum])[:, 1]) for gnum in range(ngrps)]
         wgts_chunked = [tf.reshape(tf.gather_nd(wgts, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
