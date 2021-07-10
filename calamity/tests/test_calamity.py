@@ -361,34 +361,52 @@ def test_tensorize_data(sky_model_projected, redundant_groups, gains):
 
 
 @pytest.mark.parametrize(
-    "use_sparse, noweights",
+    "use_sparse, noweights, perfect_data",
     [
-        (True, True),
-        (True, False),
-        (False, True),
-        (False, False),
+        (False, True, True),
+        (True, True, False),
+        (True, False, False),
+        (False, True, False),
     ],
 )
-def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized, use_sparse, weights, noweights):
+def test_calibrate_and_model_dpss(uvdata, sky_model_projected, gains_randomized, gains, use_sparse, weights, noweights, perfect_data):
     if noweights:
         weight = None
     else:
         weight = weights
     # check that resid is much smaller then model and original data.
-    model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
-        min_dly=2.0 / 0.3,
-        offset=2.0 / 0.3,
-        uvdata=uvdata,
-        gains=gains_randomized,
-        verbose=True,
-        use_redundancy=False,
-        sky_model=None,
-        maxsteps=10000,
-        single_bls_as_sparse=use_sparse,
-        correct_resid=True,
-        correct_model=True,
-        weights=weight,
-    )
+    if perfect_data:
+        model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+            min_dly=2.0 / 0.3,
+            offset=2.0 / 0.3,
+            uvdata=sky_model_projected,
+            gains=gains,
+            verbose=True,
+            use_redundancy=False,
+            sky_model=None,
+            maxsteps=3000,
+            tol=1e-10,
+            single_bls_as_sparse=use_sparse,
+            correct_resid=True,
+            correct_model=True,
+            weights=weight,
+        )
+    else:
+        model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+            min_dly=2.0 / 0.3,
+            offset=2.0 / 0.3,
+            uvdata=uvdata,
+            gains=gains_randomized,
+            verbose=True,
+            use_redundancy=False,
+            sky_model=None,
+            maxsteps=3000,
+            tol=1e-10,
+            single_bls_as_sparse=use_sparse,
+            correct_resid=True,
+            correct_model=True,
+            weights=weight,
+        )
     assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert len(fit_history) == 1
@@ -416,7 +434,8 @@ def test_calibrate_and_model_dpss_redundant(
         verbose=True,
         use_redundancy=use_redundancy,
         sky_model=None,
-        maxsteps=10000,
+        maxsteps=3000,
+        tol=1e-10,
         single_bls_as_sparse=use_sparse,
         correct_resid=False,
         correct_model=False,
@@ -454,7 +473,8 @@ def test_calibrate_and_model_dpss_dont_correct_resid(
         verbose=True,
         use_redundancy=False,
         sky_model=None,
-        maxsteps=10000,
+        maxsteps=3000,
+        tol=1e-10,
         single_bls_as_sparse=use_sparse,
         correct_resid=False,
         correct_model=False,
@@ -485,7 +505,8 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
         use_redundancy=False,
         sky_model=sky_model_projected,
         freeze_model=True,
-        maxsteps=10000,
+        maxsteps=3000,
+        tol=1e-10,
         correct_resid=True,
         correct_model=True,
         single_bls_as_sparse=use_sparse,
@@ -520,7 +541,8 @@ def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized
         use_redundancy=False,
         sky_model=None,
         freeze_model=True,
-        maxsteps=10000,
+        maxsteps=3000,
+        tol=1e-10,
         correct_resid=False,
         correct_model=False,
         weights=weights,
@@ -555,7 +577,7 @@ def test_calibrate_and_model_mixed_redundant(
         use_redundancy=False,
         sky_model=None,
         freeze_model=True,
-        maxsteps=10000,
+        maxsteps=3000,
         correct_resid=False,
         correct_model=False,
         weights=weights_redundant,

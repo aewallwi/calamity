@@ -161,7 +161,6 @@ def tensorize_fg_model_comps_dict(
             for grpnum, red_grp in enumerate(modeling_grp):
                 for ap in red_grp:
                     i, j = ants_map[ap[0]], ants_map[ap[1]]
-                    blind = i * nants_data + j
                     corrinds.append([i, j])
                     fg_comp_chunk.append(fg_model_comps_dict[modeling_grp][grpnum * nfreqs : (grpnum + 1) * nfreqs])
             fg_comp_chunk = np.vstack(fg_comp_chunk)
@@ -492,12 +491,11 @@ def fit_gains_and_foregrounds(
     )
     nants = g_r.shape[0]
     nfreqs = g_r.shape[1]
-    ndata = nants * nants * nfreqs
     # copy data into ragged tensors for each fitting group if necessary.
     if fg_comps_chunked is not None:
         ngrps = len(fg_comps_chunked)
         data_r_chunked = [tf.reshape(tf.gather_nd(data_r, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
-        data_i_chunked = [tf.reshape(tf.gather_nd(data_r, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
+        data_i_chunked = [tf.reshape(tf.gather_nd(data_i, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
         ant0_inds = [list(np.asarray(corr_inds_chunked[gnum])[:, 0]) for gnum in range(ngrps)]
         ant1_inds = [list(np.asarray(corr_inds_chunked[gnum])[:, 1]) for gnum in range(ngrps)]
         wgts_chunked = [tf.reshape(tf.gather_nd(wgts, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
@@ -523,7 +521,6 @@ def fit_gains_and_foregrounds(
         vars = [g_r, g_i]
 
     if fg_comps_sparse is not None:
-
         def loss_function_sparse():
             # start with sparse components.
             grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
