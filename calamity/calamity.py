@@ -394,7 +394,7 @@ def yield_fg_model_array(
         ngrps = len(fg_comps_chunked)
         for gnum in tf.range(ngrps):
             gchunk = tf.reduce_sum(fg_comps_chunked[gnum] * fg_coeffs_chunked[gnum], axis=1).numpy()
-            for rnum, (i, j) in enumerage(corr_inds_chunked[gnum]):
+            for rnum, (i, j) in enumerate(corr_inds_chunked[gnum]):
                 model[i, j] = gchunk[rnum * nfreqs : (rnum + 1) * nfreqs]
     return model
 
