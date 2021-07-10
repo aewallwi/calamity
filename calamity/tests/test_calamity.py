@@ -27,8 +27,21 @@ def sky_model():
 
 
 @pytest.fixture
+def sky_model_redundant():
+    uvd = UVData()
+    uvd.read_uvh5(os.path.join(DATA_PATH, "garray_3ant_2_copies_ntimes_1compressed_False_autosTrue_eor_0.0dB.uvh5"))
+    uvd.select(bls=[ap for ap in uvd.get_antpairs() if ap[0] != ap[1]])
+    return uvd
+
+
+@pytest.fixture
 def gains(sky_model):
     return cal_utils.blank_uvcal_from_uvdata(sky_model)
+
+
+@pytest.fixture
+def gains_redundant(sky_model_redundant):
+    return cal_utils.blank_uvcal_from_uvdata(sky_model_redundant)
 
 
 @pytest.fixture
@@ -39,11 +52,26 @@ def weights(sky_model):
 
 
 @pytest.fixture
+def weights_redundant(sky_model_redundant):
+    uvf = UVFlag(sky_model_redundant, mode="flag")
+    uvf.weights_array = np.ones_like(uvf.flag_array).astype(np.float)
+    return uvf
+
+
+@pytest.fixture
 def gains_randomized(gains):
     gains.gain_array += 1e-2 * np.random.randn(*gains.gain_array.shape) + 1e-2j * np.random.randn(
         *gains.gain_array.shape
     )
     return gains
+
+
+@pytest.fixture
+def gains_randomized_redundant(gains_redundant):
+    gains_redundant.gain_array += 1e-2 * np.random.randn(*gains_redundant.gain_array.shape) + 1e-2j * np.random.randn(
+        *gains_redundant.gain_array.shape
+    )
+    return gains_redundant
 
 
 @pytest.fixture
@@ -66,6 +94,17 @@ def dpss_vectors(sky_model):
 
 
 @pytest.fixture
+def mixed_vectors(sky_model):
+    fgroups, blvecs, _, _ = get_uv_overlapping_grps_conjugated()
+    return modeling.yield_mixed_comps()
+
+
+@pytest.fixture
+def dpss_vectors_redundant(sky_model_redundant):
+    return modeling.yield_pbl_dpss_model_comps(sky_model_redundant, offset=2.0 / 0.3, min_dly=2.0 / 0.3)
+
+
+@pytest.fixture
 def sky_model_projected(sky_model, dpss_vectors):
     for ap in sky_model.get_antpairs():
         dinds = sky_model.antpair2ind(ap)
@@ -76,6 +115,20 @@ def sky_model_projected(sky_model, dpss_vectors):
             dpss_vectors[apk] @ (sky_model.data_array[dinds, 0, :, 0] @ dpss_vectors[apk]).T
         ).T
     return sky_model
+
+
+@pytest.fixture
+def sky_model_projected_redundant(sky_model_redundant, dpss_vectors_redundant):
+    for ap in sky_model_redundant.get_antpairs():
+        dinds = sky_model_redundant.antpair2ind(ap)
+        if ((ap,),) not in dpss_vectors_redundant:
+            ap = ap[::-1]
+        apk = ((ap,),)
+        sky_model_redundant.data_array[dinds, 0, :, 0] = (
+            dpss_vectors_redundant[apk]
+            @ (sky_model_redundant.data_array[dinds, 0, :, 0] @ dpss_vectors_redundant[apk]).T
+        ).T
+    return sky_model_redundant
 
 
 @pytest.fixture
@@ -93,6 +146,25 @@ def uvdata(sky_model_projected):
         )
     )
     uvd.data_array = uvd.data_array + sky_model_projected.data_array
+    return uvd
+
+
+@pytest.fixture
+def uvdata_redundant(sky_model_projected_redundant):
+    uvd = UVData()
+    uvd.read_uvh5(
+        os.path.join(
+            DATA_PATH,
+            "garray_3ant_2_copies_ntimes_1compressed_False_autosTrue_eor_0.0dB.uvh5",
+        )
+    )
+    uvd.select(bls=[ap for ap in uvd.get_antpairs() if ap[0] != ap[1]])
+    uvd.data_array *= (
+        1e-4
+        / np.sqrt(np.mean(np.abs(uvd.data_array) ** 2.0))
+        * np.sqrt(np.mean(np.abs(sky_model_projected_redundant.data_array) ** 2.0))
+    )
+    uvd.data_array = uvd.data_array + sky_model_projected_redundant.data_array
     return uvd
 
 
@@ -121,7 +193,7 @@ def test_tensorize_fg_model_comps_dpsss(
     sky_model_projected, dpss_vectors, redundant_groups, gains, single_bls_as_sparse
 ):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor, fg_comp_tensor_ragged, data_inds_ragged = calamity.tensorize_fg_model_comps_dict(
+    fg_comp_tensor, fg_comp_tensor_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=dpss_vectors,
         ants_map=ants_map,
         dtype=np.float64,
@@ -147,10 +219,47 @@ def test_tensorize_fg_model_comps_dpsss(
         bls = list(dpss_vectors.keys())
         for gnum, red_grp in enumerate(dpss_vectors.keys()):
             bl = red_grp[0][0]
-            data_inds = data_inds_ragged[gnum]
+            data_inds = corr_inds_chunked[gnum]
             blind = bl[0] * sky_model_projected.Nants_data + bl[1]
-            assert np.allclose(data_inds.numpy(), np.arange(blind * nfreqs, (blind + 1) * nfreqs))
-            assert np.allclose(fg_comp_tensor_ragged[gnum].numpy(), dpss_vectors[red_grp])
+            assert np.allclose(data_inds, [bl])
+            assert np.allclose(fg_comp_tensor_chunked[gnum].numpy(), dpss_vectors[red_grp])
+
+
+@pytest.mark.parametrize("single_bls_as_sparse", [True, False])
+def test_tensorize_fg_model_comps_mixed(
+    sky_model_projected, dpss_vectors, redundant_groups, gains, single_bls_as_sparse
+):
+    ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
+    fg_comp_tensor, fg_comp_tensor_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
+        fg_model_comps_dict=dpss_vectors,
+        ants_map=ants_map,
+        dtype=np.float64,
+        nfreqs=sky_model_projected.Nfreqs,
+        single_bls_as_sparse=single_bls_as_sparse,
+    )
+    if single_bls_as_sparse:
+        # retrieve dense numpy array from sparse tensor.
+        # check whether values agree with original dpss vectors.
+        fg_comp_tensor = tf.sparse.to_dense(fg_comp_tensor).numpy()
+        # iterate through and select out nonzero elements and check that they are close to dpss_vectors
+        start_index = 0
+        for vnum, red_grp in enumerate(dpss_vectors.keys()):
+            vdpss = dpss_vectors[red_grp]
+            end_index = start_index + vdpss.shape[1]
+            for i, j in enumerate(range(start_index, end_index)):
+                vreduced = fg_comp_tensor[:, j]
+                vreduced = vreduced[np.abs(vreduced) > 0]
+                assert np.allclose(vreduced, vdpss[:, i])
+            start_index = end_index
+    else:
+        nfreqs = sky_model_projected.Nfreqs
+        bls = list(dpss_vectors.keys())
+        for gnum, red_grp in enumerate(dpss_vectors.keys()):
+            bl = red_grp[0][0]
+            data_inds = corr_inds_chunked[gnum]
+            blind = bl[0] * sky_model_projected.Nants_data + bl[1]
+            assert np.allclose(np.asarray(data_inds), np.asarray([[bl[0], bl[1]]]))
+            assert np.allclose(fg_comp_tensor_chunked[gnum].numpy(), dpss_vectors[red_grp])
 
 
 def test_yield_fg_model_and_fg_coeffs_sparse_tensor(dpss_vectors, redundant_groups, sky_model_projected, gains):
@@ -414,5 +523,43 @@ def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized
     model = cal_utils.apply_gains(model, gains)
     assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert len(fit_history) == 1
+    assert len(fit_history[0]) == 1
+
+
+@pytest.mark.parametrize(
+    "single_bls_as_sparse",
+    [False, True],
+)
+def test_calibrate_and_model_mixed_redundant(
+    uvdata_redundant, sky_model_projected_redundant, gains_randomized_redundant, weights_redundant, single_bls_as_sparse
+):
+
+    # check that mixec components and dpss components give similar resids
+    model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
+        min_dly=0.0,
+        offset=0.0,
+        ant_dly=2.0 / 0.3,
+        red_tol_freq=0.5,
+        uvdata=sky_model_projected_redundant,
+        gains=gains_randomized_redundant,
+        verbose=True,
+        use_redundancy=False,
+        sky_model=None,
+        freeze_model=True,
+        maxsteps=10000,
+        correct_resid=False,
+        correct_model=False,
+        weights=weights_redundant,
+        single_bls_as_sparse=single_bls_as_sparse,
+        use_tensorflow_to_derive_modeling_comps=True,
+    )
+    # post hoc correction
+    # resid = cal_utils.apply_gains(resid, gains)
+    # model = cal_utils.apply_gains(model, gains)
+    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(uvdata_redundant.data_array) ** 2.0)) >= 1e2 * np.sqrt(
+        np.mean(np.abs(resid.data_array) ** 2.0)
+    )
     assert len(fit_history) == 1
     assert len(fit_history[0]) == 1

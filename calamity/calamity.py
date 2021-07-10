@@ -117,7 +117,7 @@ def tensorize_fg_model_comps_dict(
         start_ind = stop_ind
     ordered_ijs = sorted(list(modeling_grps.keys()))
 
-    comp_inds = np.zeros((sparse_number_of_elements, 2), dtype=np.int32)
+    comp_inds = np.zeros((sparse_number_of_elements, 2), dtype=np.int64)
     comp_vals = np.zeros(sparse_number_of_elements, dtype=dtype)
 
     echo(f"{datetime.datetime.now()} Filling out modeling vectors for non-overlapping baselines...\n", verbose=verbose)
@@ -133,41 +133,45 @@ def tensorize_fg_model_comps_dict(
             nvecs = stop_ind - start_ind
             dinds = np.hstack(
                 [np.ones(nvecs) * dind for dind in np.arange(blind * nfreqs, (blind + 1) * nfreqs)]
-            ).astype(np.int32)
-            matcols = np.hstack([np.arange(start_ind, stop_ind) for i in np.arange(nfreqs)]).astype(np.int32)
+            ).astype(np.int64)
+            matcols = np.hstack([np.arange(start_ind, stop_ind) for i in np.arange(nfreqs)]).astype(np.int64)
             bl_mvec = fg_model_comps_dict[fitgrp][grpnum * nfreqs : (grpnum + 1) * nfreqs].astype(dtype).flatten()
             ninds = len(dinds)
             if spinds is None:
-                spinds = np.arange(ninds).astype(np.int32)
+                spinds = np.arange(ninds).astype(np.int64)
             else:
-                spinds = np.arange(ninds).astype(np.int32) + spinds[-1] + 1
+                spinds = np.arange(ninds).astype(np.int64) + spinds[-1] + 1
             comp_vals[spinds] = bl_mvec
             comp_inds[spinds, 0], comp_inds[spinds, 1] = dinds, matcols
 
         fg_comps_sparse = tf.sparse.SparseTensor(indices=comp_inds, values=comp_vals, dense_shape=dense_shape)
-        data_inds_sparse = tf.convert_to_tensor(comp_inds[:, 0], dtype=np.int32)
+        data_inds_sparse = tf.convert_to_tensor(comp_inds[:, 0], dtype=np.int64)
     else:
         fg_comps_sparse = None
 
     fg_comps_chunked = []
-    data_inds_chunked = []
+    corr_inds_chunked = []
     # now go through the fitting_groups that are not length-1
     for modeling_grp in fg_model_comps_dict:
         if len(modeling_grp) > 1 or not single_bls_as_sparse:
-            fg_comps_chunked.append(tf.convert_to_tensor(fg_model_comps_dict[modeling_grp], dtype=dtype))
+            # need to duplicate rows for redundant baselines.
+            fg_comp_chunk = []
+            corrinds = []
             # calculate data indices
-            dinds = []
-            for red_grp in modeling_grp:
+            for grpnum, red_grp in enumerate(modeling_grp):
                 for ap in red_grp:
                     i, j = ants_map[ap[0]], ants_map[ap[1]]
                     blind = i * nants_data + j
-                    dinds.extend(list(np.arange(blind * nfreqs, (blind + 1) * nfreqs).astype(np.int32)))
-            data_inds_chunked.append(tf.convert_to_tensor(np.asarray(dinds, dtype=np.int32)))
+                    corrinds.append([i, j])
+                    fg_comp_chunk.append(fg_model_comps_dict[modeling_grp][grpnum * nfreqs : (grpnum + 1) * nfreqs])
+            fg_comp_chunk = np.vstack(fg_comp_chunk)
+            fg_comps_chunked.append(tf.convert_to_tensor(fg_comp_chunk, dtype=dtype))
+            corr_inds_chunked.append(corrinds)
     if len(fg_comps_chunked) == 0:
         fg_comps_chunked = None
-        data_inds_chunked = None
+        corr_inds_chunked = None
 
-    return fg_comps_sparse, fg_comps_chunked, data_inds_chunked
+    return fg_comps_sparse, fg_comps_chunked, corr_inds_chunked
 
 
 def tensorize_data(
@@ -339,7 +343,7 @@ def yield_fg_model_array(
     nfreqs,
     fg_comps_chunked=None,
     fg_coeffs_chunked=None,
-    data_inds_chunked=None,
+    corr_inds_chunked=None,
     fg_comps_sparse=None,
     fg_coeffs_sparse=None,
 ):
@@ -390,12 +394,8 @@ def yield_fg_model_array(
         ngrps = len(fg_comps_chunked)
         for gnum in tf.range(ngrps):
             gchunk = tf.reduce_sum(fg_comps_chunked[gnum] * fg_coeffs_chunked[gnum], axis=1).numpy()
-            rnum = tf.constant(0)
-            for dind in data_inds_chunked[gnum][::nfreqs]:
-                blind = dind // nfreqs
-                i, j = blind // nants, tf.math.floormod(blind, nants)
+            for rnum, (i, j) in enumerage(corr_inds_chunked[gnum]):
                 model[i, j] = gchunk[rnum * nfreqs : (rnum + 1) * nfreqs]
-                rnum += 1
     return model
 
 
@@ -411,7 +411,7 @@ def fit_gains_and_foregrounds(
     wgts=None,
     fg_comps_sparse=None,
     fg_comps_chunked=None,
-    data_inds_chunked=None,
+    corr_inds_chunked=None,
     loss_function=None,
     use_min=False,
     tol=1e-14,
@@ -496,20 +496,11 @@ def fit_gains_and_foregrounds(
     # copy data into ragged tensors for each fitting group if necessary.
     if fg_comps_chunked is not None:
         ngrps = len(fg_comps_chunked)
-        data_r_chunked = tf.reshape(data_r, (nants * nants * nfreqs))
-        data_r_chunked = [tf.gather(data_r_chunked, data_inds_chunked[gnum]).numpy().flatten() for gnum in range(ngrps)]
-        data_i_chunked = tf.reshape(data_i, (nants * nants * nfreqs))
-        data_i_chunked = [tf.gather(data_i_chunked, data_inds_chunked[gnum]).numpy().flatten() for gnum in range(ngrps)]
-
-        ant0_inds = [list(data_inds_chunked[gnum].numpy()[::nfreqs] // nfreqs // nants) for gnum in range(ngrps)]
-        ant1_inds = [
-            list(tf.math.floormod(data_inds_chunked[gnum][::nfreqs] // nfreqs, nants).numpy()) for gnum in range(ngrps)
-        ]
-
-        wgts_chunked = tf.reshape(wgts, (nants * nants * nfreqs))
-        wgts_chunked = tf.ragged.constant(
-            [tf.gather(wgts_chunked, data_inds_chunked[gnum]).numpy().flatten() for gnum in range(ngrps)]
-        )
+        data_r_chunked = [tf.reshape(tf_gather_nd(data_r, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
+        data_i_chunked = [tf.reshape(tf_gather_nd(data_r, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
+        ant0_inds = [list(np.asarray(corr_inds_chunked[gnum])[:, 0]) for gnum in range(ngrps)]
+        ant1_inds = [list(np.asarray(corr_inds_chunked[gnum])[:, 1]) for gnum in range(ngrps)]
+        wgts_chunked = [tf.reshape(tf.gather_nd(wgts, corr_inds_chunked[gnum]), [-1]) for gnum in range(ngrps)]
 
     g_r = tf.Variable(g_r)
     g_i = tf.Variable(g_i)
@@ -532,6 +523,7 @@ def fit_gains_and_foregrounds(
         vars = [g_r, g_i]
 
     if fg_comps_sparse is not None:
+
         def loss_function_sparse():
             # start with sparse components.
             grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
@@ -544,12 +536,14 @@ def fit_gains_and_foregrounds(
             model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
             cal_loss = tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
             return cal_loss
-    else:
-        def loss_function_sparse():
-            return tf.constant(0., dtype=dtype)
 
+    else:
+
+        def loss_function_sparse():
+            return tf.constant(0.0, dtype=dtype)
 
     if fg_comps_chunked is not None:
+
         def loss_function_chunked():
             cal_loss = tf.constant(0.0, dtype=dtype)
             # now deal with dense components
@@ -571,9 +565,11 @@ def fit_gains_and_foregrounds(
                     * wgts_chunked[gnum]
                 )
             return cal_loss
+
     else:
+
         def loss_function_chunked():
-            return tf.constant(0., dtype=dtype)
+            return tf.constant(0.0, dtype=dtype)
 
     def loss_function():
         return loss_function_sparse() + loss_function_chunked()
@@ -780,15 +776,14 @@ def tensorize_fg_coeffs(
     fg_coeffs_im_sparse = []
     # first get non-sparse components
     for fit_grp in fg_model_comps_dict:
-        blnum = 0
         fg_coeff = 0.0
-        for red_grp in fit_grp:
+        for grpnum, red_grp in enumerate(fit_grp):
             for ap in red_grp:
                 bl = ap + (polarization,)
                 fg_coeff += (uvdata.get_data(bl)[time_index] * ~uvdata.get_flags(bl)[time_index]) @ fg_model_comps_dict[
                     fit_grp
-                ][blnum * uvdata.Nfreqs : (blnum + 1) * uvdata.Nfreqs]
-            blnum += 1
+                ][grpnum * uvdata.Nfreqs : (grpnum + 1) * uvdata.Nfreqs]
+
         if len(fit_grp) > 1 or not single_bls_as_sparse:
             fg_coeffs_re_chunked.append(tf.convert_to_tensor(fg_coeff.real / scale_factor, dtype=dtype))
             fg_coeffs_im_chunked.append(tf.convert_to_tensor(fg_coeff.imag / scale_factor, dtype=dtype))
@@ -952,7 +947,7 @@ def calibrate_and_model_tensor(
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     # generate sparse tensor to hold foreground components.
-    fg_comps_sparse, fg_comps_chunked, data_inds_chunked = tensorize_fg_model_comps_dict(
+    fg_comps_sparse, fg_comps_chunked, corr_inds_chunked = tensorize_fg_model_comps_dict(
         fg_model_comps_dict=fg_model_comps_dict,
         ants_map=ants_map,
         dtype=dtype,
@@ -1036,7 +1031,7 @@ def calibrate_and_model_tensor(
                 wgts=wgts,
                 fg_comps_sparse=fg_comps_sparse,
                 fg_comps_chunked=fg_comps_chunked,
-                data_inds_chunked=data_inds_chunked,
+                corr_inds_chunked=corr_inds_chunked,
                 optimizer=optimizer,
                 use_min=use_min,
                 freeze_model=freeze_model,
@@ -1059,7 +1054,7 @@ def calibrate_and_model_tensor(
                     fg_comps_chunked=fg_comps_chunked,
                     fg_coeffs_chunked=fg_r_chunked,
                     fg_coeffs_sparse=fg_r_sparse,
-                    data_inds_chunked=data_inds_chunked,
+                    corr_inds_chunked=corr_inds_chunked,
                     nants=uvdata.Nants_data,
                     nfreqs=uvdata.Nfreqs,
                 ),
@@ -1068,7 +1063,7 @@ def calibrate_and_model_tensor(
                     fg_comps_chunked=fg_comps_chunked,
                     fg_coeffs_chunked=fg_i_chunked,
                     fg_coeffs_sparse=fg_i_sparse,
-                    data_inds_chunked=data_inds_chunked,
+                    corr_inds_chunked=corr_inds_chunked,
                     nants=uvdata.Nants_data,
                     nfreqs=uvdata.Nfreqs,
                 ),
