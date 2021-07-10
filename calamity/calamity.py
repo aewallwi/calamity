@@ -104,8 +104,8 @@ def tensorize_fg_model_comps_dict(
     stop_inds = {}
     start_ind = 0
     for modeling_grp in fg_model_comps_dict:
-        stop_ind = start_ind + fg_model_comps_dict[modeling_grp].shape[1]
         if len(modeling_grp) == 1:
+            stop_ind = start_ind + fg_model_comps_dict[modeling_grp].shape[1]
             for red_grp_num, red_grp in enumerate(modeling_grp):
                 for ap in red_grp:
                     i, j = ants_map[ap[0]], ants_map[ap[1]]
@@ -114,7 +114,7 @@ def tensorize_fg_model_comps_dict(
                     start_inds[(i, j)] = start_ind
                     stop_inds[(i, j)] = stop_ind
 
-        start_ind = stop_ind
+            start_ind = stop_ind
     ordered_ijs = sorted(list(modeling_grps.keys()))
 
     comp_inds = np.zeros((sparse_number_of_elements, 2), dtype=np.int64)
@@ -521,6 +521,7 @@ def fit_gains_and_foregrounds(
         vars = [g_r, g_i]
 
     if fg_comps_sparse is not None:
+
         def loss_function_sparse():
             # start with sparse components.
             grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
@@ -773,20 +774,20 @@ def tensorize_fg_coeffs(
     fg_coeffs_im_sparse = []
     # first get non-sparse components
     for fit_grp in fg_model_comps_dict:
-        fg_coeff = 0.0
+        fg_coeffs = 0.0
         for grpnum, red_grp in enumerate(fit_grp):
             for ap in red_grp:
                 bl = ap + (polarization,)
-                fg_coeff += (uvdata.get_data(bl)[time_index] * ~uvdata.get_flags(bl)[time_index]) @ fg_model_comps_dict[
-                    fit_grp
-                ][grpnum * uvdata.Nfreqs : (grpnum + 1) * uvdata.Nfreqs]
+                fg_coeffs += (
+                    uvdata.get_data(bl)[time_index] * ~uvdata.get_flags(bl)[time_index]
+                ) @ fg_model_comps_dict[fit_grp][grpnum * uvdata.Nfreqs : (grpnum + 1) * uvdata.Nfreqs]
 
-        if len(fit_grp) > 1 or not single_bls_as_sparse:
-            fg_coeffs_re_chunked.append(tf.convert_to_tensor(fg_coeff.real / scale_factor, dtype=dtype))
-            fg_coeffs_im_chunked.append(tf.convert_to_tensor(fg_coeff.imag / scale_factor, dtype=dtype))
+        if len(fit_grp) == 1 and single_bls_as_sparse:
+            fg_coeffs_re_sparse.extend(list(fg_coeffs.real / scale_factor))
+            fg_coeffs_im_sparse.extend(list(fg_coeffs.imag / scale_factor))
         else:
-            fg_coeffs_re_sparse.extend(list(fg_coeff.real / scale_factor))
-            fg_coeffs_im_sparse.extend(list(fg_coeff.imag / scale_factor))
+            fg_coeffs_re_chunked.append(tf.convert_to_tensor(fg_coeffs.real / scale_factor, dtype=dtype))
+            fg_coeffs_im_chunked.append(tf.convert_to_tensor(fg_coeffs.imag / scale_factor, dtype=dtype))
 
     fg_coeffs_re_sparse = tf.convert_to_tensor(fg_coeffs_re_sparse, dtype=dtype)
     fg_coeffs_re_sparse = tf.reshape(fg_coeffs_re_sparse, (fg_coeffs_re_sparse.shape[0], 1))
@@ -919,14 +920,17 @@ def calibrate_and_model_tensor(
     antpairs_data = uvdata.get_antpairs()
     if not include_autos:
         antpairs_data = set([ap for ap in antpairs_data if ap[0] != ap[1]])
+    uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
+
+    resid = copy.deepcopy(uvdata)
+    model = copy.deepcopy(uvdata)
+
+    # get redundant groups
     red_grps = []
-    # generate redundant groups
     for fit_grp in fg_model_comps_dict.keys():
         for red_grp in fit_grp:
             red_grps.append(red_grp)
-    uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
-    resid = copy.deepcopy(uvdata)
-    model = copy.deepcopy(uvdata)
+
     if gains is None:
         echo(
             f"{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n",
@@ -941,6 +945,7 @@ def calibrate_and_model_tensor(
         )
         sky_model = cal_utils.apply_gains(uvdata, gains)
     sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
+
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     # generate sparse tensor to hold foreground components.
@@ -955,7 +960,7 @@ def calibrate_and_model_tensor(
         single_bls_as_sparse=single_bls_as_sparse,
     )
     echo(
-        f"{datetime.datetime.now()}Finished Computing sparse foreground components matrix...\n",
+        f"{datetime.datetime.now()}Finished Converting Foreground Modeling Components to Tensors...\n",
         verbose=verbose,
     )
 
