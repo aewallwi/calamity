@@ -1324,20 +1324,17 @@ def calibrate_and_model_dpss(
 
 
 def loss_function_sparse(g_r, g_i, fg_r, fg_i, fg_comps, data_r, data_i, wgts, nants, nfreqs):
-    if fg_comps is not None:
-        # start with sparse components.
-        grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
-        gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
-        grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
-        gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
-        vr = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_r), (nants, nants, nfreqs))
-        vi = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_i), (nants, nants, nfreqs))
-        model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
-        model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-        cal_loss = tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
-        return cal_loss
-    else:
-        return tf.constant(0.0, dtype=dtype)
+    # start with sparse components.
+    grgr = tf.einsum("ik,jk->ijk", g_r, g_r)
+    gigi = tf.einsum("ik,jk->ijk", g_i, g_i)
+    grgi = tf.einsum("ik,jk->ijk", g_r, g_i)
+    gigr = tf.einsum("ik,jk->ijk", g_i, g_r)
+    vr = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_r), (nants, nants, nfreqs))
+    vi = tf.reshape(tf.sparse.sparse_dense_matmul(fg_comps, fg_i), (nants, nants, nfreqs))
+    model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
+    model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
+    cal_loss = tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
+    return cal_loss
 
 
 def loss_function_chunked(
