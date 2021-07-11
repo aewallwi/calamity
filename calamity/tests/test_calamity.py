@@ -283,8 +283,6 @@ def test_tensorize_fg_model_comps_mixed(
         sky_model = sky_model_projected
         fg_comps_dict = mixed_vectors
 
-
-
     nfreqs = sky_model.Nfreqs
     nants = sky_model.Nants_data
 
@@ -414,7 +412,7 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
         time_index=0,
         polarization="xx",
         dtype=np.float64,
-        single_bls_as_sparse=single_bls_as_sparse
+        single_bls_as_sparse=single_bls_as_sparse,
     )
     # now retrieve Nants x Nants x Nfreq complex visibility cube from representation.
     model_r = calamity.yield_fg_model_array(
@@ -445,8 +443,6 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
                 ap_model = model[i, j]
                 rmsdata = np.mean(np.abs(ap_data) ** 2.0) ** 0.5
                 assert np.allclose(ap_model, ap_data, rtol=0.0, atol=1e-2 * rmsdata)
-
-
 
 
 def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_model_projected, gains):
