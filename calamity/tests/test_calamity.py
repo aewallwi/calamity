@@ -23,6 +23,7 @@ def sky_model():
             "Garray_antenna_diameter2.0_fractional_spacing1.0_nant6_nf200_df100.000kHz_f0100.000MHzcompressed_True_autosFalse_gsm.uvh5",
         )
     )
+    uvd.select(bls=[ap for ap in uvd.get_antpairs() if ap[0] != ap[1]], inplace=True)
     return uvd
 
 
@@ -30,7 +31,7 @@ def sky_model():
 def sky_model_redundant():
     uvd = UVData()
     uvd.read_uvh5(os.path.join(DATA_PATH, "garray_3ant_2_copies_ntimes_1compressed_False_autosTrue_eor_0.0dB.uvh5"))
-    uvd.select(bls=[ap for ap in uvd.get_antpairs() if ap[0] != ap[1]])
+    uvd.select(bls=[ap for ap in uvd.get_antpairs() if ap[0] != ap[1]], inplace=True)
     return uvd
 
 
@@ -91,6 +92,12 @@ def gains_antscale_randomized(gains_randomized):
 @pytest.fixture
 def dpss_vectors(sky_model):
     return modeling.yield_pbl_dpss_model_comps(sky_model, offset=2.0 / 0.3, min_dly=2.0 / 0.3)
+
+
+@pytest.fixture
+def mixed_vectors(sky_model):
+    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(sky_model, remove_redundancy=False)
+    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model.freq_array[0], ant_dly=2.0 / 0.3)
 
 
 @pytest.fixture
@@ -240,34 +247,50 @@ def test_tensorize_fg_model_comps_dpsss(
 
 
 @pytest.mark.parametrize(
-    "single_bls_as_sparse, redundant_modeling",
+    "redundant_data ,single_bls_as_sparse, redundant_modeling",
     [
-        (True, False),
-        (True, True),
-        (False, False),
-        (False, False),
+        (False, False, False),
+        (False, True, False),
+        (True, True, False),
+        (True, True, True),
+        (True, False, False),
+        (True, False, False),
     ],
 )
 def test_tensorize_fg_model_comps_mixed(
     single_bls_as_sparse,
+    gains,
     gains_redundant,
     sky_model_projected_redundant,
+    mixed_vectors,
     mixed_vectors_redundant,
     mixed_vectors_redundant_remove_redundancy,
     redundant_modeling,
+    redundant_data,
+    sky_model,
+    sky_model_projected,
 ):
 
-    if redundant_modeling:
-        fg_comp_dict = mixed_vectors_redundant
+    if redundant_data:
+        gains = gains_redundant
+        sky_model = sky_model_projected_redundant
+        if redundant_modeling:
+            fg_comps_dict = mixed_vectors_redundant
+        else:
+            fg_comps_dict = mixed_vectors_redundant_remove_redundancy
     else:
-        fg_comp_dict = mixed_vectors_redundant_remove_redundancy
+        gains = gains
+        sky_model = sky_model_projected
+        fg_comps_dict = mixed_vectors
 
-    nfreqs = sky_model_projected_redundant.Nfreqs
-    nants = sky_model_projected_redundant.Nants_data
 
-    ants_map = {ant: i for i, ant in enumerate(gains_redundant.ant_array)}
+
+    nfreqs = sky_model.Nfreqs
+    nants = sky_model.Nants_data
+
+    ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
     fg_comp_tensor_sparse, fg_comp_tensors_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
-        fg_model_comps_dict=fg_comp_dict,
+        fg_model_comps_dict=fg_comps_dict,
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=nfreqs,
@@ -278,14 +301,14 @@ def test_tensorize_fg_model_comps_mixed(
         # assert number of data_inds in sparse and chunked baselines equals number of baselines
         sparse_indices = set(list(fg_comp_tensor_sparse.indices.numpy()[:, 0]))
         ndata_chunked = np.sum([len(fgc) for fgc in fg_comp_tensors_chunked])
-        assert (ndata_chunked + len(sparse_indices)) // nfreqs == sky_model_projected_redundant.Nbls
+        assert (ndata_chunked + len(sparse_indices)) // nfreqs == sky_model.Nbls
         # retrieve dense numpy array from sparse tensor.
         # check whether values agree with original numpy arrays.
         fg_comp_tensor_sparse = tf.sparse.to_dense(fg_comp_tensor_sparse).numpy()
         start_index = 0
         cnum = 0
-        for grpnum, fit_grp in enumerate(fg_comp_dict.keys()):
-            vrg = fg_comp_dict[fit_grp]
+        for grpnum, fit_grp in enumerate(fg_comps_dict.keys()):
+            vrg = fg_comps_dict[fit_grp]
             if len(fit_grp) == 1:
                 end_index = start_index + vrg.shape[1]
                 for red_grp in fit_grp:
@@ -307,7 +330,7 @@ def test_tensorize_fg_model_comps_mixed(
                 redundancies = [len(red_grp) for red_grp in fit_grp]
                 rownum = 0
                 for rgnum, red_grp in enumerate(fit_grp):
-                    rvecs = fg_comp_dict[fit_grp][rgnum * nfreqs : (rgnum + 1) * nfreqs]
+                    rvecs = fg_comps_dict[fit_grp][rgnum * nfreqs : (rgnum + 1) * nfreqs]
                     for bnum, ap in red_grp:
                         assert np.allclose(rvecs, fg_comp_tensor[rownum * nfreqs : (rownum + 1) * nfreqs])
                         rownum += 1
@@ -316,14 +339,14 @@ def test_tensorize_fg_model_comps_mixed(
         cnum = 0
         assert fg_comp_tensor_sparse is None
         ndata_chunked = np.sum([len(fgc) for fgc in fg_comp_tensors_chunked])
-        assert ndata_chunked // nfreqs == sky_model_projected_redundant.Nbls
+        assert ndata_chunked // nfreqs == sky_model.Nbls
 
-        for grpnum, fit_grp in enumerate(fg_comp_dict.keys()):
+        for grpnum, fit_grp in enumerate(fg_comps_dict.keys()):
             fg_comp_tensor = fg_comp_tensors_chunked[cnum]
             redundancies = [len(red_grp) for red_grp in fit_grp]
             rownum = 0
             for rgnum, red_grp in enumerate(fit_grp):
-                rvecs = fg_comp_dict[fit_grp][rgnum * nfreqs : (rgnum + 1) * nfreqs]
+                rvecs = fg_comps_dict[fit_grp][rgnum * nfreqs : (rgnum + 1) * nfreqs]
                 for bnum, ap in red_grp:
                     assert np.allclose(rvecs, fg_comp_tensor[rownum * nfreqs : (rownum + 1) * nfreqs])
                     rownum += 1
@@ -331,82 +354,99 @@ def test_tensorize_fg_model_comps_mixed(
     assert cnum == len(corr_inds_chunked)
 
 
-def test_yield_fg_model_and_fg_coeffs(dpss_vectors, redundant_groups, sky_model_projected, gains):
+@pytest.mark.parametrize(
+    "single_bls_as_sparse, redundant_modeling, redundant_data",
+    [
+        (False, False, False),
+        (True, False, False),
+        (True, False, True),
+        (True, True, True),
+        (False, False, True),
+        (False, False, True),
+    ],
+)
+def test_yield_fg_model_and_fg_coeffs_mixed(
+    mixed_vectors_redundant,
+    mixed_vectors,
+    mixed_vectors_redundant_remove_redundancy,
+    sky_model_projected_redundant,
+    sky_model_projected,
+    gains_redundant,
+    gains,
+    single_bls_as_sparse,
+    redundant_modeling,
+    redundant_data,
+):
     # loop test where we create a sparse matrix representation of our foregrounds using dpss vector projection
     # and then translate model back into visibility spectra and compare with original visibilties.
     # First, generate sparse matrix representation (sparse foreground components and coefficients).
+    if redundant_data:
+        gains = gains_redundant
+        sky_model = sky_model_projected_redundant
+        if redundant_modeling:
+            fg_comps_dict = mixed_vectors_redundant
+        else:
+            fg_comps_dict = mixed_vectors_redundant_remove_redundancy
+    else:
+        gains = gains
+        sky_model = sky_model_projected
+        fg_comps_dict = mixed_vectors
+
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor, _, _ = calamity.tensorize_fg_model_comps_dict(
-        fg_model_comps_dict=dpss_vectors, ants_map=ants_map, dtype=np.float64, nfreqs=sky_model_projected.Nfreqs
+    nfreqs = sky_model.Nfreqs
+    nants = sky_model.Nants_data
+
+    fg_comp_tensor_sparse, fg_comp_tensors_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
+        fg_model_comps_dict=fg_comps_dict,
+        ants_map=ants_map,
+        dtype=np.float64,
+        nfreqs=nfreqs,
+        single_bls_as_sparse=single_bls_as_sparse,
     )
-    (fg_coeffs_re, fg_coeffs_im, _, _) = calamity.tensorize_fg_coeffs(
-        sky_model_projected,
-        dpss_vectors,
+    (
+        fg_coeffs_sparse_re,
+        fg_coeffs_sparse_im,
+        fg_coeffs_chunked_re,
+        fg_coeffs_chunked_im,
+    ) = calamity.tensorize_fg_coeffs(
+        sky_model,
+        fg_comps_dict,
         time_index=0,
         polarization="xx",
         dtype=np.float64,
+        single_bls_as_sparse=single_bls_as_sparse
     )
     # now retrieve Nants x Nants x Nfreq complex visibility cube from representation.
     model_r = calamity.yield_fg_model_array(
-        fg_comps_sparse=fg_comp_tensor,
-        fg_coeffs_sparse=fg_coeffs_re,
-        nants=sky_model_projected.Nants_data,
-        nfreqs=sky_model_projected.Nfreqs,
+        fg_comps_sparse=fg_comp_tensor_sparse,
+        fg_coeffs_sparse=fg_coeffs_sparse_re,
+        fg_comps_chunked=fg_comp_tensors_chunked,
+        fg_coeffs_chunked=fg_coeffs_chunked_re,
+        corr_inds_chunked=corr_inds_chunked,
+        nants=nants,
+        nfreqs=nfreqs,
     )
     model_i = calamity.yield_fg_model_array(
-        fg_comps_sparse=fg_comp_tensor,
-        fg_coeffs_sparse=fg_coeffs_im,
-        nants=sky_model_projected.Nants_data,
-        nfreqs=sky_model_projected.Nfreqs,
+        fg_comps_sparse=fg_comp_tensor_sparse,
+        fg_coeffs_sparse=fg_coeffs_sparse_im,
+        fg_comps_chunked=fg_comp_tensors_chunked,
+        fg_coeffs_chunked=fg_coeffs_chunked_im,
+        corr_inds_chunked=corr_inds_chunked,
+        nants=nants,
+        nfreqs=nfreqs,
     )
     model = model_r + 1j * model_i
     # and check that the columns in that cube line up with data.
-    for grp in redundant_groups:
-        for ap in grp:
-            i, j = ants_map[ap[0]], ants_map[ap[1]]
-            ap_data = sky_model_projected.get_data(ap + ("xx",))
-            ap_model = model[i, j]
-            rmsdata = np.mean(np.abs(ap_data) ** 2.0) ** 0.5
-            assert np.allclose(ap_model, ap_data, rtol=0.0, atol=1e-5 * rmsdata)
+    for fit_grp in fg_comps_dict:
+        for red_grp in fit_grp:
+            for ap in red_grp:
+                i, j = ants_map[ap[0]], ants_map[ap[1]]
+                ap_data = sky_model.get_data(ap + ("xx",))
+                ap_model = model[i, j]
+                rmsdata = np.mean(np.abs(ap_data) ** 2.0) ** 0.5
+                assert np.allclose(ap_model, ap_data, rtol=0.0, atol=1e-5 * rmsdata)
 
 
-def test_yield_fg_model_and_fg_coeffs_redundant(dpss_vectors, redundant_groups, sky_model_projected, gains):
-    # loop test where we create a sparse matrix representation of our foregrounds using dpss vector projection
-    # and then translate model back into visibility spectra and compare with original visibilties.
-    # First, generate sparse matrix representation (sparse foreground components and coefficients).
-    ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor, _, _ = calamity.tensorize_fg_model_comps_dict(
-        fg_model_comps_dict=dpss_vectors, ants_map=ants_map, dtype=np.float64, nfreqs=sky_model_projected.Nfreqs
-    )
-    (fg_coeffs_re, fg_coeffs_im, _, _) = calamity.tensorize_fg_coeffs(
-        sky_model_projected,
-        dpss_vectors,
-        time_index=0,
-        polarization="xx",
-        dtype=np.float64,
-    )
-    # now retrieve Nants x Nants x Nfreq complex visibility cube from representation.
-    model_r = calamity.yield_fg_model_array(
-        fg_comps_sparse=fg_comp_tensor,
-        fg_coeffs_sparse=fg_coeffs_re,
-        nants=sky_model_projected.Nants_data,
-        nfreqs=sky_model_projected.Nfreqs,
-    )
-    model_i = calamity.yield_fg_model_array(
-        fg_comps_sparse=fg_comp_tensor,
-        fg_coeffs_sparse=fg_coeffs_im,
-        nants=sky_model_projected.Nants_data,
-        nfreqs=sky_model_projected.Nfreqs,
-    )
-    model = model_r + 1j * model_i
-    # and check that the columns in that cube line up with data.
-    for grp in redundant_groups:
-        for ap in grp:
-            i, j = ants_map[ap[0]], ants_map[ap[1]]
-            ap_data = sky_model_projected.get_data(ap + ("xx",))
-            ap_model = model[i, j]
-            rmsdata = np.mean(np.abs(ap_data) ** 2.0) ** 0.5
-            assert np.allclose(ap_model, ap_data, rtol=0.0, atol=1e-5 * rmsdata)
 
 
 def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_model_projected, gains):
