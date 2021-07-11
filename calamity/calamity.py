@@ -776,11 +776,12 @@ def tensorize_fg_coeffs(
     for fit_grp in fg_model_comps_dict:
         fg_coeffs = 0.0
         for grpnum, red_grp in enumerate(fit_grp):
+            ngrp = len(red_grp)
             for ap in red_grp:
                 bl = ap + (polarization,)
                 fg_coeffs += (
                     uvdata.get_data(bl)[time_index] * ~uvdata.get_flags(bl)[time_index]
-                ) @ fg_model_comps_dict[fit_grp][grpnum * uvdata.Nfreqs : (grpnum + 1) * uvdata.Nfreqs]
+                ) @ fg_model_comps_dict[fit_grp][grpnum * uvdata.Nfreqs : (grpnum + 1) * uvdata.Nfreqs] / ngrp
 
         if len(fit_grp) == 1 and single_bls_as_sparse:
             fg_coeffs_re_sparse.extend(list(fg_coeffs.real / scale_factor))

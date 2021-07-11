@@ -444,7 +444,7 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
                 ap_data = sky_model.get_data(ap + ("xx",))
                 ap_model = model[i, j]
                 rmsdata = np.mean(np.abs(ap_data) ** 2.0) ** 0.5
-                assert np.allclose(ap_model, ap_data, rtol=0.0, atol=1e-5 * rmsdata)
+                assert np.allclose(ap_model, ap_data, rtol=0.0, atol=1e-2 * rmsdata)
 
 
 
