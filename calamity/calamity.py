@@ -533,7 +533,7 @@ def fit_gains_and_foregrounds(
 
         def loss_function():
             return loss_function_sparse(
-                g_r, g_i, fg_r_sparse, fg_i_sparse, fg_comps_sparse, data_r, data_i, wgts_sparse, nants, nfreqs
+                g_r, g_i, fg_r_sparse, fg_i_sparse, fg_comps_sparse, data_r, data_i, wgts, nants, nfreqs
             )
 
     elif fg_comps_sparse is None and fg_comps_chunked is not None:
