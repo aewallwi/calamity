@@ -1317,6 +1317,7 @@ def calibrate_and_model_dpss(
         fg_model_comps_dict=dpss_model_comps_dict,
         include_autos=include_autos,
         verbose=verbose,
+        notebook_progressbar=notebook_progressbar,
         **fitting_kwargs,
     )
 
