@@ -23,6 +23,62 @@ OPTIMIZERS = {
     "RMSprop": tf.optimizers.RMSprop,
 }
 
+def chunk_fg_comp_dict_keys_by_nbls(fg_model_comps_dict):
+    """
+    Order dict keys in order of number of baselines in each group
+
+
+    Reorder keys in foreground components dictionary so that they are in ascending order based on the number of
+    baselines and chunk the keys by number of baselines.
+
+    Parameters
+    ----------
+    fg_model_comps_dict: dictionary
+        dictionary with keys that are tuples of tuples of 2-tuples (thats right, 3 levels)
+        in the first level, each tuple represents a 'modeling group' visibilities in each
+        modeling group are represented by a set of basis vectors that span all baselines in that
+        group with elements raveled by baseline and then frequency. Each tuple in the modeling group is a
+        'redundant group' representing visibilities that we will represent with identical component coefficients
+        each element of each 'redundant group' is a 2-tuple antenna pair. Our formalism easily accomodates modeling
+        visibilities as redundant or non redundant (one simply needs to make each redundant group length 1).
+
+
+
+    """
+    nbls = []
+    grp_keys = list(fg_model_comps_dict.keys())
+    for fit_grp in fg_model_comps_dict:
+        nbl = 0
+        for red_grp in fit_grp:
+            for ap in red_grp:
+                nbl += 1
+        nbls.append(nbl)
+    grp_keys = sorted(grp_keys, key=lambda x: nbls[grp_keys.index(x)])
+    nbls = sorted(nbls)
+
+    nbls_unique = set(nbls)
+
+    chunked_keys = []
+    for nbl in nbls_unique:
+        indices = np.where(np.asarray(nbls) == nbl)[0]
+        chunk = []
+        for ind in indices:
+            chunk.append((nbls[ind], grp_keys[ind]))
+        chunked_keys.append(chunk)
+
+    fg_model_comps_dict_chunked = {}
+    for k_chunk in chunked_keys:
+        fg_model_comps_dict_chunked[nbl] = {k: fg_model_comps_dict[k] for k in k_chunk}))
+
+    return fg_model_comps_dict_chunked
+
+
+
+
+
+
+
+
 
 def tensorize_fg_model_comps_dict(
     fg_model_comps_dict,
