@@ -113,7 +113,7 @@ def mixed_vectors_redundant_remove_redundancy(sky_model_redundant):
     fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
         sky_model_redundant, remove_redundancy=True
     )
-    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3)
+    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1)
 
 
 @pytest.fixture
