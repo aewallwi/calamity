@@ -97,7 +97,7 @@ def dpss_vectors(sky_model):
 @pytest.fixture
 def mixed_vectors(sky_model):
     fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(sky_model, remove_redundancy=False)
-    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model.freq_array[0], ant_dly=2.0 / 0.3)
+    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1)
 
 
 @pytest.fixture
@@ -105,7 +105,7 @@ def mixed_vectors_redundant(sky_model_redundant):
     fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
         sky_model_redundant, remove_redundancy=False
     )
-    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3)
+    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1)
 
 
 @pytest.fixture
@@ -113,7 +113,7 @@ def mixed_vectors_redundant_remove_redundancy(sky_model_redundant):
     fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
         sky_model_redundant, remove_redundancy=True
     )
-    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3)
+    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1)
 
 
 @pytest.fixture
@@ -692,6 +692,7 @@ def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized
         weights=weights,
         single_bls_as_sparse=use_sparse,
         use_tensorflow_to_derive_modeling_comps=use_tensorflow,
+        grp_size_threshold=1,
     )
     # post hoc correction
     resid = cal_utils.apply_gains(resid, gains)

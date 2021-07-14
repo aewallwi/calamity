@@ -1121,6 +1121,7 @@ def calibrate_and_model_mixed(
     dtype_matinv=np.float64,
     require_exact_angle_match=True,
     angle_match_tol=1e-3,
+    grp_size_threshold=5,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with a mix of DPSS vectors
@@ -1180,6 +1181,9 @@ def calibrate_and_model_mixed(
     dtype_matinv: numpy.dtype, optional
         data type to use for deriving modeling components.
         default is np.float64 (need higher precision for cov-mat like calculation)
+    grp_size_threshold: int, optional
+      groups with number of elements less then this value are split up into single baselines.
+      default is 5.
     fitting_kwargs: kwarg dict
         additional kwargs for calibrate_and_model_tensor.
         see docstring of calibrate_and_model_tensor.
@@ -1222,6 +1226,7 @@ def calibrate_and_model_mixed(
         verbose=verbose,
         dtype=dtype_matinv,
         notebook_progressbar=notebook_progressbar,
+        grp_size_threshold=grp_size_threshold,
     )
 
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(

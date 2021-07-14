@@ -393,6 +393,7 @@ def yield_mixed_comps(
     dtype=np.float64,
     notebook_progressbar=False,
     use_tensorflow=False,
+    grp_size_threshold=5,
 ):
     """Generate modeling components that include jointly modeled baselines.
 
@@ -430,6 +431,9 @@ def yield_mixed_comps(
     dtype: numpy.dtype, optional
       data type in which to compute model eigenvectors.
       default is np.float64
+    grp_size_threshold: int, optional
+      groups with number of elements less then this value are split up into single baselines.
+      default is 5.
 
     Returns
     -------
@@ -448,16 +452,17 @@ def yield_mixed_comps(
             fit_grp = tuple(fit_grp)
         blvecs = fitting_blvecs[grpnum]
         bllens = np.linalg.norm(blvecs, axis=1)
-        if len(fit_grp) == 1:
-            modeling_vectors[fit_grp] = yield_dpss_model_comps_bl_grp(
-                freqs=freqs,
-                length=bllens[0],
-                offset=ant_dly,
-                horizon=horizon,
-                min_dly=min_dly,
-                operator_cache=operator_cache,
-                eigenval_cutoff=eigenval_cutoff,
-            )
+        if len(fit_grp) <= grp_size_threshold:
+            for red_grp, bllen in zip(fit_grp, bllens):
+                modeling_vectors[(red_grp,)] = yield_dpss_model_comps_bl_grp(
+                    freqs=freqs,
+                    length=bllen,
+                    offset=ant_dly,
+                    horizon=horizon,
+                    min_dly=min_dly,
+                    operator_cache=operator_cache,
+                    eigenval_cutoff=eigenval_cutoff,
+                )
 
         else:
             modeling_vectors[fit_grp] = simple_cov.yield_simple_multi_baseline_model_comps(
