@@ -431,9 +431,9 @@ def yield_mixed_comps(
     dtype: numpy.dtype, optional
       data type in which to compute model eigenvectors.
       default is np.float64
-    grp_size_threshold: float, optional
+    grp_size_threshold: int, optional
       groups with number of elements less then this value are split up into single baselines.
-
+      default is 5.
 
     Returns
     -------
