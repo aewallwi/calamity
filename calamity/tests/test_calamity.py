@@ -211,60 +211,49 @@ def test_tensorize_gains(gains_antscale):
         assert np.allclose(gains_i.numpy()[ant], 0.0)
 
 
-@pytest.mark.parametrize("single_bls_as_sparse", [True, False])
 def test_tensorize_fg_model_comps_dpsss(
-    sky_model_projected, dpss_vectors, redundant_groups, gains, single_bls_as_sparse
+    sky_model_projected, dpss_vectors, redundant_groups, gains,
 ):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor, fg_comp_tensors_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
+    fg_comp_tensor, corr_inds = calamity.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=dpss_vectors,
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=sky_model_projected.Nfreqs,
-        single_bls_as_sparse=single_bls_as_sparse,
     )
-    if single_bls_as_sparse:
-        # for per baseline modeling, there should be no chunked groups.
-        assert fg_comp_tensors_chunked is None
-        assert corr_inds_chunked is None
-        # retrieve dense numpy array from sparse tensor.
-        # check whether values agree with original dpss vectors.
-        fg_comp_tensor = tf.sparse.to_dense(fg_comp_tensor).numpy()
-        # iterate through and select out nonzero elements and check that they are close to dpss_vectors
-        start_index = 0
-        for vnum, red_grp in enumerate(dpss_vectors.keys()):
-            vdpss = dpss_vectors[red_grp]
-            end_index = start_index + vdpss.shape[1]
-            for i, j in enumerate(range(start_index, end_index)):
-                vreduced = fg_comp_tensor[:, j]
-                vreduced = vreduced[np.abs(vreduced) > 0]
-                assert np.allclose(vreduced, vdpss[:, i])
-            start_index = end_index
-    else:
-        assert fg_comp_tensor is None
-        nfreqs = sky_model_projected.Nfreqs
-        bls = list(dpss_vectors.keys())
-        for gnum, red_grp in enumerate(dpss_vectors.keys()):
-            bl = red_grp[0][0]
-            data_inds = corr_inds_chunked[gnum]
-            blind = bl[0] * sky_model_projected.Nants_data + bl[1]
-            assert np.allclose(data_inds, [bl])
-            assert np.allclose(fg_comp_tensors_chunked[gnum].numpy(), dpss_vectors[red_grp])
+    nfreqs = sky_model_projected.Nfreqs
+    bls = list(dpss_vectors.keys())
+    ncomps = 0
+    for cnum in range(len(corr_inds)):
+        for gnum in range(len(corr_inds[cnum])):
+            for blnum, bl in enumerate(corr_inds[cnum][gnum]):
+                fg_comps_tensor = fg_comp_tensor[cnum][:, gnum, blnum].numpy().squeeze()
+                if ((bl,),) in dpss_vectors:
+                    fg_comps_dict = dpss_vectors[((bl,),)].T
+                    assert np.allclose(fg_comps_dict, fg_comps_tensor[:fg_comps_dict.shape[0]])
+                    assert np.allclose(0., fg_comps_tensor[fg_comps_dict.shape[0]:])
+                    ncomps += 1
+                else:
+                    assert np.allclose(fg_comps_tensor, 0.)
+    assert ncomps == len(dpss_vectors)
 
+
+def test_chunk_fg_comp_dict_by_nbls(dpss_vectors):
+    dpss_vectors_chunked = calamity.chunk_fg_comp_dict_by_nbls(dpss_vectors)
+    maxvecs = np.max([dpss_vectors[k].shape[1] for k in dpss_vectors])
+    assert len(dpss_vectors_chunked) == 1
+    assert list(dpss_vectors_chunked.keys())[0] == (1, maxvecs)
 
 @pytest.mark.parametrize(
-    "redundant_data ,single_bls_as_sparse, redundant_modeling",
+    "redundant_data, redundant_modeling",
     [
-        (False, False, False),
-        (False, True, False),
-        (True, True, False),
-        (True, True, True),
-        (True, False, False),
-        (True, False, False),
+        (False, False),
+        (True, False),
+        (True, True),
+        (False, True),
     ],
 )
 def test_tensorize_fg_model_comps_mixed(
-    single_bls_as_sparse,
     gains,
     gains_redundant,
     sky_model_projected_redundant,
@@ -293,68 +282,37 @@ def test_tensorize_fg_model_comps_mixed(
     nants = sky_model.Nants_data
 
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor_sparse, fg_comp_tensors_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
+    fg_comp_tensors, corr_inds = calamity.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=fg_comps_dict,
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=nfreqs,
-        single_bls_as_sparse=single_bls_as_sparse,
     )
-    if single_bls_as_sparse:
-        assert not np.any([np.isclose(nfreqs, fgc.shape[0]) for fgc in fg_comp_tensors_chunked])
-        # assert number of data_inds in sparse and chunked baselines equals number of baselines
-        sparse_indices = set(list(fg_comp_tensor_sparse.indices.numpy()[:, 0]))
-        ndata_chunked = np.sum([len(fgc) for fgc in fg_comp_tensors_chunked])
-        assert (ndata_chunked + len(sparse_indices)) // nfreqs == sky_model.Nbls
-        # retrieve dense numpy array from sparse tensor.
-        # check whether values agree with original numpy arrays.
-        fg_comp_tensor_sparse = tf.sparse.to_dense(fg_comp_tensor_sparse).numpy()
-        start_index = 0
-        cnum = 0
-        for grpnum, fit_grp in enumerate(fg_comps_dict.keys()):
-            vrg = fg_comps_dict[fit_grp]
-            if len(fit_grp) == 1:
-                end_index = start_index + vrg.shape[1]
-                for red_grp in fit_grp:
-                    for blnum, ap in enumerate(red_grp):
-                        for i, j in enumerate(range(start_index, end_index)):
-                            vreduced = fg_comp_tensor_sparse[:, j]
-                            vreduced = vreduced[np.abs(vreduced) > 0][blnum * nfreqs : (blnum + 1) * nfreqs]
 
-                        assert np.allclose(vreduced, vrg[:, i])
-                start_index = end_index
-            else:
-                # check that none of the indices in this chunk are present in the sparse_indices
-                for cpair in corr_inds_chunked[cnum]:
-                    blind = cpair[0] * nants + cpair[1]
-                    # data indices in a chunk should not be in sparse_indices
-                    for dind in range(blind * nfreqs, (blind + 1) * nfreqs):
-                        assert dind not in sparse_indices
-                fg_comp_tensor = fg_comp_tensors_chunked[cnum]
-                redundancies = [len(red_grp) for red_grp in fit_grp]
-                rownum = 0
-                for rgnum, red_grp in enumerate(fit_grp):
-                    rvecs = fg_comps_dict[fit_grp][rgnum * nfreqs : (rgnum + 1) * nfreqs]
-                    for bnum, ap in red_grp:
-                        assert np.allclose(rvecs, fg_comp_tensor[rownum * nfreqs : (rownum + 1) * nfreqs])
-                        rownum += 1
-                cnum += 1
-    else:
-        cnum = 0
-        assert fg_comp_tensor_sparse is None
-        ndata_chunked = np.sum([len(fgc) for fgc in fg_comp_tensors_chunked])
-        assert ndata_chunked // nfreqs == sky_model.Nbls
+    cnum = 0
+    ndata_chunked = np.sum([fgc.shape[1].numpy() * fgc.shape[2].numpy() for fgc in fg_comp_tensors_chunked])
+    # hash all fitgrps to i, j
+    fitgrps = set({})
+    redgrps = set({})
+    for fitgrp in fg_comps_dict:
+        for redgrp in fitgrp:
+            for ap in redgrp:
+                fitgrps[ap] = fitgrp
+                redgrps[ap] = redgrp
+    assert ndata_chunked // nfreqs == sky_model.Nbls
+    for cnum in range(len(corr_inds)):
+        for gnum in range(len(corr_inds[cnum])):
+            for blnum, bl in enumerate(corr_inds[cnum][gnum]):
+                fg_comps_tensor = fg_comp_tensor[cnum][:, gnum, blnum].numpy().squeeze()
+                if (i, j) in fitgrps:
+                    fg_comps_dict = fg_comps_dict[fitgrps[i, j]].T
+                    redgrpnum = fitgrps[i, j].index(redgrps[i, j])
+                    dslice = slice(redgrpnum * nfreqs, (redgrpnum + 1) * nfreqs)
+                    assert np.allclose(fg_comps_dict[:, dslice], fg_comps_tensor)
+                    ncomps += 1
+                else:
+                    assert np.allclose(fg_comps_tensor, 0.)
 
-        for grpnum, fit_grp in enumerate(fg_comps_dict.keys()):
-            fg_comp_tensor = fg_comp_tensors_chunked[cnum]
-            redundancies = [len(red_grp) for red_grp in fit_grp]
-            rownum = 0
-            for rgnum, red_grp in enumerate(fit_grp):
-                rvecs = fg_comps_dict[fit_grp][rgnum * nfreqs : (rgnum + 1) * nfreqs]
-                for bnum, ap in red_grp:
-                    assert np.allclose(rvecs, fg_comp_tensor[rownum * nfreqs : (rownum + 1) * nfreqs])
-                    rownum += 1
-            cnum += 1
     assert cnum == len(corr_inds_chunked)
 
 

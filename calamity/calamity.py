@@ -23,13 +23,14 @@ OPTIMIZERS = {
     "RMSprop": tf.optimizers.RMSprop,
 }
 
+
 def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict):
     """
     Order dict keys in order of number of baselines in each group
 
 
-    Reorder keys in foreground components dictionary so that they are in ascending order based on the number of
-    baselines and chunk the keys by number of baselines.
+    chunk fit_groups in fg_model_comps_dict into chunks where all groups in the
+    same chunk have the same number of baselines in each group.
 
     Parameters
     ----------
@@ -51,39 +52,27 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict):
         numpy.ndarray describing the modeling components for each fitting group in the chunk.
 
     """
-    nbls = []
-    grp_keys = list(fg_model_comps_dict.keys())
+    chunked_keys = {}
+    maxvecs = {}
+
     for fit_grp in fg_model_comps_dict:
         nbl = 0
         for red_grp in fit_grp:
             for ap in red_grp:
                 nbl += 1
-        nbls.append(nbl)
-    grp_keys = sorted(grp_keys, key=lambda x: nbls[grp_keys.index(x)])
-    nbls = sorted(nbls)
+        if nbl in chunked_keys:
+            chunked_keys[nbl].append(fit_grp)
+            if fg_model_comps_dict[fit_grp].shape[1] > maxvecs[nbl]:
+                maxvecs[nbl] = fg_model_comps_dict[fit_grp].shape[1]
+        else:
+            chunked_keys[nbl] = [fit_grp]
+            maxvecs[nbl] = fg_model_comps_dict[fit_grp].shape[1]
 
-    nbls_unique = set(nbls)
 
-    chunked_keys = []
-    nvecs_max = []
-
-    for nbl in nbls_unique:
-        indices = np.where(np.asarray(nbls) == nbl)[0]
-        chunk = []
-        for ind in indices:
-            chunk.append(grp_keys[ind])
-        maxvecs = 0
-        for grp_key in chunk:
-            nvecs = fg_model_comps_dict[grp_key].shape[1]
-            if nvecs > maxvecs:
-                maxvecs = nvecs
-
-        nvecs_max.append(maxvecs)
-        chunked_keys.append(chunk)
 
     fg_model_comps_dict_chunked = {}
-    for (nbl, nvecs_max, k_chunk) in zip(nbls_unique, nvecs_max, chunked_keys):
-        fg_model_comps_dict_chunked[(nbl, nvecs)] = {k: fg_model_comps_dict[k] for k in k_chunk}
+    for nbl in chunked_keys:
+        fg_model_comps_dict_chunked[(nbl, maxvecs[nbl])] = {k: fg_model_comps_dict[k] for k in chunked_keys[nbl]}
 
     return fg_model_comps_dict_chunked
 
@@ -92,7 +81,6 @@ def tensorize_fg_model_comps_dict(
     fg_model_comps_dict,
     ants_map,
     nfreqs,
-    sparse_threshold=1e-1,
     dtype=np.float32,
     notebook_progressbar=False,
     verbose=False,
@@ -112,14 +100,9 @@ def tensorize_fg_model_comps_dict(
         (typically the index of each antenna in ants_map)
     nfreqs: int, optional
         number of frequency channels
-    sparse_threshold: float, optional
-        if the number of non-zero elements / total number of elements is greater
-        then this value, then use a dense representation rather then a sparse representation.
     dtype: numpy.dtype
-        data-type to store in sparse tensor.
+        tensor data types
         default is np.float32
-    single_bls_as_sparse: bool, optional
-        if True, store single baselines in a sparse tensor
 
     Returns
     -------
@@ -147,6 +130,8 @@ def tensorize_fg_model_comps_dict(
         f"{datetime.datetime.now()} Computing foreground components matrices...\n",
         verbose=verbose,
     )
+    # chunk foreground components.
+    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(fg_model_comps_dict)
     fg_model_comps = []
     corr_inds = []
     for nbls, nvecs in fg_model_comps_dict:
@@ -154,24 +139,23 @@ def tensorize_fg_model_comps_dict(
         modeling_matrix = np.zeros((nvecs, ngrps, nbls, nfreqs))
 
         grpnum = 0
-        corr_inds = []
+        corr_inds_chunk = []
         for modeling_grp in fg_model_comps_dict[(nbls, nvecs)]:
             corr_inds_grp = []
             nbl = 0
             for rgrpnum, red_grp in enumerate(modeling_grp):
                 for ap in red_grp:
                     i, j = ants_map[ap[0]], ants_map[ap[1]]
-                    corrinds_grp.append([i, j])
-                    vecslice = slice(0, fg_model_comps_dict[(nbl, nvecs)].shape[1])
+                    corr_inds_grp.append((i, j))
+                    vecslice = slice(0, fg_model_comps_dict[(nbls, nvecs)][modeling_grp].shape[1])
                     compslice = slice(rgrpnum * nfreqs, (rgrpnum + 1) * nfreqs)
                     dslice = slice(nbl * nfreqs, (nbl + 1) * nfreqs)
-                    modeling_matrix[vecslice, grpnum, nbl] = fg_model_comps_dict[(nbls, nvecs)][modeling_grp][compslice]
+                    modeling_matrix[vecslice, grpnum, nbl] = fg_model_comps_dict[(nbls, nvecs)][modeling_grp][compslice].T
                     nbl += 1
-            corr_inds.append(corr_inds_grp)
+            corr_inds_chunk.append(corr_inds_grp)
 
         fg_model_comps.append(tf.convert_to_tensor(modeling_matrix, dtype=dtype))
-        corr_inds.append(corrinds)
-
+        corr_inds.append(corr_inds_chunk)
 
     return fg_model_comps, corr_inds
 
@@ -211,7 +195,7 @@ def tensorize_data(
         UVFlag object wgts array contains weights for fitting.
         default is None -> weight by nsamples x ~flags
     dtype: numpy.dtype
-        data-type to store in sparse tensor.
+        data-type to store in tensor.
         default is np.float32
 
     Returns
@@ -237,8 +221,8 @@ def tensorize_data(
     wgtsum = 0.0
     for chunk in corr_inds:
         for fitgrp in chunk:
-            for i, j in fitgrp:
-                ap =ants_map_inv[(i, j)]
+            for (i, j) in fitgrp:
+                ap = ants_map_inv[(i, j)]
                 bl = ap + (polarization,)
                 data = uvdata.get_data(bl)[time_index] / data_scale_factor
                 iflags = (~uvdata.get_flags(bl))[time_index].astype(dtype)
@@ -253,7 +237,8 @@ def tensorize_data(
                     else:
                         dinds = weights.antpair2ind(*ap[::-1])
                     polnum = np.where(
-                        weights.polarization_array == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation)
+                        weights.polarization_array
+                        == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation)
                     )[0][0]
                     wgts[i, j] = weights.weights_array[dinds[time_index], 0, :, polnum].astype(dtype) * iflags
                 wgtsum += np.sum(wgts[i, j])
@@ -262,10 +247,9 @@ def tensorize_data(
     wgts = tf.convert_to_tensor(wgts / wgtsum, dtype=dtype)
 
     nchunks = len(corr_inds)
-    data_r = [tf.gather_nd(data_r, corr_inds[cnum] for cnum in range(nchunks)]
-    data_i = [tf.gather_nd(data_i, corr_inds[cnum] for cnum in range(nchunks)]
-    wgts = [tf.gather_nd(wgts, corr_inds[cnum]for cnum in range(nchunks)]
-
+    data_r = [tf.gather_nd(data_r, corr_inds[cnum]) for cnum in range(nchunks)]
+    data_i = [tf.gather_nd(data_i, corr_inds[cnum]) for cnum in range(nchunks)]
+    wgts = [tf.gather_nd(wgts, corr_inds[cnum]) for cnum in range(nchunks)]
 
     return data_r, data_i, wgts
 
@@ -364,7 +348,7 @@ def yield_fg_model_array(
     fg_coeffs,
     corr_inds,
 ):
-    """Compute sparse tensor foreground model.
+    """Compute tensor foreground model.
 
     Parameters
     ----------
@@ -520,8 +504,6 @@ def fit_gains_and_foregrounds(
         ant0_inds.append(ant0_chunk)
         ant1_inds.append(ant1_chunk)
 
-
-
     g_r = tf.Variable(g_r)
     g_i = tf.Variable(g_i)
     if not freeze_model:
@@ -561,7 +543,7 @@ def fit_gains_and_foregrounds(
     )
     loss = train_step()
     echo(
-        f"{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss_i:.2e}...\n",
+        f"{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss:.2e}...\n",
         verbose=verbose,
     )
 
@@ -600,7 +582,6 @@ def fit_gains_and_foregrounds(
             fg_r_opt = fg_r
             fg_i_opt = fg_i
 
-
     echo(
         f"{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n",
         verbose=verbose,
@@ -618,7 +599,7 @@ def insert_model_into_uvdata_tensor(
     model_i,
     scale_factor=1.0,
 ):
-    """Insert fitted tensor values back into uvdata object for sparse tensor mode.
+    """Insert fitted tensor values back into uvdata object for tensor mode.
 
     Parameters
     ----------
@@ -700,7 +681,6 @@ def tensorize_fg_coeffs(
     polarization,
     scale_factor=1.0,
     dtype=np.float32,
-    single_bls_as_sparse=True,
 ):
     """Initialize foreground coefficient tensors from uvdata and modeling component dictionaries.
 
@@ -761,10 +741,9 @@ def calibrate_and_model_tensor(
     correct_resid=False,
     correct_model=False,
     weights=None,
-    sparse_threshold=1e-1,
     **opt_kwargs,
 ):
-    """Perform simultaneous calibration and foreground fitting using sparse tensors.
+    """Perform simultaneous calibration and foreground fitting using tensors.
 
 
     Parameters
@@ -838,11 +817,6 @@ def calibrate_and_model_tensor(
     weights: UVFlag object, optional.
         UVFlag weights object containing weights to use for data fitting.
         default is None -> use nsamples * ~flags
-    sparse_threshold: float, optional
-        if fraction of elements in foreground modeling vector matrix that are non-zero
-        is greater then this value, then use a dense representation.
-        Otherwise use a sparse representation.
-        default is 1e-1
     opt_kwargs: kwarg_dict
         kwargs for tf.optimizers
 
@@ -891,9 +865,7 @@ def calibrate_and_model_tensor(
 
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    # chunk components dictionary by number of baselines in each group.
-    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(fg_model_comps_dict)
-    # generate sparse tensor to hold foreground components.
+    # generate tensors to hold foreground components.
     fg_model_comps, corr_inds = tensorize_fg_model_comps_dict(
         fg_model_comps_dict=fg_model_comps_dict,
         ants_map=ants_map,
@@ -901,7 +873,6 @@ def calibrate_and_model_tensor(
         nfreqs=sky_model.Nfreqs,
         verbose=verbose,
         notebook_progressbar=notebook_progressbar,
-        sparse_threshold=sparse_threshold,
     )
     echo(
         f"{datetime.datetime.now()}Finished Converting Foreground Modeling Components to Tensors...\n",
@@ -968,13 +939,7 @@ def calibrate_and_model_tensor(
                 scale_factor=rmsdata,
             )
 
-            (
-                gains_r,
-                gains_i,
-                fg_r,
-                fg_i,
-                fit_history_p[time_index],
-            ) = fit_gains_and_foregrounds(
+            (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                 g_r=g_r,
                 g_i=g_i,
                 fg_r=fg_r,
@@ -1004,16 +969,13 @@ def calibrate_and_model_tensor(
                 model_r=yield_fg_model_array(
                     fg_model_comps=fg_model_comps,
                     fg_coeffs=fg_r,
-                    fg_coeffs_sparse=fg_r_sparse,
                     corr_inds=corr_inds,
                     nants=uvdata.Nants_data,
                     nfreqs=uvdata.Nfreqs,
                 ),
                 model_i=yield_fg_model_array(
-                    fg_comps_sparse=fg_comps_sparse,
                     fg_model_comps=fg_model_comps,
                     fg_coeffs=fg_i,
-                    fg_coeffs_sparse=fg_i_sparse,
                     corr_inds=corr_inds,
                     nants=uvdata.Nants_data,
                     nfreqs=uvdata.Nfreqs,
@@ -1191,7 +1153,6 @@ def calibrate_and_model_dpss(
     offset=0.0,
     include_autos=False,
     verbose=False,
-    modeling_paradigm="dictionary",
     red_tol=1.0,
     notebook_progressbar=False,
     **fitting_kwargs,
@@ -1220,17 +1181,6 @@ def calibrate_and_model_dpss(
     verbose: bool, optional
         lots of text output
         default is False.
-    modeling: str, optional
-        specify method for modeling the data / computing loss function
-        supported options are 'sparse_tensor' and 'dictionary'
-        'sparse_tensor' represents each time and polarization as an
-        Nants^2 x Nfreqs tensor and per-baseline modeling components
-        as Nants^2 x Nfreqs x Ncomponents sparse tensor. The impact of gains
-        by taking the outer product of the Nants gain arrays. This is more memory
-        intensive but better optimized to take advantage of tensor operations,
-        especially on GPU. 'dictionary' mode represents visibilities in a dictionary
-        of spectra keyed to antenna pairs which is more memory efficient but at a loss
-        of performance on GPUs.
     red_tol: float, optional
         tolerance for treating baselines as redundant (meters)
         default is 1.0
@@ -1272,9 +1222,11 @@ def calibrate_and_model_dpss(
 
     return model, resid, gains, fitted_info
 
+
 @tf.function
 def gather(x, ind):
     return tf.gather(x + 0, ind)
+
 
 def loss_function_chunked(
     g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32
