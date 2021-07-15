@@ -83,7 +83,7 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict):
 
     fg_model_comps_dict_chunked = {}
     for (nbl, nvecs_max, k_chunk) in zip(nbls_unique, nvecs_max, chunked_keys):
-        fg_model_comps_dict_chunked[(nbl, nvecs)] = {k: fg_model_comps_dict[k] for k in k_chunk}))
+        fg_model_comps_dict_chunked[(nbl, nvecs)] = {k: fg_model_comps_dict[k] for k in k_chunk}
 
     return fg_model_comps_dict_chunked
 
@@ -123,7 +123,7 @@ def tensorize_fg_model_comps_dict(
 
     Returns
     -------
-    fg_comps_chunked: list
+    fg_model_comps: list
         list of tf.Tensor objects where each tensor has shape (nvecs, ngrps, nbls, nfreqs)
         where nbls varies from tensor to tensor. Fitting groups with vectors that span nbls are lumped into the same
         modeling tensor along the ngrps axis. nvecs is chosen in chunk_fg_comp_dict_by_nbls
@@ -136,7 +136,7 @@ def tensorize_fg_model_comps_dict(
         This is wasteful of memory but it allows us to take advantage of the fast
         dense matrix operations on a GPU.
 
-    corr_inds_chunked: list
+    corr_inds: list
         list of list of lists of 2-tuples. Hierarchy of lists is
         chunk
             group
@@ -147,8 +147,8 @@ def tensorize_fg_model_comps_dict(
         f"{datetime.datetime.now()} Computing foreground components matrices...\n",
         verbose=verbose,
     )
-    fg_comps_chunked = []
-    corr_inds_chunked = []
+    fg_model_comps = []
+    corr_inds = []
     for nbls, nvecs in fg_model_comps_dict:
         ngrps = len(fg_model_comps_dict[(nbls, nvecs)])
         modeling_matrix = np.zeros((nvecs, ngrps, nbls, nfreqs))
@@ -169,16 +169,16 @@ def tensorize_fg_model_comps_dict(
                     nbl += 1
             corr_inds.append(corr_inds_grp)
 
-        fg_comps_chunked.append(tf.convert_to_tensor(modeling_matrix, dtype=dtype))
-        corr_inds_chunked.append(corrinds)
+        fg_model_comps.append(tf.convert_to_tensor(modeling_matrix, dtype=dtype))
+        corr_inds.append(corrinds)
 
 
-    return fg_comps_chunked, corr_inds_chunked
+    return fg_model_comps, corr_inds
 
 
 def tensorize_data(
     uvdata,
-    corr_inds_chunked,
+    corr_inds,
     ants_map,
     polarization,
     time_index,
@@ -192,7 +192,7 @@ def tensorize_data(
     ----------
     uvdata: UVData object
         UVData object containing data, flags, and nsamples to tensorize.
-    corr_inds_chunked: list
+    corr_inds: list
         list of list of lists of 2-tuples. Hierarchy of lists is
         chunk
             group
@@ -216,17 +216,17 @@ def tensorize_data(
 
     Returns
     -------
-    data_r_chunked: list of tf.Tensor objects
+    data_r: list of tf.Tensor objects
         list of tf.Tensor objects. Each tensor has shape (ngrps, nbls, nfreqs)
-        where ngrps, nbls are the dimensions of each sublist in corr_inds_chunked
+        where ngrps, nbls are the dimensions of each sublist in corr_inds
         and contain the real components of the baselines specified by these 2-tuples.
-    data_i_chunked: list of tf.Tensor objects
+    data_i: list of tf.Tensor objects
         list of tf.Tensor objects. Each tensor has shape (ngrps, nbls, nfreqs)
-        where ngrps, nbls are the dimensions of each sublist in corr_inds_chunked
+        where ngrps, nbls are the dimensions of each sublist in corr_inds
         and contain the imag components of the baselines specified by these 2-tuples.
     wgts: tf.Tensor object
         list of tf.Tensor objects. Each tensor has shape (ngrps, nbls, nfreqs)
-        where ngrps, nbls are the dimensions of each sublist in corr_inds_chunked
+        where ngrps, nbls are the dimensions of each sublist in corr_inds
         and contain the weights of the baselines specified by these 2-tuples.
     """
     ants_map_inv = {ants_map[i]: i for i in ants_map}
@@ -235,7 +235,7 @@ def tensorize_data(
     data_i = np.zeros_like(data_r)
     wgts = np.zeros_like(data_r)
     wgtsum = 0.0
-    for chunk in corr_inds_chunked:
+    for chunk in corr_inds:
         for fitgrp in chunk:
             for i, j in fitgrp:
                 ap =ants_map_inv[(i, j)]
@@ -261,15 +261,13 @@ def tensorize_data(
     data_i = tf.convert_to_tensor(data_i, dtype=dtype)
     wgts = tf.convert_to_tensor(wgts / wgtsum, dtype=dtype)
 
-
-:
-    nchunks = len(corr_inds_chunked)
-    data_r_chunked = [tf.gather_nd(data_r, corr_inds_chunked[cnum] for cnum in range(nchunks)]
-    data_i_chunked = [tf.gather_nd(data_i, corr_inds_chunked[cnum] for cnum in range(nchunks)]
-    wgts_chunked = [tf.gather_nd(wgts, corr_inds_chunked[cnum]for cnum in range(nchunks)]
+    nchunks = len(corr_inds)
+    data_r = [tf.gather_nd(data_r, corr_inds[cnum] for cnum in range(nchunks)]
+    data_i = [tf.gather_nd(data_i, corr_inds[cnum] for cnum in range(nchunks)]
+    wgts = [tf.gather_nd(wgts, corr_inds[cnum]for cnum in range(nchunks)]
 
 
-    return data_r_chunked, data_i_chunked, wgts_chunked
+    return data_r, data_i, wgts
 
 
 def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, uvdata_flags=None):
@@ -362,40 +360,31 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
 def yield_fg_model_array(
     nants,
     nfreqs,
-    fg_comps_chunked,
-    fg_coeffs_chunked,
-    corr_inds_chunked,
+    fg_model_comps,
+    fg_coeffs,
+    corr_inds,
 ):
     """Compute sparse tensor foreground model.
 
     Parameters
     ----------
-    data_inds: tf.ragged.RaggedTensor
-
-
-
-    fg_comps: tf.ragged.RaggedTensor
-
-    fg_coeffs: tf.ragged.RaggedTensor
-
-    sparse_comps: tf.sparse.SparseTensor or tf.Tensor object
-        If tf.sparse.SparseTensor:
-            Sparse tensor with dense shape of  (Nants^2 * Nfreqs) x Ncomponents
-            Each column is a different data modeling component. The first axis ravels
-            the data by ant1, ant2, freq. In the per-baseline
-            modeling case, each column will be non-zero only over a single baseline.
-        If tf.Tensor
-            Tensor with shape Nants x Nants x Nfreqs x Ncomponents
-    fg_coeffs: tf.Tensor object.
-        if fg_comps is tf.sparse.SparseTensor:
-            An Ncomponents x 1 tf.Tensor representing either the real or imag component
-            of visibilities.
-        if fg_comps is a tf.Tensor:
-            An Ncomponents tf.Tensor representing either real or imag vis components.
     nants: int
         number of antennas in data to model.
     freqs: int
         number of frequencies in data to model.
+    fg_model_comps: list
+        list of fg modeling tf.Tensor objects
+        representing foreground modeling vectors.
+        Each tensor is (nvecs, ngrps, nbls, nfreqs)
+    fg_coeffs: list
+        list of fg modeling tf.Tensor objects
+        representing foreground modeling coefficients.
+        Each tensor is (nvecs, ngrps)
+    corr_inds: list
+        list of list of lists of 2-tuples. Hierarchy of lists is
+        chunk
+            group
+                baseline - (int 2-tuple)
 
     Returns
     -------
@@ -403,13 +392,13 @@ def yield_fg_model_array(
         nants x nants x nfreqs model of the visibility data
     """
     model = np.zeros((nants, nants, nfreqs))
-    nchunks = len(fg_comps_chunked)
+    nchunks = len(fg_model_comps)
     for cnum in tf.range(nchunks):
-        ngrps = fg_comps_chunked[cnum].shape[1]
-        gchunk = tf.reduce_sum(fg_comps_chunked[cnum] * fg_coeffs_chunked[cnum], axis=2).numpy()
+        ngrps = fg_model_comps[cnum].shape[1]
+        gchunk = tf.reduce_sum(fg_coeffs[cnum] * fg_model_comps[cnum], axis=0).numpy()
         for gnum in tf.range(ngrps):
-            for rnum, (i, j) in enumerate(corr_inds_chunked[cnum][gnum]):
-                model[i, j] = gchunk[rnum * nfreqs : (rnum + 1) * nfreqs, gnum]
+            for blnum, (i, j) in enumerate(corr_inds[cnum][gnum]):
+                model[i, j] = gchunk[gnum, blnum]
     return model
 
 
@@ -538,7 +527,7 @@ def fit_gains_and_foregrounds(
     if not freeze_model:
         fg_r = [tf.Variable(fgr) for fgr in fg_r]
         fg_r = [tf.Variable(fgi) for fgi in fg_r]
-        vars = [g_r, g_i] + fg_r_chunked + fg_i_chunked
+        vars = [g_r, g_i] + fg_r + fg_i
     else:
         vars = [g_r, g_i]
 
@@ -586,12 +575,9 @@ def fit_gains_and_foregrounds(
             g_r_opt = g_r.value()
             g_i_opt = g_i.value()
             if not freeze_model:
-                if fg_comps_chunked is not None:
-                    fg_r_chunked_opt = [fgr.value() for fgr in fg_r_chunked]
-                    fg_i_chunked_opt = [fgi.value() for fgi in fg_i_chunked]
-                if fg_comps_sparse is not None:
-                    fg_r_sparse_opt = fg_r_sparse.value()
-                    fg_i_sparse_opt = fg_i_sparse.value()
+                fg_r_opt = [fgr.value() for fgr in fg_r]
+                fg_i_opt = [fgi.value() for fgi in fg_i]
+
         if step >= 1 and np.abs(fit_history["loss"][-1] - fit_history["loss"][-2]) < tol:
             echo(
                 f"Tolerance thresshold met with delta of {np.abs(fit_history['loss'][-1] - fit_history['loss'][-2]):.2e}. Terminating...\n ",
@@ -607,32 +593,19 @@ def fit_gains_and_foregrounds(
         g_r_opt = g_r.value()
         g_i_opt = g_i.value()
         if not freeze_model:
-            if fg_comps_chunked is not None:
-                fg_r_chunked_opt = [fgr.value() for fgr in fg_r_chunked]
-                fg_i_chunked_opt = [fgi.value() for fgi in fg_i_chunked]
-            if fg_comps_sparse is not None:
-                fg_r_sparse_opt = fg_r_sparse.value()
-                fg_i_sparse_opt = fg_i_sparse.value()
-        else:
-            if fg_comps_chunked is not None:
-                fg_r_chunked_opt = fg_r_chunked
-                fg_i_chunked_opt = fg_i_chunked
-            if fg_comps_sparse is not None:
-                fg_r_sparse_opt = fg_r_sparse
-                fg_i_sparse_opt = fg_i_sparse
+            fg_r_opt = [fgr.value() for fgr in fg_r]
+            fg_i_opt = [fgi.value() for fgi in fg_r]
 
-    if fg_comps_sparse is None:
-        fg_r_sparse_opt = None
-        fg_i_sparse_opt = None
-    if fg_comps_chunked is None:
-        fg_r_chunked_opt = None
-        fg_i_chunked_opt = None
+        else:
+            fg_r_opt = fg_r
+            fg_i_opt = fg_i
+
 
     echo(
         f"{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n",
         verbose=verbose,
     )
-    return g_r_opt, g_i_opt, fg_r_chunked_opt, fg_i_chunked_opt, fg_r_sparse_opt, fg_i_sparse_opt, fit_history
+    return g_r_opt, g_i_opt, fg_r_opt, fg_i_opt, fit_history
 
 
 def insert_model_into_uvdata_tensor(
@@ -960,7 +933,7 @@ def calibrate_and_model_tensor(
             echo(f"{datetime.datetime.now()} Tensorizing data...\n", verbose=verbose)
             data_r, data_i, wgts = tensorize_data(
                 uvdata,
-                corr_inds_chunked=corr_inds,
+                corr_inds=corr_inds,
                 ants_map=ants_map,
                 polarization=pol,
                 time_index=time_index,
@@ -1029,20 +1002,19 @@ def calibrate_and_model_tensor(
                 ants_map=ants_map,
                 red_grps=red_grps,
                 model_r=yield_fg_model_array(
-                    fg_comps_sparse=fg_comps_sparse,
-                    fg_comps_chunked=fg_comps_chunked,
-                    fg_coeffs_chunked=fg_r_chunked,
+                    fg_model_comps=fg_model_comps,
+                    fg_coeffs=fg_r,
                     fg_coeffs_sparse=fg_r_sparse,
-                    corr_inds_chunked=corr_inds_chunked,
+                    corr_inds=corr_inds,
                     nants=uvdata.Nants_data,
                     nfreqs=uvdata.Nfreqs,
                 ),
                 model_i=yield_fg_model_array(
                     fg_comps_sparse=fg_comps_sparse,
-                    fg_comps_chunked=fg_comps_chunked,
-                    fg_coeffs_chunked=fg_i_chunked,
+                    fg_model_comps=fg_model_comps,
+                    fg_coeffs=fg_i,
                     fg_coeffs_sparse=fg_i_sparse,
-                    corr_inds_chunked=corr_inds_chunked,
+                    corr_inds=corr_inds,
                     nants=uvdata.Nants_data,
                     nfreqs=uvdata.Nfreqs,
                 ),
@@ -1318,8 +1290,8 @@ def loss_function_chunked(
         gigi = gi0 * gi1
         grgi = gr0 * gi1
         gigr = gi0 * gr1
-        vr = tf.reduce_sum(fg_comps[cnum] * fg_r[cnum], axis=[2, 3])
-        vi = tf.reduce_sum(fg_comps[cnum] * fg_i[cnum], axis=[2, 3])
+        vr = tf.reduce_sum(fg_r[cnum] * fg_comps[cnum], axis=0)
+        vi = tf.reduce_sum(fg_i[cnum] * fg_comps[cnum], axis=0)
         model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
         model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
         cal_loss += tf.reduce_sum((tf.square(data_r[cnum] - model_r) + tf.square(data_i[cnum] - model_i)) * wgts[cnum])
