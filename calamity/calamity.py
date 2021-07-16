@@ -166,7 +166,6 @@ def tensorize_data(
     ants_map,
     polarization,
     time_index,
-    red_counts,
     data_scale_factor=1.0,
     weights=None,
     dtype=np.float32,
@@ -189,10 +188,6 @@ def tensorize_data(
         pol-str of gain to extract.
     time_index: int
         index of time to convert to tensors
-    red_counts: dict
-        dictionary with int 2-tuples as keys and floats as values
-        storing total number of baselines redundant with a particular baseline
-        (including itself).
     data_scale_factor: float, optional
         overall scaling factor to divide tensorized data by.
         default is 1.0
@@ -217,12 +212,6 @@ def tensorize_data(
         list of tf.Tensor objects. Each tensor has shape (ngrps, nbls, nfreqs)
         where ngrps, nbls are the dimensions of each sublist in corr_inds
         and contain the weights of the baselines specified by these 2-tuples.
-    red_wgts: tf.Tensor object
-        list of tf.Tensor objects. Each tensor has shape (ngrps, nbls, nfreqs)
-        where ngrps, nbls are the dimensions of each sublist in corr_inds
-        and contain 0 for flagged values and 1 / nred for unflagged values where
-        nred is the number of redundant baselines in the redundant group that each
-        antenna belongs too.
     """
     ants_map_inv = {ants_map[i]: i for i in ants_map}
     dshape = (uvdata.Nants_data, uvdata.Nants_data, uvdata.Nfreqs)
@@ -252,20 +241,17 @@ def tensorize_data(
                         == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation)
                     )[0][0]
                     wgts[i, j] = weights.weights_array[dinds[time_index], 0, :, polnum].astype(dtype) * iflags
-                    red_wgts[i, j] = iflags / red_counts[ap]
                 wgtsum += np.sum(wgts[i, j])
     data_r = tf.convert_to_tensor(data_r, dtype=dtype)
     data_i = tf.convert_to_tensor(data_i, dtype=dtype)
     wgts = tf.convert_to_tensor(wgts / wgtsum, dtype=dtype)
-    red_wgts = tf.convert_to_tensor(red_wgts, dtype=dtype)
 
     nchunks = len(corr_inds)
     data_r = [tf.gather_nd(data_r, corr_inds[cnum]) for cnum in range(nchunks)]
     data_i = [tf.gather_nd(data_i, corr_inds[cnum]) for cnum in range(nchunks)]
     wgts = [tf.gather_nd(wgts, corr_inds[cnum]) for cnum in range(nchunks)]
-    red_wgts = [tf.gather_nd(red_wgts, corr_inds[cnum]) for cnum in range(nchunks)]
 
-    return data_r, data_i, wgts, red_wgts
+    return data_r, data_i, wgts
 
 
 def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, uvdata_flags=None):
@@ -689,7 +675,7 @@ def insert_gains_into_uvcal(uvcal, time_index, polarization, gains_re, gains_im)
 
 def tensorize_fg_coeffs(
     data,
-    red_wgts,
+    wgts,
     fg_model_comps,
 ):
     """Initialize foreground coefficient tensors from uvdata and modeling component dictionaries.
@@ -699,12 +685,6 @@ def tensorize_fg_coeffs(
     ----------
     data: list
         list of tf.Tensor objects, each with shape (ngrps, nbls, nfreqs)
-
-    red_wgts: list
-        list of tf.Tensor objects, each with shape (ngrps, nbls, nfreqs)
-        each element should be equal to 1 / nred where nred is the number of baselines
-        that are redundant with a particular baseline and 0. if flagged
-
     red_grps: list of lists of int 2-tuples
         lists of redundant baseline groups with antenna pairs set to avoid conjugation.
     time_index: int
@@ -730,12 +710,33 @@ def tensorize_fg_coeffs(
     """
     fg_coeffs = []
     nchunks = len(data)
-    red_multiplier_wgts = [tf.convert_to_tensor(~np.isclose(wgts[cnum].numpy(), 0.), dtype=wgts[cnum].dtype) for cnum in range(nchunks)]
-
+    binary_wgts = [
+        tf.convert_to_tensor(~np.isclose(wgts[cnum].numpy(), 0.0), dtype=wgts[cnum].dtype) for cnum in range(nchunks)
+    ]
     for cnum in tf.range(nchunks):
-        fg_coeffs.append(tf.reduce_sum(fg_model_comps[cnum] * (data[cnum] * binary_wgts[cnum]), axis=[2, 3]))
+        # set up linear leastsq
+        fg_coeff_chunk = []
+        ngrps = data[cnum].shape[0]
+        ndata = data[cnum].shape[1] * data[cnum].shape[2]
+        nvecs = fg_model_comps[cnum].shape[0]
+        # pad with zeros
+        nvecs_nonzero =
+        for gnum in tf.range(ngrps):
+            # solve linear leastsq
+            fg_coeff_chunk.append(
+                tf.reshape(
+                    tf.linalg.lstsq(
+                        tf.transpose(tf.reshape(fg_model_comps[cnum][:, gnum], (nvecs, ndata)))[:, :nvecs_nonzero],
+                        tf.reshape(data[cnum][gnum] * binary_wgts[cnum][gnum], (ndata, 1)),
+                    ),
+                    (nvecs_nonzero,),
+                )
+            )
+        # pad zeros at the end back up to nvecs.
+        fg_coeff_chunk[-1] = tf.pad(fg_coeff_chunk[-1], (0, nvecs - nvecs_nonzero))
         # add two additional dummy indices to satify broadcasting rules.
-        fg_coeffs[-1] = tf.reshape(fg_coeffs[-1], (fg_coeffs[-1].shape[0], fg_coeffs[-1].shape[1], 1, 1))
+        fg_coeff_chunk = tf.reshape(tf.transpose(tf.stack(fg_coeff_chunk)), (nvecs, ngrps, 1, 1))
+        fg_coeffs.append(fg_coeff_chunk)
     return fg_coeffs
 
 
@@ -863,10 +864,6 @@ def calibrate_and_model_tensor(
     for fit_grp in fg_model_comps_dict.keys():
         for red_grp in fit_grp:
             red_grps.append(red_grp)
-    red_counts = {}
-    for red_grp in red_grps:
-        for ap in red_grp:
-            red_counts[ap] = len(red_grp) * 1.
 
     if gains is None:
         echo(
@@ -922,13 +919,12 @@ def calibrate_and_model_tensor(
                 verbose=verbose,
             )
             echo(f"{datetime.datetime.now()} Tensorizing data...\n", verbose=verbose)
-            data_r, data_i, wgts, red_wgts = tensorize_data(
+            data_r, data_i, wgts = tensorize_data(
                 uvdata,
                 corr_inds=corr_inds,
                 ants_map=ants_map,
                 polarization=pol,
                 time_index=time_index,
-                red_counts=red_counts,
                 data_scale_factor=rmsdata,
                 weights=weights,
                 dtype=dtype,
@@ -942,7 +938,7 @@ def calibrate_and_model_tensor(
             )
             fg_r = tensorize_fg_coeffs(
                 data=data_r,
-                red_wgts=red_wgts,
+                wgts=wgts,
                 fg_model_comps=fg_model_comps,
                 dtype=dtype,
                 time_index=time_index,
@@ -952,7 +948,7 @@ def calibrate_and_model_tensor(
 
             fg_i = tensorize_fg_coeffs(
                 data=data_i,
-                red_wgts=red_wgts,
+                wgts=wgts,
                 fg_model_comps=fg_model_comps,
                 dtype=dtype,
                 time_index=time_index,
