@@ -141,6 +141,7 @@ def tensorize_fg_model_comps_dict(
             corr_inds_grp = []
             nbl = 0
             for rgrpnum, red_grp in enumerate(modeling_grp):
+                nred = len(red_grp)
                 for ap in red_grp:
                     i, j = ants_map[ap[0]], ants_map[ap[1]]
                     corr_inds_grp.append((i, j))
@@ -165,6 +166,7 @@ def tensorize_data(
     ants_map,
     polarization,
     time_index,
+    red_counts,
     data_scale_factor=1.0,
     weights=None,
     dtype=np.float32,
@@ -187,6 +189,10 @@ def tensorize_data(
         pol-str of gain to extract.
     time_index: int
         index of time to convert to tensors
+    red_counts: dict
+        dictionary with int 2-tuples as keys and floats as values
+        storing total number of baselines redundant with a particular baseline
+        (including itself).
     data_scale_factor: float, optional
         overall scaling factor to divide tensorized data by.
         default is 1.0
@@ -211,6 +217,12 @@ def tensorize_data(
         list of tf.Tensor objects. Each tensor has shape (ngrps, nbls, nfreqs)
         where ngrps, nbls are the dimensions of each sublist in corr_inds
         and contain the weights of the baselines specified by these 2-tuples.
+    red_wgts: tf.Tensor object
+        list of tf.Tensor objects. Each tensor has shape (ngrps, nbls, nfreqs)
+        where ngrps, nbls are the dimensions of each sublist in corr_inds
+        and contain 0 for flagged values and 1 / nred for unflagged values where
+        nred is the number of redundant baselines in the redundant group that each
+        antenna belongs too.
     """
     ants_map_inv = {ants_map[i]: i for i in ants_map}
     dshape = (uvdata.Nants_data, uvdata.Nants_data, uvdata.Nfreqs)
@@ -240,17 +252,20 @@ def tensorize_data(
                         == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation)
                     )[0][0]
                     wgts[i, j] = weights.weights_array[dinds[time_index], 0, :, polnum].astype(dtype) * iflags
+                    red_wgts[i, j] = iflags / red_counts[ap]
                 wgtsum += np.sum(wgts[i, j])
     data_r = tf.convert_to_tensor(data_r, dtype=dtype)
     data_i = tf.convert_to_tensor(data_i, dtype=dtype)
     wgts = tf.convert_to_tensor(wgts / wgtsum, dtype=dtype)
+    red_wgts = tf.convert_to_tensor(red_wgts, dtype=dtype)
 
     nchunks = len(corr_inds)
     data_r = [tf.gather_nd(data_r, corr_inds[cnum]) for cnum in range(nchunks)]
     data_i = [tf.gather_nd(data_i, corr_inds[cnum]) for cnum in range(nchunks)]
     wgts = [tf.gather_nd(wgts, corr_inds[cnum]) for cnum in range(nchunks)]
+    red_wgts = [tf.gather_nd(red_wgts, corr_inds[cnum]) for cnum in range(nchunks)]
 
-    return data_r, data_i, wgts
+    return data_r, data_i, wgts, red_wgts
 
 
 def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, uvdata_flags=None):
@@ -674,9 +689,8 @@ def insert_gains_into_uvcal(uvcal, time_index, polarization, gains_re, gains_im)
 
 def tensorize_fg_coeffs(
     data,
-    wgts,
+    red_wgts,
     fg_model_comps,
-    scale_factor=1.0,
 ):
     """Initialize foreground coefficient tensors from uvdata and modeling component dictionaries.
 
@@ -686,8 +700,10 @@ def tensorize_fg_coeffs(
     data: list
         list of tf.Tensor objects, each with shape (ngrps, nbls, nfreqs)
 
-    tensorized_fg_model_comps: list
-        list of tf.Tensor objects, each with shape (nvecs, ngrps, nbls, nfreqs)
+    red_wgts: list
+        list of tf.Tensor objects, each with shape (ngrps, nbls, nfreqs)
+        each element should be equal to 1 / nred where nred is the number of baselines
+        that are redundant with a particular baseline and 0. if flagged
 
     red_grps: list of lists of int 2-tuples
         lists of redundant baseline groups with antenna pairs set to avoid conjugation.
@@ -714,10 +730,12 @@ def tensorize_fg_coeffs(
     """
     fg_coeffs = []
     nchunks = len(data)
+    red_multiplier_wgts = [tf.convert_to_tensor(~np.isclose(wgts[cnum].numpy(), 0.), dtype=wgts[cnum].dtype) for cnum in range(nchunks)]
+
     for cnum in tf.range(nchunks):
-        fg_coeffs.append(tf.reduce_sum(fg_model_comps[cnum] * (data[cnum] * wgts[cnum]), axis=[2, 3]))
+        fg_coeffs.append(tf.reduce_sum(fg_model_comps[cnum] * (data[cnum] * binary_wgts[cnum]), axis=[2, 3]))
         # add two additional dummy indices to satify broadcasting rules.
-        fg_coeffs[-1] = tf.reshape(fg_coeffs[-1], (fg_coeffs[-1].shape[0], fg_coeffs[-1].shape[1], 1, 1) / scale_factor)
+        fg_coeffs[-1] = tf.reshape(fg_coeffs[-1], (fg_coeffs[-1].shape[0], fg_coeffs[-1].shape[1], 1, 1))
     return fg_coeffs
 
 
@@ -845,6 +863,10 @@ def calibrate_and_model_tensor(
     for fit_grp in fg_model_comps_dict.keys():
         for red_grp in fit_grp:
             red_grps.append(red_grp)
+    red_counts = {}
+    for red_grp in red_grps:
+        for ap in red_grp:
+            red_counts[ap] = len(red_grp) * 1.
 
     if gains is None:
         echo(
@@ -900,12 +922,13 @@ def calibrate_and_model_tensor(
                 verbose=verbose,
             )
             echo(f"{datetime.datetime.now()} Tensorizing data...\n", verbose=verbose)
-            data_r, data_i, wgts = tensorize_data(
+            data_r, data_i, wgts, red_wgts = tensorize_data(
                 uvdata,
                 corr_inds=corr_inds,
                 ants_map=ants_map,
                 polarization=pol,
                 time_index=time_index,
+                red_counts=red_counts,
                 data_scale_factor=rmsdata,
                 weights=weights,
                 dtype=dtype,
@@ -919,7 +942,7 @@ def calibrate_and_model_tensor(
             )
             fg_r = tensorize_fg_coeffs(
                 data=data_r,
-                wgts=wgts,
+                red_wgts=red_wgts,
                 fg_model_comps=fg_model_comps,
                 dtype=dtype,
                 time_index=time_index,
@@ -929,7 +952,7 @@ def calibrate_and_model_tensor(
 
             fg_i = tensorize_fg_coeffs(
                 data=data_i,
-                wgts=wgts,
+                red_wgts=red_wgts,
                 fg_model_comps=fg_model_comps,
                 dtype=dtype,
                 time_index=time_index,

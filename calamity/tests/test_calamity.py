@@ -363,7 +363,7 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
         dtype=np.float64,
         nfreqs=nfreqs,
     )
-    data_r, data_i, wgts = calamity.tensorize_data(
+    data_r, data_i, wgts, red_wgts = calamity.tensorize_data(
         sky_model, corr_inds_chunked, ants_map, polarization="xx", time_index=0, dtype=np.float64
     )
 
