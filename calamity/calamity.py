@@ -68,8 +68,6 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict):
             chunked_keys[nbl] = [fit_grp]
             maxvecs[nbl] = fg_model_comps_dict[fit_grp].shape[1]
 
-
-
     fg_model_comps_dict_chunked = {}
     for nbl in chunked_keys:
         fg_model_comps_dict_chunked[(nbl, maxvecs[nbl])] = {k: fg_model_comps_dict[k] for k in chunked_keys[nbl]}
@@ -138,9 +136,8 @@ def tensorize_fg_model_comps_dict(
         ngrps = len(fg_model_comps_dict[(nbls, nvecs)])
         modeling_matrix = np.zeros((nvecs, ngrps, nbls, nfreqs))
 
-        grpnum = 0
         corr_inds_chunk = []
-        for modeling_grp in fg_model_comps_dict[(nbls, nvecs)]:
+        for grpnum, modeling_grp in enumerate(fg_model_comps_dict[(nbls, nvecs)]):
             corr_inds_grp = []
             nbl = 0
             for rgrpnum, red_grp in enumerate(modeling_grp):
@@ -150,7 +147,9 @@ def tensorize_fg_model_comps_dict(
                     vecslice = slice(0, fg_model_comps_dict[(nbls, nvecs)][modeling_grp].shape[1])
                     compslice = slice(rgrpnum * nfreqs, (rgrpnum + 1) * nfreqs)
                     dslice = slice(nbl * nfreqs, (nbl + 1) * nfreqs)
-                    modeling_matrix[vecslice, grpnum, nbl] = fg_model_comps_dict[(nbls, nvecs)][modeling_grp][compslice].T
+                    modeling_matrix[vecslice, grpnum, nbl] = fg_model_comps_dict[(nbls, nvecs)][modeling_grp][
+                        compslice
+                    ].T
                     nbl += 1
             corr_inds_chunk.append(corr_inds_grp)
 
@@ -222,7 +221,7 @@ def tensorize_data(
     for chunk in corr_inds:
         for fitgrp in chunk:
             for (i, j) in fitgrp:
-                ap = ants_map_inv[(i, j)]
+                ap = ants_map_inv[i], ants_map_inv[j]
                 bl = ap + (polarization,)
                 data = uvdata.get_data(bl)[time_index] / data_scale_factor
                 iflags = (~uvdata.get_flags(bl))[time_index].astype(dtype)
@@ -363,7 +362,7 @@ def yield_fg_model_array(
     fg_coeffs: list
         list of fg modeling tf.Tensor objects
         representing foreground modeling coefficients.
-        Each tensor is (nvecs, ngrps)
+        Each tensor is (nvecs, ngrps, 1, 1)
     corr_inds: list
         list of list of lists of 2-tuples. Hierarchy of lists is
         chunk
@@ -415,10 +414,10 @@ def fit_gains_and_foregrounds(
     g_i: tf.Tensor object.
         tf.Tensor object holding imag parts of gains.
     fg_r: list
-        list of tf.Tensor objects. Each has shape (nvecs, ngrps)
+        list of tf.Tensor objects. Each has shape (nvecs, ngrps, 1, 1)
         tf.Tensor object holding foreground coeffs.
     fg_i: list
-        list of tf.Tensor objects. Each has shape (nvecs, ngrps)
+        list of tf.Tensor objects. Each has shape (nvecs, ngrps, 1, 1)
         tf.Tensor object holding imag coeffs.
     data_r: list
         list of tf.Tensor objects. Each has shape (ngrps, nbls, nfreqs)
@@ -677,10 +676,7 @@ def tensorize_fg_coeffs(
     data,
     wgts,
     fg_model_comps,
-    time_index,
-    polarization,
     scale_factor=1.0,
-    dtype=np.float32,
 ):
     """Initialize foreground coefficient tensors from uvdata and modeling component dictionaries.
 
@@ -720,6 +716,8 @@ def tensorize_fg_coeffs(
     nchunks = len(data)
     for cnum in tf.range(nchunks):
         fg_coeffs.append(tf.reduce_sum(fg_model_comps[cnum] * (data[cnum] * wgts[cnum]), axis=[2, 3]))
+        # add two additional dummy indices to satify broadcasting rules.
+        fg_coeffs[-1] = tf.reshape(fg_coeffs[-1], (fg_coeffs[-1].shape[0], fg_coeffs[-1].shape[1], 1, 1) / scale_factor)
     return fg_coeffs
 
 
