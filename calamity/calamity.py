@@ -523,7 +523,7 @@ def fit_gains_and_foregrounds(
         echo(
             f"Performing gradient descent on total of {int(np.sum([fgr.shape[0] * fgr.shape[1] for fgr in fg_r]))} complex foreground parameters"
         )
-        echo(f"Foreground Parameters grouped into chunks of shape (nparams: nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[0]) for fgr, dc in zip(fg_r, data_r)]}")
+        echo(f"Foreground Parameters grouped into chunks of shape ((nvecs, ngrps): nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[1]) for fgr, dc in zip(fg_r, data_r)]}")
 
     def loss_function():
         return loss_function_chunked(
