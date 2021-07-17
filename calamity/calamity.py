@@ -518,7 +518,7 @@ def fit_gains_and_foregrounds(
     else:
         vars = [g_r, g_i]
 
-    echo(f"{datetime.datetime} Performing gradient descent on {len(g_r)} complex gain parameters...", verbose=verbose)
+    echo(f"{datetime.datetime} Performing gradient descent on {np.prod(g_r.shape)} complex gain parameters...", verbose=verbose)
     if not freeze_model:
         echo(
             f"Performing gradient descent on total of {int(np.sum([fgr.shape[0] * fgr.shape[1] for fgr in fg_r]))} complex foreground parameters"
@@ -1090,6 +1090,7 @@ def calibrate_and_model_mixed(
     require_exact_angle_match=True,
     angle_match_tol=1e-3,
     grp_size_threshold=5,
+    model_comps_dict=None,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with a mix of DPSS vectors
@@ -1181,21 +1182,22 @@ def calibrate_and_model_mixed(
         angle_match_tol=angle_match_tol,
     )
 
-    model_comps_dict = modeling.yield_mixed_comps(
-        fitting_grps,
-        blvecs,
-        uvdata.freq_array[0],
-        eigenval_cutoff=eigenval_cutoff,
-        use_tensorflow=use_tensorflow_to_derive_modeling_comps,
-        ant_dly=ant_dly,
-        horizon=horizon,
-        offset=offset,
-        min_dly=min_dly,
-        verbose=verbose,
-        dtype=dtype_matinv,
-        notebook_progressbar=notebook_progressbar,
-        grp_size_threshold=grp_size_threshold,
-    )
+    if model_comps_dict is None:
+        model_comps_dict = modeling.yield_mixed_comps(
+            fitting_grps,
+            blvecs,
+            uvdata.freq_array[0],
+            eigenval_cutoff=eigenval_cutoff,
+            use_tensorflow=use_tensorflow_to_derive_modeling_comps,
+            ant_dly=ant_dly,
+            horizon=horizon,
+            offset=offset,
+            min_dly=min_dly,
+            verbose=verbose,
+            dtype=dtype_matinv,
+            notebook_progressbar=notebook_progressbar,
+            grp_size_threshold=grp_size_threshold,
+        )
 
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
         uvdata=uvdata,
