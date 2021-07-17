@@ -523,7 +523,7 @@ def fit_gains_and_foregrounds(
         echo(
             f"Performing gradient descent on total of {int(np.sum([fgr.shape[0] * fgr.shape[1] for fgr in fg_r]))} complex foreground parameters"
         )
-        echo(f"Foreground Parameters grouped into chunks of shape {[fgr.shape[:1] for fgr in fg_r]}")
+        echo(f"Foreground Parameters grouped into chunks of shape {[fgr.shape[:2] for fgr in fg_r]}")
 
     def loss_function():
         return loss_function_chunked(
@@ -1209,7 +1209,7 @@ def calibrate_and_model_mixed(
 
     if save_dict_to is not None:
         np.save(save_dict_to, model_comps_dict)
-        
+
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
         uvdata=uvdata,
         fg_model_comps_dict=model_comps_dict,
