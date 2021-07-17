@@ -508,28 +508,28 @@ def fit_gains_and_foregrounds(
     g_i = tf.Variable(g_i)
     if not freeze_model:
         fg_r = [tf.Variable(fgr) for fgr in fg_r]
-        fg_r = [tf.Variable(fgi) for fgi in fg_r]
+        fg_i = [tf.Variable(fgi) for fgi in fg_i]
         vars = [g_r, g_i] + fg_r + fg_i
     else:
         vars = [g_r, g_i]
 
     def loss_function():
         return loss_function_chunked(
-            g_r,
-            g_i,
-            fg_r,
-            fg_i,
-            fg_comps,
-            nchunks,
-            data_r,
-            data_i,
-            wgts,
-            ant0_inds,
-            ant1_inds,
+            g_r=g_r,
+            g_i=g_i,
+            fg_r=fg_r,
+            fg_i=fg_i,
+            fg_comps=fg_comps,
+            nchunks=nchunks,
+            data_r=data_r,
+            data_i=data_i,
+            wgts=wgts,
+            ant0_inds=ant0_inds,
+            ant1_inds=ant1_inds,
             dtype=dtype,
         )
 
-    @tf.function
+    # @tf.function
     def train_step():
         with tf.GradientTape() as tape:
             loss = loss_function()
@@ -576,7 +576,7 @@ def fit_gains_and_foregrounds(
         g_i_opt = g_i.value()
         if not freeze_model:
             fg_r_opt = [fgr.value() for fgr in fg_r]
-            fg_i_opt = [fgi.value() for fgi in fg_r]
+            fg_i_opt = [fgi.value() for fgi in fg_i]
 
         else:
             fg_r_opt = fg_r
@@ -677,6 +677,8 @@ def tensorize_fg_coeffs(
     data,
     wgts,
     fg_model_comps,
+    notebook_progressbar=False,
+    verbose=False,
 ):
     """Initialize foreground coefficient tensors from uvdata and modeling component dictionaries.
 
@@ -708,20 +710,30 @@ def tensorize_fg_coeffs(
         ordering is over foreground modeling vector per redundant group and then
         redundant group in the order of groups appearing in red_grps
     """
+    echo(
+        f"{datetime.datetime.now()} Computing initial foreground coefficient guesses using linear-leastsq...\n",
+        verbose=verbose,
+    )
     fg_coeffs = []
     nchunks = len(data)
     binary_wgts = [
         tf.convert_to_tensor(~np.isclose(wgts[cnum].numpy(), 0.0), dtype=wgts[cnum].dtype) for cnum in range(nchunks)
     ]
-    for cnum in tf.range(nchunks):
+    for cnum in PBARS[notebook_progressbar](range(nchunks)):
         # set up linear leastsq
         fg_coeff_chunk = []
         ngrps = data[cnum].shape[0]
         ndata = data[cnum].shape[1] * data[cnum].shape[2]
         nvecs = fg_model_comps[cnum].shape[0]
         # pad with zeros
-        nvecs_nonzero =
-        for gnum in tf.range(ngrps):
+        for gnum in range(ngrps):
+            nonzero_rows = np.where(
+                np.all(np.isclose(fg_model_comps[cnum][:, gnum].numpy().reshape(nvecs, ndata), 0.0), axis=1)
+            )[0]
+            if len(nonzero_rows) > 0:
+                nvecs_nonzero = np.min(nonzero_rows)
+            else:
+                nvecs_nonzero = nvecs
             # solve linear leastsq
             fg_coeff_chunk.append(
                 tf.reshape(
@@ -732,11 +744,16 @@ def tensorize_fg_coeffs(
                     (nvecs_nonzero,),
                 )
             )
-        # pad zeros at the end back up to nvecs.
-        fg_coeff_chunk[-1] = tf.pad(fg_coeff_chunk[-1], (0, nvecs - nvecs_nonzero))
+            # pad zeros at the end back up to nvecs.
+            fg_coeff_chunk[-1] = tf.pad(fg_coeff_chunk[-1], [(0, nvecs - nvecs_nonzero)])
         # add two additional dummy indices to satify broadcasting rules.
         fg_coeff_chunk = tf.reshape(tf.transpose(tf.stack(fg_coeff_chunk)), (nvecs, ngrps, 1, 1))
         fg_coeffs.append(fg_coeff_chunk)
+
+    echo(
+        f"{datetime.datetime.now()} Finished initial foreground coefficient guesses...\n",
+        verbose=verbose,
+    )
     return fg_coeffs
 
 
@@ -940,20 +957,16 @@ def calibrate_and_model_tensor(
                 data=data_r,
                 wgts=wgts,
                 fg_model_comps=fg_model_comps,
-                dtype=dtype,
-                time_index=time_index,
-                polarization=pol,
-                scale_factor=rmsdata,
+                verbose=verbose,
+                notebook_progressbar=notebook_progressbar,
             )
 
             fg_i = tensorize_fg_coeffs(
                 data=data_i,
                 wgts=wgts,
                 fg_model_comps=fg_model_comps,
-                dtype=dtype,
-                time_index=time_index,
-                polarization=pol,
-                scale_factor=rmsdata,
+                verbose=verbose,
+                notebook_progressbar=notebook_progressbar,
             )
 
             (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
@@ -964,7 +977,7 @@ def calibrate_and_model_tensor(
                 data_r=data_r,
                 data_i=data_i,
                 wgts=wgts,
-                fg_model_comps=fg_model_comps,
+                fg_comps=fg_model_comps,
                 corr_inds=corr_inds,
                 optimizer=optimizer,
                 use_min=use_min,
@@ -1251,10 +1264,10 @@ def loss_function_chunked(
     cal_loss = tf.constant(0.0, dtype=dtype)
     # now deal with dense components
     for cnum in tf.range(nchunks):
-        gr0 = gather(g_r, ant0_inds[cnum])
-        gr1 = gather(g_r, ant1_inds[cnum])
-        gi0 = gather(g_i, ant0_inds[cnum])
-        gi1 = gather(g_i, ant1_inds[cnum])
+        gr0 = tf.gather(g_r, ant0_inds[cnum])
+        gr1 = tf.gather(g_r, ant1_inds[cnum])
+        gi0 = tf.gather(g_i, ant0_inds[cnum])
+        gi1 = tf.gather(g_i, ant1_inds[cnum])
         grgr = gr0 * gr1
         gigi = gi0 * gi1
         grgi = gr0 * gi1

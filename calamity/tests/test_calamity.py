@@ -398,19 +398,19 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
 
 def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_model_projected, gains):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comps_tensor, _, _ = calamity.tensorize_fg_model_comps_dict(
+    fg_comps_tensor, corr_inds = calamity.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=dpss_vectors,
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=sky_model_projected.Nfreqs,
     )
-    (fg_coeffs_re, fg_coeffs_im, _, _) = calamity.tensorize_fg_coeffs(
-        sky_model_projected,
-        dpss_vectors,
-        time_index=0,
-        polarization="xx",
-        dtype=np.float64,
+    rmsdata = np.mean(np.abs(sky_model_projected.data_array) ** 2.) ** .5
+    data_r, data_i, wgts = calamity.tensorize_data(
+        sky_model_projected, corr_inds, ants_map, polarization="xx", time_index=0, dtype=np.float64, data_scale_factor=rmsdata,
     )
+
+    fg_coeffs_re = calamity.tensorize_fg_coeffs(data_r, wgts, fg_comps_tensor)
+    fg_coeffs_im = calamity.tensorize_fg_coeffs(data_i, wgts, fg_comps_tensor)
     inserted_model = copy.deepcopy(sky_model_projected)
     # set data array to be noise.
     inserted_model.data_array = np.random.randn(*inserted_model.data_array.shape) + 1j * np.random.randn(
@@ -420,10 +420,10 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
     nants = sky_model_projected.Nants_data
     nfreqs = sky_model_projected.Nfreqs
     model_r = calamity.yield_fg_model_array(
-        fg_comps_sparse=fg_comps_tensor, fg_coeffs_sparse=fg_coeffs_re, nants=nants, nfreqs=nfreqs
+        fg_model_comps=fg_comps_tensor, fg_coeffs=fg_coeffs_re, nants=nants, nfreqs=nfreqs, corr_inds=corr_inds
     )
     model_i = calamity.yield_fg_model_array(
-        fg_comps_sparse=fg_comps_tensor, fg_coeffs_sparse=fg_coeffs_im, nants=nants, nfreqs=nfreqs
+        fg_model_comps=fg_comps_tensor, fg_coeffs=fg_coeffs_im, nants=nants, nfreqs=nfreqs, corr_inds=corr_inds
     )
     # insert tensors
     calamity.insert_model_into_uvdata_tensor(
@@ -434,25 +434,10 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
         redundant_groups,
         model_r,
         model_i,
+        scale_factor=rmsdata,
     )
     # check that data arrays are equal
     assert np.allclose(inserted_model.data_array, sky_model_projected.data_array)
-
-
-def test_tensorize_data(sky_model_projected, redundant_groups, gains):
-    ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    for tnum in range(sky_model_projected.Ntimes):
-        data_re, data_im, wgts = calamity.tensorize_data(
-            sky_model_projected, redundant_groups, ants_map, "xx", 0, dtype=np.float64
-        )
-        for red_grp in redundant_groups:
-            for ap in red_grp:
-                i, j = ants_map[ap[0]], ants_map[ap[1]]
-                data = sky_model_projected.get_data(ap + ("xx",))[tnum]
-                assert np.allclose(data, data_re[i, j].numpy() + 1j * data_im[i, j].numpy())
-                assert np.allclose(
-                    wgts[i, j], np.sum(sky_model_projected.nsample_array * ~sky_model_projected.flag_array) ** -1.0
-                )
 
 
 @pytest.mark.parametrize(
