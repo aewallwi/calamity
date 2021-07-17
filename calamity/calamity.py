@@ -403,6 +403,7 @@ def fit_gains_and_foregrounds(
     verbose=False,
     notebook_progressbar=False,
     dtype=np.float32,
+    graph_mode=True,
     **opt_kwargs,
 ):
     """Run optimization loop to fit gains and foreground components.
@@ -512,7 +513,6 @@ def fit_gains_and_foregrounds(
     else:
         vars = [g_r, g_i]
 
-    @tf.function
     def loss_function():
         return loss_function_chunked(
             g_r=g_r,
@@ -529,13 +529,20 @@ def fit_gains_and_foregrounds(
             dtype=dtype,
         )
 
-    # @tf.function
-    def train_step():
+    def train_step_code():
         with tf.GradientTape() as tape:
             loss = loss_function()
         grads = tape.gradient(loss, vars)
         opt.apply_gradients(zip(grads, vars))
         return loss
+
+    if graph_mode:
+        @tf.function
+        def train_step():
+            return train_step_code()
+    else:
+        def train_step():
+            return train_step_code()
 
     echo(
         f"{datetime.datetime.now()} Building Computational Graph...\n",
@@ -775,6 +782,7 @@ def calibrate_and_model_tensor(
     correct_resid=False,
     correct_model=False,
     weights=None,
+    graph_mode=True,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -987,6 +995,7 @@ def calibrate_and_model_tensor(
                 tol=tol,
                 dtype=dtype,
                 maxsteps=maxsteps,
+                graph_mode=graph_mode,
                 **opt_kwargs,
             )
             # insert into model uvdata.
@@ -1253,21 +1262,16 @@ def calibrate_and_model_dpss(
     return model, resid, gains, fitted_info
 
 
-@tf.function
-def gather(x, ind):
-    return tf.gather(x + 0, ind)
-
-@tf.function
 def loss_function_chunked(
     g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32
 ):
     cal_loss = tf.constant(0.0, dtype=dtype)
     # now deal with dense components
     for cnum in range(nchunks):
-        gr0 = gather(g_r, ant0_inds[cnum])
-        gr1 = gather(g_r, ant1_inds[cnum])
-        gi0 = gather(g_i, ant0_inds[cnum])
-        gi1 = gather(g_i, ant1_inds[cnum])
+        gr0 = tf.gather(g_r, ant0_inds[cnum])
+        gr1 = tf.gather(g_r, ant1_inds[cnum])
+        gi0 = tf.gather(g_i, ant0_inds[cnum])
+        gi1 = tf.gather(g_i, ant1_inds[cnum])
         grgr = gr0 * gr1
         gigi = gi0 * gi1
         grgi = gr0 * gi1
