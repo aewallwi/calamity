@@ -450,7 +450,7 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
     ],
 )
 def test_calibrate_and_model_dpss(
-    uvdata, sky_model_projected, gains_randomized, gains, weights, noweights, perfect_data
+    uvdata, sky_model_projected, gains_randomized, gains, weights, noweights, perfect_data, use_min
 ):
     if noweights:
         weight = None
@@ -471,6 +471,7 @@ def test_calibrate_and_model_dpss(
             correct_resid=True,
             correct_model=True,
             weights=weight,
+            use_min=use_min,
         )
     else:
         model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
@@ -486,6 +487,7 @@ def test_calibrate_and_model_dpss(
             correct_resid=True,
             correct_model=True,
             weights=weight,
+            use_min=use_min,
         )
     assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
