@@ -404,9 +404,15 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
         dtype=np.float64,
         nfreqs=sky_model_projected.Nfreqs,
     )
-    rmsdata = np.mean(np.abs(sky_model_projected.data_array) ** 2.) ** .5
+    rmsdata = np.mean(np.abs(sky_model_projected.data_array) ** 2.0) ** 0.5
     data_r, data_i, wgts = calamity.tensorize_data(
-        sky_model_projected, corr_inds, ants_map, polarization="xx", time_index=0, dtype=np.float64, data_scale_factor=rmsdata,
+        sky_model_projected,
+        corr_inds,
+        ants_map,
+        polarization="xx",
+        time_index=0,
+        dtype=np.float64,
+        data_scale_factor=rmsdata,
     )
 
     fg_coeffs_re = calamity.tensorize_fg_coeffs(data_r, wgts, fg_comps_tensor)

@@ -53,7 +53,7 @@ setup(
     install_requires=[
                       'pyuvdata',
                       'numpy',
-                      'tensorflow',
+                      'tensorflow>=2.5.0',
                       'scipy',
                       'tqdm',
                       'uvtools @ git+git://github.com/HERA-Team/uvtools',

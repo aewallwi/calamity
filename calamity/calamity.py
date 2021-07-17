@@ -340,6 +340,7 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
     gains_im = tf.convert_to_tensor(uvcal.gain_array[:, 0, :, time_index, polnum].squeeze().imag, dtype=dtype)
     return gains_re, gains_im
 
+
 def yield_fg_model_array(
     nants,
     nfreqs,
@@ -460,6 +461,10 @@ def fit_gains_and_foregrounds(
     notebook_progressbar: bool, optional
         use progress bar optimized for notebook output.
         default is False.
+    graph_mode: bool, optional
+        if True, compile gradient update step in graph mode to speed up
+        runtime by ~2-3x. I've found that this helps on CPUs but on GPUs
+        it actually increases runtime by a similar factor.
     opt_kwargs: kwarg dict
         additional kwargs for tf.opt.Optimizer(). See tensorflow docs.
 
@@ -513,6 +518,13 @@ def fit_gains_and_foregrounds(
     else:
         vars = [g_r, g_i]
 
+    echo(f"{datetime.datetime} Performing gradient descent on {len(g_r)} complex gain parameters...", verbose=verbose)
+    if not freeze_model:
+        echo(
+            f"Performing gradient descent on total of {int(np.sum([fgr.shape[0] * fgr.shape[1] for fgr in fg_r]))} complex foreground parameters"
+        )
+        echo(f"Foreground Parameters grouped into chunks of shape {[fgr.shape[:1] for fgr in fg_r]}")
+
     def loss_function():
         return loss_function_chunked(
             g_r=g_r,
@@ -537,10 +549,13 @@ def fit_gains_and_foregrounds(
         return loss
 
     if graph_mode:
+
         @tf.function
         def train_step():
             return train_step_code()
+
     else:
+
         def train_step():
             return train_step_code()
 
@@ -694,18 +709,22 @@ def tensorize_fg_coeffs(
     ----------
     data: list
         list of tf.Tensor objects, each with shape (ngrps, nbls, nfreqs)
-    red_grps: list of lists of int 2-tuples
-        lists of redundant baseline groups with antenna pairs set to avoid conjugation.
-    time_index: int
-        time index of data to calculate foreground coeffs for.
-    polarization: str
-        polarization to calculate foreground coeffs for.
-    scale_factor: float, optional
-        factor to scale data by.
-        default is 1.
-    dtype: numpy.dtype
-        data type to store tensors.
-
+        representing data
+    wgts: list
+        list of tf.Tensor objects, each with shape (ngrps, nbls, nfreqs)
+        representing weights.
+    fg_model_comps: list
+        list of fg modeling tf.Tensor objects
+        representing foreground modeling vectors.
+        Each tensor is (nvecs, ngrps, nbls, nfreqs)
+        see description in tensorize_fg_model_comps_dict
+        docstring.
+    notebook_progressbar: bool, optional
+        use progress bar optimized for notebook output.
+        default is False.
+    verbose: bool, optional
+        lots of text output
+        default is False.
     Returns
     -------
     fg_coeffs_re: tf.Tensor object
@@ -859,6 +878,10 @@ def calibrate_and_model_tensor(
     weights: UVFlag object, optional.
         UVFlag weights object containing weights to use for data fitting.
         default is None -> use nsamples * ~flags
+    graph_mode: bool, optional
+        if True, compile gradient update step in graph mode to speed up
+        runtime by ~2-3x. I've found that this helps on CPUs but on GPUs
+        it actually increases runtime by a similar factor.
     opt_kwargs: kwarg_dict
         kwargs for tf.optimizers
 
