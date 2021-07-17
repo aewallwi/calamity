@@ -441,12 +441,12 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
 
 
 @pytest.mark.parametrize(
-    "noweights, perfect_data",
+    "noweights, perfect_data, use_min",
     [
-        (True, True),
-        (True, False),
-        (False, False),
-        (True, True),
+        (True, True, False),
+        (True, False, False),
+        (False, False, True),
+        (True, True, False),
     ],
 )
 def test_calibrate_and_model_dpss(
