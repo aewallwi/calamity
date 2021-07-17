@@ -1091,6 +1091,7 @@ def calibrate_and_model_mixed(
     angle_match_tol=1e-3,
     grp_size_threshold=5,
     model_comps_dict=None,
+    save_dict_to=None,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with a mix of DPSS vectors
@@ -1153,6 +1154,13 @@ def calibrate_and_model_mixed(
     grp_size_threshold: int, optional
       groups with number of elements less then this value are split up into single baselines.
       default is 5.
+    model_comps_dict: dict, optional
+        dictionary mapping fitting groups to numpy.ndarray see modeling.yield_mixed_comps
+        for more specifics.
+        default is None -> compute fitting groups automatically.
+    save_dict_to: str, optional
+        save model_comps_dict to hdf5 container if True
+        default is False.
     fitting_kwargs: kwarg dict
         additional kwargs for calibrate_and_model_tensor.
         see docstring of calibrate_and_model_tensor.
@@ -1199,6 +1207,9 @@ def calibrate_and_model_mixed(
             grp_size_threshold=grp_size_threshold,
         )
 
+    if save_dict_to is not None:
+        np.save(save_dict_to, model_comps_dict)
+        
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
         uvdata=uvdata,
         fg_model_comps_dict=model_comps_dict,
