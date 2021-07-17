@@ -340,7 +340,6 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
     gains_im = tf.convert_to_tensor(uvcal.gain_array[:, 0, :, time_index, polnum].squeeze().imag, dtype=dtype)
     return gains_re, gains_im
 
-
 def yield_fg_model_array(
     nants,
     nfreqs,
@@ -377,10 +376,10 @@ def yield_fg_model_array(
     """
     model = np.zeros((nants, nants, nfreqs))
     nchunks = len(fg_model_comps)
-    for cnum in tf.range(nchunks):
+    for cnum in range(nchunks):
         ngrps = fg_model_comps[cnum].shape[1]
         gchunk = tf.reduce_sum(fg_coeffs[cnum] * fg_model_comps[cnum], axis=0).numpy()
-        for gnum in tf.range(ngrps):
+        for gnum in range(ngrps):
             for blnum, (i, j) in enumerate(corr_inds[cnum][gnum]):
                 model[i, j] = gchunk[gnum, blnum]
     return model
@@ -513,6 +512,7 @@ def fit_gains_and_foregrounds(
     else:
         vars = [g_r, g_i]
 
+    @tf.function
     def loss_function():
         return loss_function_chunked(
             g_r=g_r,
@@ -1257,17 +1257,17 @@ def calibrate_and_model_dpss(
 def gather(x, ind):
     return tf.gather(x + 0, ind)
 
-
+@tf.function
 def loss_function_chunked(
     g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32
 ):
     cal_loss = tf.constant(0.0, dtype=dtype)
     # now deal with dense components
-    for cnum in tf.range(nchunks):
-        gr0 = tf.gather(g_r, ant0_inds[cnum])
-        gr1 = tf.gather(g_r, ant1_inds[cnum])
-        gi0 = tf.gather(g_i, ant0_inds[cnum])
-        gi1 = tf.gather(g_i, ant1_inds[cnum])
+    for cnum in range(nchunks):
+        gr0 = gather(g_r, ant0_inds[cnum])
+        gr1 = gather(g_r, ant1_inds[cnum])
+        gi0 = gather(g_i, ant0_inds[cnum])
+        gi1 = gather(g_i, ant1_inds[cnum])
         grgr = gr0 * gr1
         gigi = gi0 * gi1
         grgi = gr0 * gi1
