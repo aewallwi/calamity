@@ -509,14 +509,6 @@ def fit_gains_and_foregrounds(
         ant0_inds.append(ant0_chunk)
         ant1_inds.append(ant1_chunk)
 
-    g_r = tf.Variable(g_r)
-    g_i = tf.Variable(g_i)
-    if not freeze_model:
-        fg_r = [tf.Variable(fgr) for fgr in fg_r]
-        fg_i = [tf.Variable(fgi) for fgi in fg_i]
-        vars = [g_r, g_i] + fg_r + fg_i
-    else:
-        vars = [g_r, g_i]
 
     echo(f"{datetime.datetime.now()} Performing gradient descent on {np.prod(g_r.shape)} complex gain parameters...", verbose=verbose)
     if not freeze_model:
@@ -524,6 +516,46 @@ def fit_gains_and_foregrounds(
             f"Performing gradient descent on total of {int(np.sum([fgr.shape[0] * fgr.shape[1] for fgr in fg_r]))} complex foreground parameters"
         )
         echo(f"Foreground Parameters grouped into chunks of shape ((nvecs, ngrps): nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[1]) for fgr, dc in zip(fg_r, data_r)]}")
+
+
+    # check data into ragged tensors for fast processing
+    nbls = tf.constant([dr.shape[1] for dr in data_r])
+    nvecs = tf.constant([fgc.shape[0] for fgc in fg_comps])
+    ngrps = tf.constant([dr.shape[0] for dr in data_r])
+    ant0_inds = tf.constant(ant0_inds)
+    ant1_inds = tf.constant(ant1_inds)
+    # need get range of fg coeffs for each chunked
+
+    data_r = tf.ragged.constant([dr.numpy().flatten() for dr in data_r], dtype=dtype)
+    data_i = tf.ragged.constant([di.numpy().flatten() for di in data_i], dtype=dtype)
+    fg_comps = tf.ragged.constant([fgc.numpy().flatten() for fgc in fg_comps], dtype=dtype)
+    wgts = tf.ragged.constant([wt.numpy().flatten() for wt in wgts], dtype=dtype)
+
+    fg_ranges = []
+    startind = 0
+    for cnum in range(nchunks):
+        endind = startind + fg_r[cnum].shape[0] * fg_r[cnum].shape[1]
+        fg_ranges.append([startind, endind])
+        startind = endind
+
+    fg_ranges = tf.constant(fg_ranges, dtype=nbls.dtype)
+
+
+    # flatten fg_r and fg_i
+    fg_r = tf.convert_to_tensor(np.hstack([fgr.numpy().flatten() for fgr in fg_r]), dtype=dtype)
+    fg_i = tf.convert_to_tensor(np.hstack([fgi.numpy().flatten() for fgi in fg_i]), dtype=dtype)
+
+
+
+    g_r = tf.Variable(g_r)
+    g_i = tf.Variable(g_i)
+    if not freeze_model:
+        fg_r = tf.Variable(fg_r)
+        fg_i = tf.Variable(fg_i)
+        vars = [g_r, g_i, fg_r, fg_i]
+    else:
+        vars = [g_r, g_i]
+
 
     def loss_function():
         return loss_function_chunked(
@@ -538,7 +570,12 @@ def fit_gains_and_foregrounds(
             wgts=wgts,
             ant0_inds=ant0_inds,
             ant1_inds=ant1_inds,
-            dtype=dtype,
+            fg_ranges=fg_ranges,
+            nvecs=nvecs,
+            ngrps=ngrps,
+            nbls=nbls,
+            nfreqs=nfreqs
+            dtype=dtype
         )
 
     def train_step_code():
@@ -603,6 +640,14 @@ def fit_gains_and_foregrounds(
         else:
             fg_r_opt = fg_r
             fg_i_opt = fg_i
+
+    #put back into lists of tensors
+    fg_r_opt = []
+    fg_i_opt = []
+
+    for cnum in range(nchunks):
+        fg_r_opt.append(tf.reshape(fg_r_opt[fg_ranges[cnum][0]: fg_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], 1, 1)))
+        fg_i_opt.append(tf.reshape(fg_i_opt[fg_ranges[cnum][0]: fg_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], 1, 1)))
 
     echo(
         f"{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n",
@@ -1299,7 +1344,7 @@ def calibrate_and_model_dpss(
 
 
 def loss_function_chunked(
-    g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32
+    g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, fg_ranges, nvecs, ngrps, nbls, nfreqs, dtype
 ):
     cal_loss = tf.constant(0.0, dtype=dtype)
     # now deal with dense components
@@ -1312,9 +1357,13 @@ def loss_function_chunked(
         gigi = gi0 * gi1
         grgi = gr0 * gi1
         gigr = gi0 * gr1
-        vr = tf.reduce_sum(fg_r[cnum] * fg_comps[cnum], axis=0)
-        vi = tf.reduce_sum(fg_i[cnum] * fg_comps[cnum], axis=0)
+        vr = tf.reduce_sum(tf.reshape(fg_r[fg_ranges[cnum][0]: fg_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], 1, 1))\
+                           * tf.reshape(fg_comps[cnum], (nvecs[cnum], ngrps[cnum], nbls[cnum], nfreqs)), axis=0)
+        vi = tf.reduce_sum(tf.reshape(fg_i[fg_ranges[cnum][0]: fg_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], 1, 1))\
+                           * tf.reshape(fg_comps[cnum], (nvecs[cnum], ngrps[cnum], nbls[cnum], nfreqs)), axis=0)
         model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
         model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-        cal_loss += tf.reduce_sum((tf.square(data_r[cnum] - model_r) + tf.square(data_i[cnum] - model_i)) * wgts[cnum])
+        cal_loss += tf.reduce_sum((tf.square(tf.reshape(data_r[cnum], (ngrps[cnum], nbls[cnum], nfreqs)) - model_r)\
+                                 + tf.square(tf.reshape(data_i[cnum], (ngrps[cnum], nbls[cnum], nfreqs)) - model_i))\
+                                 * tf.reshape(wgts[cnum], (ngrps[cnum], nbls[cnum], nfreqs)))
     return cal_loss
