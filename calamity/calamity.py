@@ -522,22 +522,43 @@ def fit_gains_and_foregrounds(
     nbls = tf.constant([dr.shape[1] for dr in data_r])
     nvecs = tf.constant([fgc.shape[0] for fgc in fg_comps])
     ngrps = tf.constant([dr.shape[0] for dr in data_r])
-    ant0_inds = tf.ragged.constant([np.asarray(ant0i).flatten() for ant0i in ant0_inds], dtype=nbls.dtype)
-    ant1_inds = tf.ragged.constant([np.asarray(ant1i).flatten() for ant1i in ant1_inds], dtype=nbls.dtype)
+
+
     # need get range of fg coeffs for each chunked
 
-    data_r = tf.ragged.constant([dr.numpy().flatten() for dr in data_r], dtype=dtype)
-    data_i = tf.ragged.constant([di.numpy().flatten() for di in data_i], dtype=dtype)
-    fg_comps = tf.ragged.constant([fgc.numpy().flatten() for fgc in fg_comps], dtype=dtype)
-    wgts = tf.ragged.constant([wt.numpy().flatten() for wt in wgts], dtype=dtype)
-
+    fgc_ranges = []
     fg_ranges = []
-    startind = 0
+    d_ranges = []
+    ant_ranges = []
+    startind_fg = 0
+    startind_d = 0
+    startind_fgc = 0
+    startind_ant = 0
     for cnum in range(nchunks):
-        endind = startind + fg_r[cnum].shape[0] * fg_r[cnum].shape[1]
-        fg_ranges.append([startind, endind])
-        startind = endind
+        endind_fg = startind_fg + fg_r[cnum].shape[0] * fg_r[cnum].shape[1]
+        endind_fgc = startind_fgc + fg_comps[cnum].shape[0] * fg_comps[cnum].shape[1] * fg_comps[cnum].shape[2] * fg_comps[cnum].shape[3]
+        endind_d = startind_d + data_r[cnum].shape[0] * data_r[cnum].shape[1] * data_r[cnum].shape[2]
+        endind_ant = startind_ant + len(ant0_inds[cnum]) * len(ant0_inds[cnum][0])
 
+        fg_ranges.append([startind_fg, endind_fg])
+        fgc_ranges.append([startind_fgc, endind_fgc])
+        d_ranges.append([startind_d, endind_d])
+        ant_ranges.append([startind_ant, endind_ant])
+
+        startind_fg = endind_fg
+        startind_d = endind_d
+        startind_fgc = endind_fgc
+        startind_ant = endind_ant
+
+    ant0_inds = tf.constant(np.hstack([np.asarray(ant0i).flatten() for ant0i in ant0_inds]), dtype=nbls.dtype)
+    ant1_inds = tf.constant(np.hstack([np.asarray(ant1i).flatten() for ant1i in ant1_inds]), dtype=nbls.dtype)
+    data_r = tf.constant(np.hstack([dr.numpy().flatten() for dr in data_r]), dtype=dtype)
+    data_i = tf.constant(np.hstack([di.numpy().flatten() for di in data_i]), dtype=dtype)
+    fg_comps = tf.constant(np.hstack([fgc.numpy().flatten() for fgc in fg_comps]), dtype=dtype)
+    wgts = tf.constant(np.hstack([wt.numpy().flatten() for wt in wgts]), dtype=dtype)
+
+    d_ranges = tf.constant(d_ranges, dtype=nbls.dtype)
+    fgc_ranges = tf.constant(fgc_ranges, dtype=nbls.dtype)
     fg_ranges = tf.constant(fg_ranges, dtype=nbls.dtype)
 
 
@@ -571,6 +592,9 @@ def fit_gains_and_foregrounds(
             ant0_inds=ant0_inds,
             ant1_inds=ant1_inds,
             fg_ranges=fg_ranges,
+            d_ranges=d_ranges,
+            ant_ranges=ant_ranges,
+            fgc_ranges=fgc_ranges,
             nvecs=nvecs,
             ngrps=ngrps,
             nbls=nbls,
@@ -1342,27 +1366,29 @@ def calibrate_and_model_dpss(
     return model, resid, gains, fitted_info
 
 
+
+
 def loss_function_chunked(
-    g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, fg_ranges, nvecs, ngrps, nbls, nfreqs, dtype
+    g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, fg_ranges, fgc_ranges, d_ranges, ant_ranges, nvecs, ngrps, nbls, nfreqs, dtype
 ):
     cal_loss = tf.constant(0.0, dtype=dtype)
     # now deal with dense components
     for cnum in range(nchunks):
-        gr0 = tf.reshape(tf.gather(g_r, ant0_inds[cnum]), (ngrps[cnum], nbls[cnum], nfreqs))
-        gr1 = tf.reshape(tf.gather(g_r, ant1_inds[cnum]), (ngrps[cnum], nbls[cnum], nfreqs))
-        gi0 = tf.reshape(tf.gather(g_i, ant0_inds[cnum]), (ngrps[cnum], nbls[cnum], nfreqs))
-        gi1 = tf.reshape(tf.gather(g_i, ant1_inds[cnum]), (ngrps[cnum], nbls[cnum], nfreqs))
+        gr0 = tf.reshape(tf.gather(g_r, ant0_inds[ant_ranges[cnum][0]: ant_ranges[cnum][1]]), (ngrps[cnum], nbls[cnum], nfreqs))
+        gr1 = tf.reshape(tf.gather(g_r, ant1_inds[ant_ranges[cnum][0]: ant_ranges[cnum][1]]), (ngrps[cnum], nbls[cnum], nfreqs))
+        gi0 = tf.reshape(tf.gather(g_i, ant0_inds[ant_ranges[cnum][0]: ant_ranges[cnum][1]]), (ngrps[cnum], nbls[cnum], nfreqs))
+        gi1 = tf.reshape(tf.gather(g_i, ant1_inds[ant_ranges[cnum][0]: ant_ranges[cnum][1]]), (ngrps[cnum], nbls[cnum], nfreqs))
         grgr = gr0 * gr1
         gigi = gi0 * gi1
         grgi = gr0 * gi1
         gigr = gi0 * gr1
         vr = tf.reduce_sum(tf.reshape(fg_r[fg_ranges[cnum][0]: fg_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], 1, 1))\
-                           * tf.reshape(fg_comps[cnum], (nvecs[cnum], ngrps[cnum], nbls[cnum], nfreqs)), axis=0)
+                           * tf.reshape(fg_comps[fgc_ranges[cnum][0]: fgc_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], nbls[cnum], nfreqs)), axis=0)
         vi = tf.reduce_sum(tf.reshape(fg_i[fg_ranges[cnum][0]: fg_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], 1, 1))\
-                           * tf.reshape(fg_comps[cnum], (nvecs[cnum], ngrps[cnum], nbls[cnum], nfreqs)), axis=0)
+                           * tf.reshape(fg_comps[fgc_ranges[cnum][0]: fgc_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], nbls[cnum], nfreqs)), axis=0)
         model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
         model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-        cal_loss += tf.reduce_sum((tf.square(tf.reshape(data_r[cnum], (ngrps[cnum], nbls[cnum], nfreqs)) - model_r)\
-                                 + tf.square(tf.reshape(data_i[cnum], (ngrps[cnum], nbls[cnum], nfreqs)) - model_i))\
-                                 * tf.reshape(wgts[cnum], (ngrps[cnum], nbls[cnum], nfreqs)))
+        cal_loss += tf.reduce_sum((tf.square(tf.reshape(data_r[d_ranges[cnum][0]:d_ranges[cnum][1]], (ngrps[cnum], nbls[cnum], nfreqs)) - model_r)\
+                                 + tf.square(tf.reshape(data_i[d_ranges[cnum][0]:d_ranges[cnum][1]], (ngrps[cnum], nbls[cnum], nfreqs)) - model_i))\
+                                 * tf.reshape(wgts[d_ranges[cnum][0]:d_ranges[cnum][1]], (ngrps[cnum], nbls[cnum], nfreqs)))
     return cal_loss
