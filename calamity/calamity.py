@@ -1301,7 +1301,7 @@ def calibrate_and_model_dpss(
 def loss_function_chunked(
     g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32
 ):
-    cal_loss = tf.constant(0.0, dtype=dtype)
+    cal_loss = tf.zeros(nchunks, dtype=dtype)
     # now deal with dense components
     for cnum in range(nchunks):
         gr0 = tf.gather(g_r, ant0_inds[cnum])
@@ -1316,5 +1316,5 @@ def loss_function_chunked(
         vi = tf.reduce_sum(fg_i[cnum] * fg_comps[cnum], axis=0)
         model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
         model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-        cal_loss += tf.reduce_sum((tf.square(data_r[cnum] - model_r) + tf.square(data_i[cnum] - model_i)) * wgts[cnum])
-    return cal_loss
+        cal_loss[cnum] = tf.reduce_sum((tf.square(data_r[cnum] - model_r) + tf.square(data_i[cnum] - model_i)) * wgts[cnum])
+    return tf.reduce_sum(cal_loss)
