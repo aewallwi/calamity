@@ -1371,7 +1371,7 @@ def calibrate_and_model_dpss(
 def loss_function_chunked(
     g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, fg_ranges, fgc_ranges, d_ranges, ant_ranges, nvecs, ngrps, nbls, nfreqs, dtype
 ):
-    cal_loss = tf.constant(0.0, dtype=dtype)
+    cal_loss = tf.zeros(nchunks, dtype=dtype)
     # now deal with dense components
     for cnum in range(nchunks):
         gr0 = tf.reshape(tf.gather(g_r, ant0_inds[ant_ranges[cnum][0]: ant_ranges[cnum][1]]), (ngrps[cnum], nbls[cnum], nfreqs))
@@ -1388,7 +1388,7 @@ def loss_function_chunked(
                            * tf.reshape(fg_comps[fgc_ranges[cnum][0]: fgc_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], nbls[cnum], nfreqs)), axis=0)
         model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
         model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-        cal_loss += tf.reduce_sum((tf.square(tf.reshape(data_r[d_ranges[cnum][0]:d_ranges[cnum][1]], (ngrps[cnum], nbls[cnum], nfreqs)) - model_r)\
+        cal_loss[cnum] = tf.reduce_sum((tf.square(tf.reshape(data_r[d_ranges[cnum][0]:d_ranges[cnum][1]], (ngrps[cnum], nbls[cnum], nfreqs)) - model_r)\
                                  + tf.square(tf.reshape(data_i[d_ranges[cnum][0]:d_ranges[cnum][1]], (ngrps[cnum], nbls[cnum], nfreqs)) - model_i))\
                                  * tf.reshape(wgts[d_ranges[cnum][0]:d_ranges[cnum][1]], (ngrps[cnum], nbls[cnum], nfreqs)))
-    return cal_loss
+    return tf.reduce_sum(cal_loss)
