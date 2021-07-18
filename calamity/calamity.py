@@ -522,8 +522,8 @@ def fit_gains_and_foregrounds(
     nbls = tf.constant([dr.shape[1] for dr in data_r])
     nvecs = tf.constant([fgc.shape[0] for fgc in fg_comps])
     ngrps = tf.constant([dr.shape[0] for dr in data_r])
-    ant0_inds = tf.constant(ant0_inds)
-    ant1_inds = tf.constant(ant1_inds)
+    ant0_inds = tf.ragged.constant([np.asarray(ant0i).flatten() for ant0i in ant0_inds], dtype=nbls.dtype)
+    ant1_inds = tf.ragged.constant([np.asarray(ant1i).flatten() for ant1i in ant1_inds], dtype=nbls.dtype)
     # need get range of fg coeffs for each chunked
 
     data_r = tf.ragged.constant([dr.numpy().flatten() for dr in data_r], dtype=dtype)
@@ -574,7 +574,7 @@ def fit_gains_and_foregrounds(
             nvecs=nvecs,
             ngrps=ngrps,
             nbls=nbls,
-            nfreqs=nfreqs
+            nfreqs=nfreqs,
             dtype=dtype
         )
 
@@ -616,8 +616,8 @@ def fit_gains_and_foregrounds(
             g_r_opt = g_r.value()
             g_i_opt = g_i.value()
             if not freeze_model:
-                fg_r_opt = [fgr.value() for fgr in fg_r]
-                fg_i_opt = [fgi.value() for fgi in fg_i]
+                fg_r_opt = fg_r.value()
+                fg_i_opt = fg_i.value()
 
         if step >= 1 and np.abs(fit_history["loss"][-1] - fit_history["loss"][-2]) < tol:
             echo(
@@ -634,26 +634,25 @@ def fit_gains_and_foregrounds(
         g_r_opt = g_r.value()
         g_i_opt = g_i.value()
         if not freeze_model:
-            fg_r_opt = [fgr.value() for fgr in fg_r]
-            fg_i_opt = [fgi.value() for fgi in fg_i]
+            fg_r_opt = fg_r.value()
+            fg_i_opt = fg_i.value()
 
         else:
             fg_r_opt = fg_r
             fg_i_opt = fg_i
 
-    #put back into lists of tensors
-    fg_r_opt = []
-    fg_i_opt = []
-
+    fg_r_opt_list = []
+    fg_i_opt_list = []
+    # put back into lists of tensors
     for cnum in range(nchunks):
-        fg_r_opt.append(tf.reshape(fg_r_opt[fg_ranges[cnum][0]: fg_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], 1, 1)))
-        fg_i_opt.append(tf.reshape(fg_i_opt[fg_ranges[cnum][0]: fg_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], 1, 1)))
+        fg_r_opt_list.append(tf.reshape(fg_r_opt[fg_ranges[cnum][0]: fg_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], 1, 1)))
+        fg_i_opt_list.append(tf.reshape(fg_i_opt[fg_ranges[cnum][0]: fg_ranges[cnum][1]], (nvecs[cnum], ngrps[cnum], 1, 1)))
 
     echo(
         f"{datetime.datetime.now()} Finished Gradient Descent. MSE of {min_loss:.2e}...\n",
         verbose=verbose,
     )
-    return g_r_opt, g_i_opt, fg_r_opt, fg_i_opt, fit_history
+    return g_r_opt, g_i_opt, fg_r_opt_list, fg_i_opt_list, fit_history
 
 
 def insert_model_into_uvdata_tensor(
@@ -1349,10 +1348,10 @@ def loss_function_chunked(
     cal_loss = tf.constant(0.0, dtype=dtype)
     # now deal with dense components
     for cnum in range(nchunks):
-        gr0 = tf.gather(g_r, ant0_inds[cnum])
-        gr1 = tf.gather(g_r, ant1_inds[cnum])
-        gi0 = tf.gather(g_i, ant0_inds[cnum])
-        gi1 = tf.gather(g_i, ant1_inds[cnum])
+        gr0 = tf.reshape(tf.gather(g_r, ant0_inds[cnum]), (ngrps[cnum], nbls[cnum], nfreqs))
+        gr1 = tf.reshape(tf.gather(g_r, ant1_inds[cnum]), (ngrps[cnum], nbls[cnum], nfreqs))
+        gi0 = tf.reshape(tf.gather(g_i, ant0_inds[cnum]), (ngrps[cnum], nbls[cnum], nfreqs))
+        gi1 = tf.reshape(tf.gather(g_i, ant1_inds[cnum]), (ngrps[cnum], nbls[cnum], nfreqs))
         grgr = gr0 * gr1
         gigi = gi0 * gi1
         grgi = gr0 * gi1
