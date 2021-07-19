@@ -98,7 +98,6 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
 
 def get_uv_overlapping_grps_conjugated(
     uvdata,
-    remove_redundancy=True,
     red_tol=1.0,
     include_autos=False,
     red_tol_freq=0.5,
@@ -144,7 +143,7 @@ def get_uv_overlapping_grps_conjugated(
     """
     # first get redundant baselines.
     antpairs, red_grps, vec_bin_centers, lengths = get_redundant_grps_conjugated(
-        uvdata, include_autos=include_autos, tol=red_tol, remove_redundancy=remove_redundancy,
+        uvdata, include_autos=include_autos, tol=red_tol, remove_redundancy=False,
     )
     # next, we build fitting fitting_grps by generating a hashmap of connections between baselines
     fmin = uvdata.freq_array.min()
@@ -261,25 +260,6 @@ def get_uv_overlapping_grps_conjugated(
         fitting_vec_centers.append([])
         for red_grp in fit_grp:
             fitting_vec_centers[-1].append(vbc_hash[red_grp])
-
-    # We can remove redundancies for fitting groups of baselines that have the same
-    # number of elements in each redundant group.
-    if remove_redundancy:
-        fitting_grps_reds_removed = []
-        fitting_vec_centers_reds_removed = []
-        for fit_grp, fit_vbcs in zip(fitting_grps, fitting_vec_centers):
-            rlens = np.asarray([len(red_grp) for red_grp in fit_grp])
-            if np.allclose(rlens, np.mean(rlens)):
-                # split up groups.
-                for rednum in range(int(rlens[0])):
-                    fit_grp_new = ((red_grp[rednum],) for red_grp in fit_grp)
-                    fitting_grps_reds_removed.append(fit_grp_new)
-                    fitting_vec_centers_reds_removed.append(fit_vbcs)
-            else:
-                fitting_grps_reds_removed.append(fit_grp)
-                fitting_vec_centers_reds_removed.append(fit_vbcs)
-        fitting_grp = fitting_grps_reds_removed
-        fitting_vec_centers = fitting_vec_centers_reds_removed
 
     return fitting_grps, fitting_vec_centers, connections, grp_labels
 

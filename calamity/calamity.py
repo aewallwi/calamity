@@ -24,7 +24,7 @@ OPTIMIZERS = {
 }
 
 
-def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict):
+def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True):
     """
     Order dict keys in order of number of baselines in each group
 
@@ -43,6 +43,14 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict):
         each element of each 'redundant group' is a 2-tuple antenna pair. Our formalism easily accomodates modeling
         visibilities as redundant or non redundant (one simply needs to make each redundant group length 1).
 
+    remove_redundancy: bool, optional
+        break fitting groups with the same number of baselines in each redundant
+        sub_group into different fitting groups with no redundancy in each
+        redundant subgroup. This is to prevent fitting groups with single
+        redundant groups of varying lengths from being lumped into different chunks
+        increasing the number of chunks has a more significant impact on run-time
+        then increasing the number of baselines in each chunk.
+        default is False.
     Returns:
     fg_model_comps_dict_chunked: dict
         dictionary where each key is a 2-tuple (nbl, nvecs) referring to the number
@@ -54,6 +62,19 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict):
     """
     chunked_keys = {}
     maxvecs = {}
+
+    if remove_redundancy:
+        # We can remove redundancies for fitting groups of baselines that have the same
+        # number of elements in each redundant group.
+        keys_with_redundancy = list(fg_model_comps_dict.keys())
+        for fit_grp in keys_with_redundancy:
+            modeling_vectors = fg_model_comps_dict.pop(fit_grp)
+            rlens = np.asarray([len(red_grp) for red_grp in fit_grp])
+            if np.allclose(rlens, np.mean(rlens)):
+                # split up groups.
+                for rednum in range(int(rlens[0])):
+                    fit_grp_new = ((red_grp[rednum],) for red_grp in fit_grp)
+                    fg_model_comps_dict[fit_grp_new] = modeling_vectors
 
     for fit_grp in fg_model_comps_dict:
         nbl = 0
