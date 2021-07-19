@@ -72,7 +72,7 @@ def simple_cov_matrix(
             cg0, cg1 = np.meshgrid(uvw_coord, uvw_coord, indexing="ij")
             absdiff += np.abs(cg0 - cg1) ** 2.0
     if use_tensorflow:
-        absdiff = tf.math.sqrt(absdiff) * horizon
+        absdiff = tf.math.sqrt(absdiff)
         fvals = tf.reshape(tf.experimental.numpy.outer(tf.ones(nbls, dtype=dtype), freqs), (nbls * nfreqs,))
         fg0, fg1 = tf.meshgrid(fvals, fvals, indexing="ij")
         dfg = tf.abs(fg0 - fg1) / 1e9

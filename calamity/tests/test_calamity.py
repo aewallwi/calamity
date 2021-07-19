@@ -96,24 +96,18 @@ def dpss_vectors(sky_model):
 
 @pytest.fixture
 def mixed_vectors(sky_model):
-    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(sky_model, remove_redundancy=False)
-    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1)
+    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(sky_model)
+    return modeling.yield_mixed_comps(
+        fitting_grps, blvecs, sky_model.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1
+    )
 
 
 @pytest.fixture
 def mixed_vectors_redundant(sky_model_redundant):
-    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
-        sky_model_redundant, remove_redundancy=False
+    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(sky_model_redundant)
+    return modeling.yield_mixed_comps(
+        fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1
     )
-    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1)
-
-
-@pytest.fixture
-def mixed_vectors_redundant_remove_redundancy(sky_model_redundant):
-    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
-        sky_model_redundant, remove_redundancy=True
-    )
-    return modeling.yield_mixed_comps(fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1)
 
 
 @pytest.fixture
@@ -205,67 +199,53 @@ def test_tensorize_gains(gains_antscale):
         assert np.allclose(gains_i.numpy()[ant], 0.0)
 
 
-@pytest.mark.parametrize("single_bls_as_sparse", [True, False])
 def test_tensorize_fg_model_comps_dpsss(
-    sky_model_projected, dpss_vectors, redundant_groups, gains, single_bls_as_sparse
+    sky_model_projected,
+    dpss_vectors,
+    redundant_groups,
+    gains,
 ):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor, fg_comp_tensors_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
+    fg_comp_tensor, corr_inds = calamity.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=dpss_vectors,
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=sky_model_projected.Nfreqs,
-        single_bls_as_sparse=single_bls_as_sparse,
     )
-    if single_bls_as_sparse:
-        # for per baseline modeling, there should be no chunked groups.
-        assert fg_comp_tensors_chunked is None
-        assert corr_inds_chunked is None
-        # retrieve dense numpy array from sparse tensor.
-        # check whether values agree with original dpss vectors.
-        fg_comp_tensor = tf.sparse.to_dense(fg_comp_tensor).numpy()
-        # iterate through and select out nonzero elements and check that they are close to dpss_vectors
-        start_index = 0
-        for vnum, red_grp in enumerate(dpss_vectors.keys()):
-            vdpss = dpss_vectors[red_grp]
-            end_index = start_index + vdpss.shape[1]
-            for i, j in enumerate(range(start_index, end_index)):
-                vreduced = fg_comp_tensor[:, j]
-                vreduced = vreduced[np.abs(vreduced) > 0]
-                assert np.allclose(vreduced, vdpss[:, i])
-            start_index = end_index
-    else:
-        assert fg_comp_tensor is None
-        nfreqs = sky_model_projected.Nfreqs
-        bls = list(dpss_vectors.keys())
-        for gnum, red_grp in enumerate(dpss_vectors.keys()):
-            bl = red_grp[0][0]
-            data_inds = corr_inds_chunked[gnum]
-            blind = bl[0] * sky_model_projected.Nants_data + bl[1]
-            assert np.allclose(data_inds, [bl])
-            assert np.allclose(fg_comp_tensors_chunked[gnum].numpy(), dpss_vectors[red_grp])
+    nfreqs = sky_model_projected.Nfreqs
+    bls = list(dpss_vectors.keys())
+    ncomps = 0
+    for cnum in range(len(corr_inds)):
+        for gnum in range(len(corr_inds[cnum])):
+            for blnum, bl in enumerate(corr_inds[cnum][gnum]):
+                fg_comps_tensor = fg_comp_tensor[cnum][:, gnum, blnum].numpy().squeeze()
+                if ((bl,),) in dpss_vectors:
+                    fg_comps_dict = dpss_vectors[((bl,),)].T
+                    assert np.allclose(fg_comps_dict, fg_comps_tensor[: fg_comps_dict.shape[0]])
+                    assert np.allclose(0.0, fg_comps_tensor[fg_comps_dict.shape[0] :])
+                    ncomps += 1
+                else:
+                    assert np.allclose(fg_comps_tensor, 0.0)
+    assert ncomps == len(dpss_vectors)
+
+
+def test_chunk_fg_comp_dict_by_nbls(dpss_vectors):
+    dpss_vectors_chunked = calamity.chunk_fg_comp_dict_by_nbls(dpss_vectors)
+    maxvecs = np.max([dpss_vectors[k].shape[1] for k in dpss_vectors])
+    assert len(dpss_vectors_chunked) == 1
+    assert list(dpss_vectors_chunked.keys())[0] == (1, maxvecs)
 
 
 @pytest.mark.parametrize(
-    "redundant_data ,single_bls_as_sparse, redundant_modeling",
-    [
-        (False, False, False),
-        (False, True, False),
-        (True, True, False),
-        (True, True, True),
-        (True, False, False),
-        (True, False, False),
-    ],
+    "redundant_data",
+    [True, False],
 )
 def test_tensorize_fg_model_comps_mixed(
-    single_bls_as_sparse,
     gains,
     gains_redundant,
     sky_model_projected_redundant,
     mixed_vectors,
     mixed_vectors_redundant,
-    mixed_vectors_redundant_remove_redundancy,
-    redundant_modeling,
     redundant_data,
     sky_model,
     sky_model_projected,
@@ -274,10 +254,7 @@ def test_tensorize_fg_model_comps_mixed(
     if redundant_data:
         gains = gains_redundant
         sky_model = sky_model_projected_redundant
-        if redundant_modeling:
-            fg_comps_dict = mixed_vectors_redundant
-        else:
-            fg_comps_dict = mixed_vectors_redundant_remove_redundancy
+        fg_comps_dict = mixed_vectors_redundant
     else:
         gains = gains
         sky_model = sky_model_projected
@@ -287,91 +264,54 @@ def test_tensorize_fg_model_comps_mixed(
     nants = sky_model.Nants_data
 
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor_sparse, fg_comp_tensors_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
+    fg_comp_tensors, corr_inds = calamity.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=fg_comps_dict,
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=nfreqs,
-        single_bls_as_sparse=single_bls_as_sparse,
     )
-    if single_bls_as_sparse:
-        assert not np.any([np.isclose(nfreqs, fgc.shape[0]) for fgc in fg_comp_tensors_chunked])
-        # assert number of data_inds in sparse and chunked baselines equals number of baselines
-        sparse_indices = set(list(fg_comp_tensor_sparse.indices.numpy()[:, 0]))
-        ndata_chunked = np.sum([len(fgc) for fgc in fg_comp_tensors_chunked])
-        assert (ndata_chunked + len(sparse_indices)) // nfreqs == sky_model.Nbls
-        # retrieve dense numpy array from sparse tensor.
-        # check whether values agree with original numpy arrays.
-        fg_comp_tensor_sparse = tf.sparse.to_dense(fg_comp_tensor_sparse).numpy()
-        start_index = 0
-        cnum = 0
-        for grpnum, fit_grp in enumerate(fg_comps_dict.keys()):
-            vrg = fg_comps_dict[fit_grp]
-            if len(fit_grp) == 1:
-                end_index = start_index + vrg.shape[1]
-                for red_grp in fit_grp:
-                    for blnum, ap in enumerate(red_grp):
-                        for i, j in enumerate(range(start_index, end_index)):
-                            vreduced = fg_comp_tensor_sparse[:, j]
-                            vreduced = vreduced[np.abs(vreduced) > 0][blnum * nfreqs : (blnum + 1) * nfreqs]
 
-                        assert np.allclose(vreduced, vrg[:, i])
-                start_index = end_index
-            else:
-                # check that none of the indices in this chunk are present in the sparse_indices
-                for cpair in corr_inds_chunked[cnum]:
-                    blind = cpair[0] * nants + cpair[1]
-                    # data indices in a chunk should not be in sparse_indices
-                    for dind in range(blind * nfreqs, (blind + 1) * nfreqs):
-                        assert dind not in sparse_indices
-                fg_comp_tensor = fg_comp_tensors_chunked[cnum]
-                redundancies = [len(red_grp) for red_grp in fit_grp]
-                rownum = 0
-                for rgnum, red_grp in enumerate(fit_grp):
-                    rvecs = fg_comps_dict[fit_grp][rgnum * nfreqs : (rgnum + 1) * nfreqs]
-                    for bnum, ap in red_grp:
-                        assert np.allclose(rvecs, fg_comp_tensor[rownum * nfreqs : (rownum + 1) * nfreqs])
-                        rownum += 1
-                cnum += 1
-    else:
-        cnum = 0
-        assert fg_comp_tensor_sparse is None
-        ndata_chunked = np.sum([len(fgc) for fgc in fg_comp_tensors_chunked])
-        assert ndata_chunked // nfreqs == sky_model.Nbls
-
-        for grpnum, fit_grp in enumerate(fg_comps_dict.keys()):
-            fg_comp_tensor = fg_comp_tensors_chunked[cnum]
-            redundancies = [len(red_grp) for red_grp in fit_grp]
-            rownum = 0
-            for rgnum, red_grp in enumerate(fit_grp):
-                rvecs = fg_comps_dict[fit_grp][rgnum * nfreqs : (rgnum + 1) * nfreqs]
-                for bnum, ap in red_grp:
-                    assert np.allclose(rvecs, fg_comp_tensor[rownum * nfreqs : (rownum + 1) * nfreqs])
-                    rownum += 1
-            cnum += 1
-    assert cnum == len(corr_inds_chunked)
+    cnum = 0
+    ndata_chunked = np.sum([fgc.shape[3] * fgc.shape[2] * fgc.shape[1] for fgc in fg_comp_tensors])
+    assert ndata_chunked == sky_model.Nbls * sky_model.Nfreqs
+    # hash all fitgrps to i, j
+    fitgrps = {}
+    redgrps = {}
+    for fitgrp in fg_comps_dict:
+        for redgrp in fitgrp:
+            for ap in redgrp:
+                fitgrps[ap] = fitgrp
+                redgrps[ap] = redgrp
+    for cnum in range(len(corr_inds)):
+        for gnum in range(len(corr_inds[cnum])):
+            for blnum, bl in enumerate(corr_inds[cnum][gnum]):
+                fg_comps_tensor = fg_comp_tensors[cnum][:, gnum, blnum].numpy().squeeze()
+                if bl in fitgrps:
+                    fg_comps_dict_mat = fg_comps_dict[fitgrps[bl]].T
+                    redgrpnum = fitgrps[bl].index(redgrps[bl])
+                    dslice = slice(redgrpnum * nfreqs, (redgrpnum + 1) * nfreqs)
+                    assert np.allclose(fg_comps_dict_mat[:, dslice], fg_comps_tensor[: fg_comps_dict_mat.shape[0]])
+                    assert np.allclose(0.0, fg_comps_tensor[fg_comps_dict_mat.shape[0] :])
+                else:
+                    assert np.allclose(fg_comps_tensor, 0.0)
 
 
 @pytest.mark.parametrize(
-    "single_bls_as_sparse, redundant_modeling, redundant_data",
+    "redundant_modeling, redundant_data",
     [
-        (False, False, False),
-        (True, False, False),
-        (True, False, True),
-        (True, True, True),
-        (False, False, True),
-        (False, False, True),
+        (False, False),
+        (False, True),
+        (True, True),
+        (True, False),
     ],
 )
 def test_yield_fg_model_and_fg_coeffs_mixed(
     mixed_vectors_redundant,
     mixed_vectors,
-    mixed_vectors_redundant_remove_redundancy,
     sky_model_projected_redundant,
     sky_model_projected,
     gains_redundant,
     gains,
-    single_bls_as_sparse,
     redundant_modeling,
     redundant_data,
 ):
@@ -381,10 +321,7 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
     if redundant_data:
         gains = gains_redundant
         sky_model = sky_model_projected_redundant
-        if redundant_modeling:
-            fg_comps_dict = mixed_vectors_redundant
-        else:
-            fg_comps_dict = mixed_vectors_redundant_remove_redundancy
+        fg_comps_dict = mixed_vectors_redundant
     else:
         gains = gains
         sky_model = sky_model_projected
@@ -394,42 +331,31 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
     nfreqs = sky_model.Nfreqs
     nants = sky_model.Nants_data
 
-    fg_comp_tensor_sparse, fg_comp_tensors_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
+    fg_comp_tensors_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=fg_comps_dict,
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=nfreqs,
-        single_bls_as_sparse=single_bls_as_sparse,
+        use_redundancy=redundant_modeling,
     )
-    (
-        fg_coeffs_sparse_re,
-        fg_coeffs_sparse_im,
-        fg_coeffs_chunked_re,
-        fg_coeffs_chunked_im,
-    ) = calamity.tensorize_fg_coeffs(
-        sky_model,
-        fg_comps_dict,
-        time_index=0,
-        polarization="xx",
-        dtype=np.float64,
-        single_bls_as_sparse=single_bls_as_sparse,
+    data_r, data_i, wgts = calamity.tensorize_data(
+        sky_model, corr_inds_chunked, ants_map, polarization="xx", time_index=0, dtype=np.float64
     )
+
+    fg_coeffs_chunked_re = calamity.tensorize_fg_coeffs(data_r, wgts, fg_comp_tensors_chunked)
+    fg_coeffs_chunked_im = calamity.tensorize_fg_coeffs(data_i, wgts, fg_comp_tensors_chunked)
     # now retrieve Nants x Nants x Nfreq complex visibility cube from representation.
     model_r = calamity.yield_fg_model_array(
-        fg_comps_sparse=fg_comp_tensor_sparse,
-        fg_coeffs_sparse=fg_coeffs_sparse_re,
-        fg_comps_chunked=fg_comp_tensors_chunked,
-        fg_coeffs_chunked=fg_coeffs_chunked_re,
-        corr_inds_chunked=corr_inds_chunked,
+        fg_model_comps=fg_comp_tensors_chunked,
+        fg_coeffs=fg_coeffs_chunked_re,
+        corr_inds=corr_inds_chunked,
         nants=nants,
         nfreqs=nfreqs,
     )
     model_i = calamity.yield_fg_model_array(
-        fg_comps_sparse=fg_comp_tensor_sparse,
-        fg_coeffs_sparse=fg_coeffs_sparse_im,
-        fg_comps_chunked=fg_comp_tensors_chunked,
-        fg_coeffs_chunked=fg_coeffs_chunked_im,
-        corr_inds_chunked=corr_inds_chunked,
+        fg_model_comps=fg_comp_tensors_chunked,
+        fg_coeffs=fg_coeffs_chunked_im,
+        corr_inds=corr_inds_chunked,
         nants=nants,
         nfreqs=nfreqs,
     )
@@ -447,19 +373,25 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
 
 def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_model_projected, gains):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comps_tensor, _, _ = calamity.tensorize_fg_model_comps_dict(
+    fg_comps_tensor, corr_inds = calamity.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=dpss_vectors,
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=sky_model_projected.Nfreqs,
     )
-    (fg_coeffs_re, fg_coeffs_im, _, _) = calamity.tensorize_fg_coeffs(
+    rmsdata = np.mean(np.abs(sky_model_projected.data_array) ** 2.0) ** 0.5
+    data_r, data_i, wgts = calamity.tensorize_data(
         sky_model_projected,
-        dpss_vectors,
-        time_index=0,
+        corr_inds,
+        ants_map,
         polarization="xx",
+        time_index=0,
         dtype=np.float64,
+        data_scale_factor=rmsdata,
     )
+
+    fg_coeffs_re = calamity.tensorize_fg_coeffs(data_r, wgts, fg_comps_tensor)
+    fg_coeffs_im = calamity.tensorize_fg_coeffs(data_i, wgts, fg_comps_tensor)
     inserted_model = copy.deepcopy(sky_model_projected)
     # set data array to be noise.
     inserted_model.data_array = np.random.randn(*inserted_model.data_array.shape) + 1j * np.random.randn(
@@ -469,10 +401,10 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
     nants = sky_model_projected.Nants_data
     nfreqs = sky_model_projected.Nfreqs
     model_r = calamity.yield_fg_model_array(
-        fg_comps_sparse=fg_comps_tensor, fg_coeffs_sparse=fg_coeffs_re, nants=nants, nfreqs=nfreqs
+        fg_model_comps=fg_comps_tensor, fg_coeffs=fg_coeffs_re, nants=nants, nfreqs=nfreqs, corr_inds=corr_inds
     )
     model_i = calamity.yield_fg_model_array(
-        fg_comps_sparse=fg_comps_tensor, fg_coeffs_sparse=fg_coeffs_im, nants=nants, nfreqs=nfreqs
+        fg_model_comps=fg_comps_tensor, fg_coeffs=fg_coeffs_im, nants=nants, nfreqs=nfreqs, corr_inds=corr_inds
     )
     # insert tensors
     calamity.insert_model_into_uvdata_tensor(
@@ -483,38 +415,23 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
         redundant_groups,
         model_r,
         model_i,
+        scale_factor=rmsdata,
     )
     # check that data arrays are equal
     assert np.allclose(inserted_model.data_array, sky_model_projected.data_array)
 
 
-def test_tensorize_data(sky_model_projected, redundant_groups, gains):
-    ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    for tnum in range(sky_model_projected.Ntimes):
-        data_re, data_im, wgts = calamity.tensorize_data(
-            sky_model_projected, redundant_groups, ants_map, "xx", 0, dtype=np.float64
-        )
-        for red_grp in redundant_groups:
-            for ap in red_grp:
-                i, j = ants_map[ap[0]], ants_map[ap[1]]
-                data = sky_model_projected.get_data(ap + ("xx",))[tnum]
-                assert np.allclose(data, data_re[i, j].numpy() + 1j * data_im[i, j].numpy())
-                assert np.allclose(
-                    wgts[i, j], np.sum(sky_model_projected.nsample_array * ~sky_model_projected.flag_array) ** -1.0
-                )
-
-
 @pytest.mark.parametrize(
-    "use_sparse, noweights, perfect_data",
+    "noweights, perfect_data, use_min",
     [
-        (False, True, True),
         (True, True, False),
         (True, False, False),
-        (False, True, False),
+        (False, False, True),
+        (True, True, False),
     ],
 )
 def test_calibrate_and_model_dpss(
-    uvdata, sky_model_projected, gains_randomized, gains, use_sparse, weights, noweights, perfect_data
+    uvdata, sky_model_projected, gains_randomized, gains, weights, noweights, perfect_data, use_min
 ):
     if noweights:
         weight = None
@@ -532,10 +449,10 @@ def test_calibrate_and_model_dpss(
             sky_model=None,
             maxsteps=3000,
             tol=1e-10,
-            single_bls_as_sparse=use_sparse,
             correct_resid=True,
             correct_model=True,
             weights=weight,
+            use_min=use_min,
         )
     else:
         model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
@@ -548,10 +465,10 @@ def test_calibrate_and_model_dpss(
             sky_model=None,
             maxsteps=3000,
             tol=1e-10,
-            single_bls_as_sparse=use_sparse,
             correct_resid=True,
             correct_model=True,
             weights=weight,
+            use_min=use_min,
         )
     assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
@@ -560,8 +477,8 @@ def test_calibrate_and_model_dpss(
 
 
 @pytest.mark.parametrize(
-    "use_redundancy, use_sparse",
-    [(True, False), (True, True), (False, False), (False, True)],
+    "use_redundancy, graph_mode",
+    [(True, False), (False, False), (True, True), (False, True)],
 )
 def test_calibrate_and_model_dpss_redundant(
     uvdata_redundant,
@@ -569,7 +486,7 @@ def test_calibrate_and_model_dpss_redundant(
     gains_randomized_redundant,
     weights_redundant,
     use_redundancy,
-    use_sparse,
+    graph_mode,
 ):
     model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
         min_dly=2.0 / 0.3,
@@ -581,9 +498,9 @@ def test_calibrate_and_model_dpss_redundant(
         sky_model=None,
         maxsteps=3000,
         tol=1e-10,
-        single_bls_as_sparse=use_sparse,
         correct_resid=False,
         correct_model=False,
+        graph_mode=graph_mode,
     )
 
     # post hoc correction
@@ -597,15 +514,10 @@ def test_calibrate_and_model_dpss_redundant(
     assert len(fit_history[0]) == 1
 
 
-@pytest.mark.parametrize(
-    "use_sparse",
-    [True, False],
-)
 def test_calibrate_and_model_dpss_dont_correct_resid(
     uvdata,
     sky_model_projected,
     gains_randomized,
-    use_sparse,
     weights,
 ):
     # check that resid is much smaller then model and original data.
@@ -619,7 +531,6 @@ def test_calibrate_and_model_dpss_dont_correct_resid(
         sky_model=None,
         maxsteps=3000,
         tol=1e-10,
-        single_bls_as_sparse=use_sparse,
         correct_resid=False,
         correct_model=False,
         weights=weights,
@@ -634,11 +545,7 @@ def test_calibrate_and_model_dpss_dont_correct_resid(
     assert len(fit_history[0]) == 1
 
 
-@pytest.mark.parametrize(
-    "use_sparse",
-    [True, False],
-)
-def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gains_randomized, use_sparse, weights):
+def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gains_randomized, weights):
     # test that calibrating with a perfect sky model and only optimizing gains yields nearly perfect solutions for the gains.
     model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
         min_dly=2.0 / 0.3,
@@ -653,7 +560,6 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
         tol=1e-10,
         correct_resid=True,
         correct_model=True,
-        single_bls_as_sparse=use_sparse,
         weights=weights,
     )
     assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
@@ -668,10 +574,10 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
 
 
 @pytest.mark.parametrize(
-    "use_tensorflow, use_sparse",
-    [(True, True), (True, False), (False, True), (False, False)],
+    "use_tensorflow",
+    [True, False],
 )
-def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized, weights, use_tensorflow, use_sparse):
+def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized, weights, use_tensorflow):
 
     # check that mixec components and dpss components give similar resids
     model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
@@ -690,7 +596,6 @@ def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized
         correct_resid=False,
         correct_model=False,
         weights=weights,
-        single_bls_as_sparse=use_sparse,
         use_tensorflow_to_derive_modeling_comps=use_tensorflow,
         grp_size_threshold=1,
     )
@@ -704,15 +609,14 @@ def test_calibrate_and_model_mixed(uvdata, sky_model_projected, gains_randomized
 
 
 @pytest.mark.parametrize(
-    "perfect_data, single_bls_as_sparse",
-    [(True, False), (True, True), (False, False), (False, True)],
+    "perfect_data",
+    [True, False],
 )
 def test_calibrate_and_model_mixed_redundant(
     uvdata_redundant,
     sky_model_projected_redundant,
     gains_randomized_redundant,
     weights_redundant,
-    single_bls_as_sparse,
     perfect_data,
     gains_redundant,
 ):
@@ -733,7 +637,6 @@ def test_calibrate_and_model_mixed_redundant(
             correct_resid=False,
             correct_model=False,
             weights=weights_redundant,
-            single_bls_as_sparse=single_bls_as_sparse,
             use_tensorflow_to_derive_modeling_comps=True,
         )
     else:
@@ -752,7 +655,6 @@ def test_calibrate_and_model_mixed_redundant(
             correct_resid=False,
             correct_model=False,
             weights=weights_redundant,
-            single_bls_as_sparse=single_bls_as_sparse,
             use_tensorflow_to_derive_modeling_comps=True,
         )
     # post hoc correction
