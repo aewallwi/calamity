@@ -24,7 +24,7 @@ OPTIMIZERS = {
 }
 
 
-def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True):
+def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True, grp_size_threshold=5):
     """
     Order dict keys in order of number of baselines in each group
 
@@ -69,7 +69,8 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True):
         keys_with_redundancy = list(fg_model_comps_dict.keys())
         for fit_grp in keys_with_redundancy:
             rlens = np.asarray([len(red_grp) for red_grp in fit_grp])
-            if np.allclose(rlens, np.mean(rlens)):
+            # only break up groups with small numbers of group elements.
+            if np.allclose(rlens, np.mean(rlens)) and len(rlens) < grp_size_threshold:
                 # split up groups.
                 modeling_vectors = fg_model_comps_dict.pop(fit_grp)
                 for rednum in range(int(rlens[0])):
@@ -105,6 +106,7 @@ def tensorize_fg_model_comps_dict(
     dtype=np.float32,
     notebook_progressbar=False,
     verbose=False,
+    grp_size_threshold=5,
 ):
     """Convert per-baseline model components into a Ndata x Ncomponent tensor
 
@@ -152,7 +154,7 @@ def tensorize_fg_model_comps_dict(
         verbose=verbose,
     )
     # chunk foreground components.
-    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=not use_redundancy)
+    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=not use_redundancy, grp_size_threshold=grp_size_threshold)
     fg_model_comps = []
     corr_inds = []
     for nbls, nvecs in fg_model_comps_dict:
@@ -830,6 +832,7 @@ def calibrate_and_model_tensor(
     correct_model=False,
     weights=None,
     graph_mode=True,
+    grp_size_threshold=5,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -967,6 +970,7 @@ def calibrate_and_model_tensor(
         verbose=verbose,
         notebook_progressbar=notebook_progressbar,
         use_redundancy=use_redundancy,
+        grp_size_threshold=grp_size_threshold,
     )
     echo(
         f"{datetime.datetime.now()}Finished Converting Foreground Modeling Components to Tensors...\n",
