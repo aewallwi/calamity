@@ -101,7 +101,7 @@ def tensorize_fg_model_comps_dict(
     fg_model_comps_dict,
     ants_map,
     nfreqs,
-    use_redundancy=False,
+    use_redundancy=True,
     dtype=np.float32,
     notebook_progressbar=False,
     verbose=False,
