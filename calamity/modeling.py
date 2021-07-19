@@ -267,7 +267,7 @@ def get_uv_overlapping_grps_conjugated(
     if remove_redundancy:
         fitting_grps_reds_removed = []
         fitting_vec_centers_reds_removed = []
-        for fit_grp, fit_vbcs in fitting_grps:
+        for fit_grp, fit_vbcs in zip(fitting_grps, fitting_vec_centers):
             rlens = np.asarray([len(red_grp) for red_grp in fit_grp])
             if np.allclose(rlens, np.mean(rlens)):
                 # split up groups.
