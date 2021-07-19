@@ -73,7 +73,7 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True):
                 # split up groups.
                 modeling_vectors = fg_model_comps_dict.pop(fit_grp)
                 for rednum in range(int(rlens[0])):
-                    fit_grp_new = ((red_grp[rednum],) for red_grp in fit_grp)
+                    fit_grp_new = tuple([(red_grp[rednum],) for red_grp in fit_grp])
                     fg_model_comps_dict[fit_grp_new] = modeling_vectors
 
     for fit_grp in fg_model_comps_dict:

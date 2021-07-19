@@ -96,7 +96,7 @@ def dpss_vectors(sky_model):
 
 @pytest.fixture
 def mixed_vectors(sky_model):
-    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(sky_model, remove_redundancy=False)
+    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(sky_model)
     return modeling.yield_mixed_comps(
         fitting_grps, blvecs, sky_model.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1
     )
@@ -105,17 +105,7 @@ def mixed_vectors(sky_model):
 @pytest.fixture
 def mixed_vectors_redundant(sky_model_redundant):
     fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
-        sky_model_redundant, remove_redundancy=False
-    )
-    return modeling.yield_mixed_comps(
-        fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1
-    )
-
-
-@pytest.fixture
-def mixed_vectors_redundant_remove_redundancy(sky_model_redundant):
-    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
-        sky_model_redundant, remove_redundancy=True
+        sky_model_redundant
     )
     return modeling.yield_mixed_comps(
         fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1
@@ -249,12 +239,9 @@ def test_chunk_fg_comp_dict_by_nbls(dpss_vectors):
 
 
 @pytest.mark.parametrize(
-    "redundant_data, redundant_modeling",
+    "redundant_data",
     [
-        (False, False),
-        (True, False),
-        (True, True),
-        (False, True),
+        True, False
     ],
 )
 def test_tensorize_fg_model_comps_mixed(
@@ -263,7 +250,6 @@ def test_tensorize_fg_model_comps_mixed(
     sky_model_projected_redundant,
     mixed_vectors,
     mixed_vectors_redundant,
-    mixed_vectors_redundant_remove_redundancy,
     redundant_modeling,
     redundant_data,
     sky_model,
@@ -273,10 +259,6 @@ def test_tensorize_fg_model_comps_mixed(
     if redundant_data:
         gains = gains_redundant
         sky_model = sky_model_projected_redundant
-        if redundant_modeling:
-            fg_comps_dict = mixed_vectors_redundant
-        else:
-            fg_comps_dict = mixed_vectors_redundant_remove_redundancy
     else:
         gains = gains
         sky_model = sky_model_projected
@@ -330,7 +312,6 @@ def test_tensorize_fg_model_comps_mixed(
 def test_yield_fg_model_and_fg_coeffs_mixed(
     mixed_vectors_redundant,
     mixed_vectors,
-    mixed_vectors_redundant_remove_redundancy,
     sky_model_projected_redundant,
     sky_model_projected,
     gains_redundant,
@@ -344,10 +325,7 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
     if redundant_data:
         gains = gains_redundant
         sky_model = sky_model_projected_redundant
-        if redundant_modeling:
-            fg_comps_dict = mixed_vectors_redundant
-        else:
-            fg_comps_dict = mixed_vectors_redundant_remove_redundancy
+        fg_comps_dict = mixed_vectors_redundant
     else:
         gains = gains
         sky_model = sky_model_projected
@@ -362,6 +340,7 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=nfreqs,
+        use_redundancy=redundant_modeling,
     )
     data_r, data_i, wgts = calamity.tensorize_data(
         sky_model, corr_inds_chunked, ants_map, polarization="xx", time_index=0, dtype=np.float64
