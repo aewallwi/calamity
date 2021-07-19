@@ -68,10 +68,10 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True):
         # number of elements in each redundant group.
         keys_with_redundancy = list(fg_model_comps_dict.keys())
         for fit_grp in keys_with_redundancy:
-            modeling_vectors = fg_model_comps_dict.pop(fit_grp)
             rlens = np.asarray([len(red_grp) for red_grp in fit_grp])
             if np.allclose(rlens, np.mean(rlens)):
                 # split up groups.
+                modeling_vectors = fg_model_comps_dict.pop(fit_grp)
                 for rednum in range(int(rlens[0])):
                     fit_grp_new = ((red_grp[rednum],) for red_grp in fit_grp)
                     fg_model_comps_dict[fit_grp_new] = modeling_vectors
@@ -90,6 +90,7 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True):
             maxvecs[nbl] = fg_model_comps_dict[fit_grp].shape[1]
 
     fg_model_comps_dict_chunked = {}
+
     for nbl in chunked_keys:
         fg_model_comps_dict_chunked[(nbl, maxvecs[nbl])] = {k: fg_model_comps_dict[k] for k in chunked_keys[nbl]}
 
@@ -100,6 +101,7 @@ def tensorize_fg_model_comps_dict(
     fg_model_comps_dict,
     ants_map,
     nfreqs,
+    use_redundancy=False,
     dtype=np.float32,
     notebook_progressbar=False,
     verbose=False,
@@ -150,7 +152,7 @@ def tensorize_fg_model_comps_dict(
         verbose=verbose,
     )
     # chunk foreground components.
-    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(fg_model_comps_dict)
+    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=not(use_redundancy))
     fg_model_comps = []
     corr_inds = []
     for nbls, nvecs in fg_model_comps_dict:
@@ -959,6 +961,7 @@ def calibrate_and_model_tensor(
         nfreqs=sky_model.Nfreqs,
         verbose=verbose,
         notebook_progressbar=notebook_progressbar,
+        use_redundancy=use_redundancy,
     )
     echo(
         f"{datetime.datetime.now()}Finished Converting Foreground Modeling Components to Tensors...\n",
@@ -1201,7 +1204,6 @@ def calibrate_and_model_mixed(
     # get fitting groups
     fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
         uvdata,
-        remove_redundancy=not (use_redundancy),
         red_tol=red_tol,
         include_autos=include_autos,
         red_tol_freq=red_tol_freq,
@@ -1237,6 +1239,7 @@ def calibrate_and_model_mixed(
         include_autos=include_autos,
         verbose=verbose,
         notebook_progressbar=notebook_progressbar,
+        remove_redundancy=not(use_redundancy),
         **fitting_kwargs,
     )
     return model, resid, gains, fitted_info
