@@ -104,9 +104,7 @@ def mixed_vectors(sky_model):
 
 @pytest.fixture
 def mixed_vectors_redundant(sky_model_redundant):
-    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(
-        sky_model_redundant
-    )
+    fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(sky_model_redundant)
     return modeling.yield_mixed_comps(
         fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1
     )
@@ -240,9 +238,7 @@ def test_chunk_fg_comp_dict_by_nbls(dpss_vectors):
 
 @pytest.mark.parametrize(
     "redundant_data",
-    [
-        True, False
-    ],
+    [True, False],
 )
 def test_tensorize_fg_model_comps_mixed(
     gains,
@@ -250,7 +246,6 @@ def test_tensorize_fg_model_comps_mixed(
     sky_model_projected_redundant,
     mixed_vectors,
     mixed_vectors_redundant,
-    redundant_modeling,
     redundant_data,
     sky_model,
     sky_model_projected,
@@ -259,6 +254,7 @@ def test_tensorize_fg_model_comps_mixed(
     if redundant_data:
         gains = gains_redundant
         sky_model = sky_model_projected_redundant
+        fg_comps_dict = mixed_vectors_redundant
     else:
         gains = gains
         sky_model = sky_model_projected

@@ -143,7 +143,10 @@ def get_uv_overlapping_grps_conjugated(
     """
     # first get redundant baselines.
     antpairs, red_grps, vec_bin_centers, lengths = get_redundant_grps_conjugated(
-        uvdata, include_autos=include_autos, tol=red_tol, remove_redundancy=False,
+        uvdata,
+        include_autos=include_autos,
+        tol=red_tol,
+        remove_redundancy=False,
     )
     # next, we build fitting fitting_grps by generating a hashmap of connections between baselines
     fmin = uvdata.freq_array.min()

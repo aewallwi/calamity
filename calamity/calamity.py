@@ -152,7 +152,7 @@ def tensorize_fg_model_comps_dict(
         verbose=verbose,
     )
     # chunk foreground components.
-    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=not(use_redundancy))
+    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=not use_redundancy)
     fg_model_comps = []
     corr_inds = []
     for nbls, nvecs in fg_model_comps_dict:
@@ -541,12 +541,17 @@ def fit_gains_and_foregrounds(
     else:
         vars = [g_r, g_i]
 
-    echo(f"{datetime.datetime.now()} Performing gradient descent on {np.prod(g_r.shape)} complex gain parameters...", verbose=verbose)
+    echo(
+        f"{datetime.datetime.now()} Performing gradient descent on {np.prod(g_r.shape)} complex gain parameters...",
+        verbose=verbose,
+    )
     if not freeze_model:
         echo(
             f"Performing gradient descent on total of {int(np.sum([fgr.shape[0] * fgr.shape[1] for fgr in fg_r]))} complex foreground parameters"
         )
-        echo(f"Foreground Parameters grouped into chunks of shape ((nvecs, ngrps): nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[1]) for fgr, dc in zip(fg_r, data_r)]}")
+        echo(
+            f"Foreground Parameters grouped into chunks of shape ((nvecs, ngrps): nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[1]) for fgr, dc in zip(fg_r, data_r)]}"
+        )
 
     def loss_function():
         return loss_function_chunked(
@@ -1239,7 +1244,7 @@ def calibrate_and_model_mixed(
         include_autos=include_autos,
         verbose=verbose,
         notebook_progressbar=notebook_progressbar,
-        remove_redundancy=not(use_redundancy),
+        use_redundancy=use_redundancy,
         **fitting_kwargs,
     )
     return model, resid, gains, fitted_info
@@ -1325,7 +1330,7 @@ def calibrate_and_model_dpss(
 def loss_function_chunked(
     g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32
 ):
-    cal_loss = [tf.constant(0., dtype) for cnum in range(nchunks)]
+    cal_loss = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
     # now deal with dense components
     for cnum in range(nchunks):
         gr0 = tf.gather(g_r, ant0_inds[cnum])
@@ -1340,5 +1345,7 @@ def loss_function_chunked(
         vi = tf.reduce_sum(fg_i[cnum] * fg_comps[cnum], axis=0)
         model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
         model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-        cal_loss[cnum] += tf.reduce_sum((tf.square(data_r[cnum] - model_r) + tf.square(data_i[cnum] - model_i)) * wgts[cnum])
+        cal_loss[cnum] += tf.reduce_sum(
+            (tf.square(data_r[cnum] - model_r) + tf.square(data_i[cnum] - model_i)) * wgts[cnum]
+        )
     return tf.reduce_sum(tf.stack(cal_loss))
