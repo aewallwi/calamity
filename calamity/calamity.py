@@ -62,7 +62,7 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True):
     """
     chunked_keys = {}
     maxvecs = {}
-
+    fg_model_comps_dict = copy.deepcopy(fg_model_comps_dict)
     if remove_redundancy:
         # We can remove redundancies for fitting groups of baselines that have the same
         # number of elements in each redundant group.
