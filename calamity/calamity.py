@@ -24,6 +24,17 @@ OPTIMIZERS = {
 }
 
 
+class ModelChunk(tf.kearas.layers.Layer):
+    def __init__self():
+
+
+
+class VisibilityModel(tf.keras.Model):
+    def __init__(self, ant0_inds, ant1_inds, g_r, g_i, fg_r, fg_i, fg_comps):
+        super(VisibilityModel, self).__init__()
+
+
+
 def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True, grp_size_threshold=5):
     """
     Order dict keys in order of number of baselines in each group
@@ -1331,25 +1342,36 @@ def calibrate_and_model_dpss(
     return model, resid, gains, fitted_info
 
 
+def fg_model(fg_r, fg_i, fg_comps):
+    vr = tf.reduce_sum(fg_r * fg_comps, axis=0)
+    vi = tf.reduce_sum(fg_i * fg_comps, axis=0)
+    return vr, vi
+
+
+def data_model(g_r, g_i, fg_r, fg_i, fg_comps, ant0_inds, ant1_inds):
+    gr0 = tf.gather(g_r, ant0_inds)
+    gr1 = tf.gather(g_r, ant1_inds)
+    gi0 = tf.gather(g_i, ant0_inds)
+    gi1 = tf.gather(g_i, ant1_inds)
+    grgr = gr0 * gr1
+    gigi = gi0 * gi1
+    grgi = gr0 * gi1
+    gigr = gi0 * gr1
+    vr, vi = fg_model(fg_r, fg_i, fg_comps)
+    model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
+    model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
+    return model_r, model_i
+
+def mse(model_r, model_i, data_r, data_i, wgts):
+    return tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts
+
+
 def loss_function_chunked(
     g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32
 ):
     cal_loss = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
     # now deal with dense components
     for cnum in range(nchunks):
-        gr0 = tf.gather(g_r, ant0_inds[cnum])
-        gr1 = tf.gather(g_r, ant1_inds[cnum])
-        gi0 = tf.gather(g_i, ant0_inds[cnum])
-        gi1 = tf.gather(g_i, ant1_inds[cnum])
-        grgr = gr0 * gr1
-        gigi = gi0 * gi1
-        grgi = gr0 * gi1
-        gigr = gi0 * gr1
-        vr = tf.reduce_sum(fg_r[cnum] * fg_comps[cnum], axis=0)
-        vi = tf.reduce_sum(fg_i[cnum] * fg_comps[cnum], axis=0)
-        model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
-        model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-        cal_loss[cnum] += tf.reduce_sum(
-            (tf.square(data_r[cnum] - model_r) + tf.square(data_i[cnum] - model_i)) * wgts[cnum]
-        )
+        model_r, model_i = data_model(g_r, g_i, fg_r[cnum], fg_i[cnum], fg_comps[cnum], ant0_inds[cnum], ant1_inds[cnum])
+        cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
     return tf.reduce_sum(tf.stack(cal_loss))
