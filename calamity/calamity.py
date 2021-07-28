@@ -1352,7 +1352,7 @@ def data_model(g_r, g_i, fg_r, fg_i, fg_comps, ant0_inds, ant1_inds):
     return model_r, model_i
 
 def mse(model_r, model_i, data_r, data_i, wgts):
-    return tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts
+    return tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
 
 
 def loss_function_chunked(
