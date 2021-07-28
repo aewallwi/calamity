@@ -556,7 +556,7 @@ def fit_gains_and_foregrounds(
         )
 
     def loss_function():
-        return loss_function_chunked(
+        return mse_chunked(
             g_r=g_r,
             g_i=g_i,
             fg_r=fg_r,
@@ -1355,7 +1355,7 @@ def mse(model_r, model_i, data_r, data_i, wgts):
     return tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
 
 
-def loss_function_chunked(
+def mse_chunked(
     g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32
 ):
     cal_loss = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
@@ -1364,3 +1364,8 @@ def loss_function_chunked(
         model_r, model_i = data_model(g_r, g_i, fg_r[cnum], fg_i[cnum], fg_comps[cnum], ant0_inds[cnum], ant1_inds[cnum])
         cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
     return tf.reduce_sum(tf.stack(cal_loss))
+
+
+def log_prob_sigma(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, dara_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32, sigma_sq, sigma_sq_prior):
+    return -0.5 * mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, dara_r, data_i, wgts, ant0_inds, ant1_inds, dtype) / sigma_sq \
+    - sigma_sq / sigma_sq_prior
