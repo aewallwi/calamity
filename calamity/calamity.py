@@ -24,17 +24,6 @@ OPTIMIZERS = {
 }
 
 
-class ModelChunk(tf.kearas.layers.Layer):
-    def __init__self():
-
-
-
-class VisibilityModel(tf.keras.Model):
-    def __init__(self, ant0_inds, ant1_inds, g_r, g_i, fg_r, fg_i, fg_comps):
-        super(VisibilityModel, self).__init__()
-
-
-
 def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True, grp_size_threshold=5):
     """
     Order dict keys in order of number of baselines in each group
