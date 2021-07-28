@@ -1367,5 +1367,5 @@ def mse_chunked(
 
 
 def log_prob_sigma(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, sigma_sq, sigma_sq_prior, dtype=np.float32):
-    return -0.5 * mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, dara_r, data_i, wgts, ant0_inds, ant1_inds, dtype) / sigma_sq \
+    return -0.5 * mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype) / sigma_sq \
     - sigma_sq / sigma_sq_prior
