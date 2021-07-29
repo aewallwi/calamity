@@ -12,6 +12,7 @@ import copy
 import tensorflow as tf
 from pyuvdata import UVFlag
 import sys
+import glob
 
 
 @pytest.fixture
@@ -575,11 +576,13 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
 
 @pytest.mark.parametrize(
     "use_tensorflow, n_profile_steps",
-    [(True, 10),  (False, 0)],
+    [(True, 10), (False, 0)],
 )
-def test_calibrate_and_model_mixed(tmpdir, uvdata, sky_model_projected, gains_randomized, weights, use_tensorflow, n_profile_steps):
-    tmp_path = tmpdir.pathstr
-    logdir = os.path.join(tmp_path, 'logdir')
+def test_calibrate_and_model_mixed(
+    tmpdir, uvdata, sky_model_projected, gains_randomized, weights, use_tensorflow, n_profile_steps
+):
+    tmp_path = tmpdir.strpath
+    logdir = os.path.join(tmp_path, "logdir")
     # check that mixec components and dpss components give similar resids
     model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
         min_dly=0.0,
@@ -599,7 +602,9 @@ def test_calibrate_and_model_mixed(tmpdir, uvdata, sky_model_projected, gains_ra
         weights=weights,
         use_tensorflow_to_derive_modeling_comps=use_tensorflow,
         grp_size_threshold=1,
-        n_profile_steps=n_profile_steps
+        graph_mode=True,
+        n_profile_steps=n_profile_steps,
+        profile_log_dir=logdir,
     )
     # post hoc correction
     resid = cal_utils.apply_gains(resid, gains)
@@ -611,7 +616,7 @@ def test_calibrate_and_model_mixed(tmpdir, uvdata, sky_model_projected, gains_ra
     # check for profiler outputs.
     if n_profile_steps > 0:
         assert os.path.exists(logdir)
-        assert len(glob.glob(logdir + '/*')) > 0
+        assert len(glob.glob(logdir + "/*")) > 0
 
 
 @pytest.mark.parametrize(

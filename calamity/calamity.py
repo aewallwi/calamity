@@ -154,7 +154,9 @@ def tensorize_fg_model_comps_dict(
         verbose=verbose,
     )
     # chunk foreground components.
-    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=not use_redundancy, grp_size_threshold=grp_size_threshold)
+    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(
+        fg_model_comps_dict, remove_redundancy=not use_redundancy, grp_size_threshold=grp_size_threshold
+    )
     fg_model_comps = []
     corr_inds = []
     for nbls, nvecs in fg_model_comps_dict:
@@ -429,9 +431,9 @@ def fit_gains_and_foregrounds(
     verbose=False,
     notebook_progressbar=False,
     dtype=np.float32,
-    graph_mode=True,
+    graph_mode=False,
     n_profile_steps=0,
-    profile_log_dir='./logdir',
+    profile_log_dir="./logdir",
     **opt_kwargs,
 ):
     """Run optimization loop to fit gains and foreground components.
@@ -600,10 +602,10 @@ def fit_gains_and_foregrounds(
     if n_profile_steps > 0:
         echo(f"{datetime.datetime.now()} Profiling with {n_profile_steps}. And writing output to {profile_log_dir}...")
         tf.profiler.experimental.start(profile_log_dir)
-        for step in range(n_profile_steps):
-            train_step()
-        tf.profile.experimental.stop()
-
+        for step in PBARS[notebook_progressbar](range(n_profile_steps)):
+            with tf.profiler.experimental.Trace("train", step_num=step):
+                train_step()
+        tf.profiler.experimental.stop()
 
     echo(
         f"{datetime.datetime.now()} Building Computational Graph...\n",
@@ -847,10 +849,10 @@ def calibrate_and_model_tensor(
     correct_resid=False,
     correct_model=False,
     weights=None,
-    graph_mode=True,
+    graph_mode=False,
     grp_size_threshold=5,
     n_profile_steps=0,
-    profile_log_dir='./logdir',
+    profile_log_dir="./logdir",
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -1077,7 +1079,7 @@ def calibrate_and_model_tensor(
                 maxsteps=maxsteps,
                 graph_mode=graph_mode,
                 n_profile_steps=n_profile_steps,
-                profile_log_dir='./logdir',
+                profile_log_dir=profile_log_dir,
                 **opt_kwargs,
             )
             # insert into model uvdata.
@@ -1377,21 +1379,41 @@ def data_model(g_r, g_i, fg_r, fg_i, fg_comps, ant0_inds, ant1_inds):
     model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
     return model_r, model_i
 
+
 def mse(model_r, model_i, data_r, data_i, wgts):
     return tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
 
 
-def mse_chunked(
-    g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32
-):
+def mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32):
     cal_loss = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
     # now deal with dense components
     for cnum in range(nchunks):
-        model_r, model_i = data_model(g_r, g_i, fg_r[cnum], fg_i[cnum], fg_comps[cnum], ant0_inds[cnum], ant1_inds[cnum])
+        model_r, model_i = data_model(
+            g_r, g_i, fg_r[cnum], fg_i[cnum], fg_comps[cnum], ant0_inds[cnum], ant1_inds[cnum]
+        )
         cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
     return tf.reduce_sum(tf.stack(cal_loss))
 
 
-def log_prob_sigma(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, sigma_sq, sigma_sq_prior, dtype=np.float32):
-    return -0.5 * mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype) / sigma_sq \
-    - sigma_sq / sigma_sq_prior
+def log_prob_sigma(
+    g_r,
+    g_i,
+    fg_r,
+    fg_i,
+    fg_comps,
+    nchunks,
+    data_r,
+    data_i,
+    wgts,
+    ant0_inds,
+    ant1_inds,
+    sigma_sq,
+    sigma_sq_prior,
+    dtype=np.float32,
+):
+    return (
+        -0.5
+        * mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype)
+        / sigma_sq
+        - sigma_sq / sigma_sq_prior
+    )
