@@ -430,6 +430,8 @@ def fit_gains_and_foregrounds(
     notebook_progressbar=False,
     dtype=np.float32,
     graph_mode=True,
+    n_profile_steps=0,
+    profile_log_dir='./logdir',
     **opt_kwargs,
 ):
     """Run optimization loop to fit gains and foreground components.
@@ -490,6 +492,12 @@ def fit_gains_and_foregrounds(
         if True, compile gradient update step in graph mode to speed up
         runtime by ~2-3x. I've found that this helps on CPUs but on GPUs
         it actually increases runtime by a similar factor.
+    n_profile_steps: bool, optional
+        number of steps to run profiling on
+        default is 0.
+    profile_log_dir: str, optional
+        directory to save profile logs to
+        default is './logdir'
     opt_kwargs: kwarg dict
         additional kwargs for tf.opt.Optimizer(). See tensorflow docs.
 
@@ -580,7 +588,7 @@ def fit_gains_and_foregrounds(
 
     if graph_mode:
 
-        @tf.function
+        @tf.function(jit_compile=True)
         def train_step():
             return train_step_code()
 
@@ -588,6 +596,14 @@ def fit_gains_and_foregrounds(
 
         def train_step():
             return train_step_code()
+
+    if n_profile_steps > 0:
+        echo(f"{datetime.datetime.now()} Profiling with {n_profile_steps}. And writing output to {profile_log_dir}...")
+        tf.profiler.experimental.start(profile_log_dir)
+        for step in range(n_profile_steps):
+            train_step()
+        tf.profile.experimental.stop()
+
 
     echo(
         f"{datetime.datetime.now()} Building Computational Graph...\n",
@@ -833,6 +849,8 @@ def calibrate_and_model_tensor(
     weights=None,
     graph_mode=True,
     grp_size_threshold=5,
+    n_profile_steps=0,
+    profile_log_dir='./logdir',
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -913,6 +931,12 @@ def calibrate_and_model_tensor(
         if True, compile gradient update step in graph mode to speed up
         runtime by ~2-3x. I've found that this helps on CPUs but on GPUs
         it actually increases runtime by a similar factor.
+    n_profile_steps: bool, optional
+        number of steps to run profiling on
+        default is 0.
+    profile_log_dir: str, optional
+        directory to save profile logs to
+        default is './logdir'
     opt_kwargs: kwarg_dict
         kwargs for tf.optimizers
 
@@ -1052,6 +1076,8 @@ def calibrate_and_model_tensor(
                 dtype=dtype,
                 maxsteps=maxsteps,
                 graph_mode=graph_mode,
+                n_profile_steps=n_profile_steps,
+                profile_log_dir='./logdir',
                 **opt_kwargs,
             )
             # insert into model uvdata.
