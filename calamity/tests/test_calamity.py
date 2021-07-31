@@ -575,8 +575,8 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
 
 
 @pytest.mark.parametrize(
-    "use_tensorflow, n_profile_steps",
-    [(True, 10), (False, 0)],
+    "use_tensorflow, n_profile_steps, model_regularization",
+    [(True, 10, 'post_hoc'), (False, 0, 'post_hoc'), (True, 0, 'sum')],
 )
 def test_calibrate_and_model_mixed(
     tmpdir, uvdata, sky_model_projected, gains_randomized, weights, use_tensorflow, n_profile_steps
