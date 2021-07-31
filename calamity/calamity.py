@@ -580,7 +580,7 @@ def fit_gains_and_foregrounds(
         )
 
     if model_regularization == "sum":
-        piror_r_sum = tf.reduce_sum(
+        prior_r_sum = tf.reduce_sum(
             tf.stack([tf.reduce_sum(sky_model_r[cnum] * wgts[cnum]) for cnum in range(nchunks)])
         )
         prior_i_sum = tf.reduce_sum(
@@ -603,7 +603,7 @@ def fit_gains_and_foregrounds(
                 ant1_inds=ant1_inds,
                 dtype=dtype,
                 prior_r_sum=prior_r_sum,
-                piror_i_sum=prior_i_sum,
+                prior_i_sum=prior_i_sum,
                 wsqsum=wsqsum,
             )
 
