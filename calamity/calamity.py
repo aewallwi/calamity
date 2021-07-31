@@ -434,9 +434,10 @@ def fit_gains_and_foregrounds(
     graph_mode=False,
     n_profile_steps=0,
     profile_log_dir="./logdir",
-    model_r=None,
-    model_i=None,
+    sky_model_r=None,
+    sky_model_i=None,
     model_regularization=None,
+    graph_args_dict=None,
     **opt_kwargs,
 ):
     """Run optimization loop to fit gains and foreground components.
@@ -503,9 +504,9 @@ def fit_gains_and_foregrounds(
     profile_log_dir: str, optional
         directory to save profile logs to
         default is './logdir'
-    model_r: list of tf.Tensor objects, optional
+    sky_model_r: list of tf.Tensor objects, optional
         chunked tensors containing model in same format as data_r
-    model_i: list of tf.Tensor objects, optional
+    sky_model_i: list of tf.Tensor objects, optional
         chunked tensors containing model in the same format as data_i
     model_regularization: str, optional
         type of model regularization to perform. Currently support "sum"
@@ -529,7 +530,8 @@ def fit_gains_and_foregrounds(
         dictionary containing fit history for each time-step and polarization in the data with fields:
         'loss_history': list of values of the loss function in each minimization iteration.
     """
-
+    if graph_args_dict is None:
+        graph_args_dict = {}
     # initialize the optimizer.
     opt = OPTIMIZERS[optimizer](**opt_kwargs)
     # set up history recording
@@ -577,8 +579,8 @@ def fit_gains_and_foregrounds(
             f"Foreground Parameters grouped into chunks of shape ((nvecs, ngrps): nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[1]) for fgr, dc in zip(fg_r, data_r)]}"
         )
 
+    if model_regularization == "sum":
 
-    if model_regularization == 'sum':
         def loss_function():
             return mse_chunked_sum_regularized(
                 g_r=g_r,
@@ -593,10 +595,16 @@ def fit_gains_and_foregrounds(
                 ant0_inds=ant0_inds,
                 ant1_inds=ant1_inds,
                 dtype=dtype,
-                prior_r_sum=tf.reduce_sum(tf.stack([model_r[cnum] * wgts[cnum] for cnum in range(nchunks)])),
-                prior_i_sum=tf.reduce_sum(tf.stack([model_i[cnum] * wgts[cnum] for cnum in range(nchunks)]))
+                prior_r_sum=tf.reduce_sum(
+                    tf.stack([tf.reduce_sum(sky_model_r[cnum] * wgts[cnum]) for cnum in range(nchunks)])
+                ),
+                prior_i_sum=tf.reduce_sum(
+                    tf.stack([tf.reduce_sum(sky_model_i[cnum] * wgts[cnum]) for cnum in range(nchunks)])
+                ),
             )
+
     else:
+
         def loss_function():
             return mse_chunked(
                 g_r=g_r,
@@ -611,7 +619,8 @@ def fit_gains_and_foregrounds(
                 ant0_inds=ant0_inds,
                 ant1_inds=ant1_inds,
                 dtype=dtype,
-        )
+            )
+
     def train_step_code():
         with tf.GradientTape() as tape:
             loss = loss_function()
@@ -621,7 +630,7 @@ def fit_gains_and_foregrounds(
 
     if graph_mode:
 
-        @tf.function(jit_compile=True)
+        @tf.function(**graph_args_dict)
         def train_step():
             return train_step_code()
 
@@ -884,7 +893,7 @@ def calibrate_and_model_tensor(
     grp_size_threshold=5,
     n_profile_steps=0,
     profile_log_dir="./logdir",
-    model_regularization='post_hoc',
+    model_regularization="post_hoc",
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -1080,12 +1089,14 @@ def calibrate_and_model_tensor(
                     sky_model,
                     corr_inds=corr_inds,
                     ants_map=ants_map,
-                    polarizations=pol,
+                    polarization=pol,
                     time_index=time_index,
                     data_scale_factor=rmsdata,
                     weights=weights,
-                    dtype=dtype
+                    dtype=dtype,
                 )
+            else:
+                sky_model_r, sky_model_i = None, None
             echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
             g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
             # generate initial guess for foreground coeffs.
@@ -1130,8 +1141,8 @@ def calibrate_and_model_tensor(
                 graph_mode=graph_mode,
                 n_profile_steps=n_profile_steps,
                 profile_log_dir=profile_log_dir,
-                model_r=model_r,
-                model_i=model_i,
+                sky_model_r=sky_model_r,
+                sky_model_i=sky_model_i,
                 model_regularization=model_regularization,
                 **opt_kwargs,
             )
@@ -1168,7 +1179,7 @@ def calibrate_and_model_tensor(
             )
         fit_history[polnum] = fit_history_p
         # normalize on sky model if we use post-hoc regularization
-        if not freeze_model and model_regularization=='post_hoc':
+        if not freeze_model and model_regularization == "post_hoc":
             renormalize(
                 uvdata_reference_model=sky_model,
                 uvdata_deconv=model,
@@ -1448,7 +1459,23 @@ def mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, a
         cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
     return tf.reduce_sum(tf.stack(cal_loss))
 
-def mse_chunked_sum_regularized(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, prior_r_sum, prior_i_sum, dtype=np.float32):
+
+def mse_chunked_sum_regularized(
+    g_r,
+    g_i,
+    fg_r,
+    fg_i,
+    fg_comps,
+    nchunks,
+    data_r,
+    data_i,
+    wgts,
+    ant0_inds,
+    ant1_inds,
+    prior_r_sum,
+    prior_i_sum,
+    dtype=np.float32,
+):
     cal_loss = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
     model_i_sum = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
     model_r_sum = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
@@ -1462,4 +1489,8 @@ def mse_chunked_sum_regularized(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r,
         model_i_sum[cnum] += tf.reduce_sum(model_i * wgts[cnum])
 
         cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
-    return tf.reduce_sum(tf.stack(cal_loss)) + tf.square(tf.reduce_sum(tf.stack(model_r_sum)) - prior_r_sum) + tf.square(tf.reduce_sum(tf.stack(model_i_sum)) - prior_i_sum)
+    return (
+        tf.reduce_sum(tf.stack(cal_loss))
+        + tf.square(tf.reduce_sum(tf.stack(model_r_sum)) - prior_r_sum)
+        + tf.square(tf.reduce_sum(tf.stack(model_i_sum)) - prior_i_sum)
+    )

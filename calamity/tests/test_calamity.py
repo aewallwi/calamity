@@ -502,6 +502,7 @@ def test_calibrate_and_model_dpss_redundant(
         correct_resid=False,
         correct_model=False,
         graph_mode=graph_mode,
+        model_regularization="sum",
     )
 
     # post hoc correction
@@ -575,11 +576,19 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
 
 
 @pytest.mark.parametrize(
-    "use_tensorflow, n_profile_steps, model_regularization",
-    [(True, 10, 'post_hoc'), (False, 0, 'post_hoc'), (True, 0, 'sum')],
+    "use_tensorflow, n_profile_steps, model_regularization, graph_mode",
+    [(True, 10, "post_hoc", True), (False, 0, "post_hoc", True), (True, 0, "sum", False)],
 )
 def test_calibrate_and_model_mixed(
-    tmpdir, uvdata, sky_model_projected, gains_randomized, weights, use_tensorflow, n_profile_steps
+    tmpdir,
+    uvdata,
+    sky_model_projected,
+    gains_randomized,
+    weights,
+    use_tensorflow,
+    n_profile_steps,
+    model_regularization,
+    graph_mode,
 ):
     tmp_path = tmpdir.strpath
     logdir = os.path.join(tmp_path, "logdir")
@@ -602,9 +611,10 @@ def test_calibrate_and_model_mixed(
         weights=weights,
         use_tensorflow_to_derive_modeling_comps=use_tensorflow,
         grp_size_threshold=1,
-        graph_mode=True,
+        graph_mode=graph_mode,
         n_profile_steps=n_profile_steps,
         profile_log_dir=logdir,
+        model_regularization=model_regularization,
     )
     # post hoc correction
     resid = cal_utils.apply_gains(resid, gains)
