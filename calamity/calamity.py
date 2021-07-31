@@ -586,7 +586,7 @@ def fit_gains_and_foregrounds(
         prior_i_sum = tf.reduce_sum(
             tf.stack([tf.reduce_sum(sky_model_i[cnum] * wgts[cnum]) for cnum in range(nchunks)])
         )
-        wsqsum = tf.reduce_sum(tf.stack([tf.reduce_sum(wgts[cnum]) for cnum in range(nchunks)]))
+        wsqsum = tf.reduce_sum(tf.stack([tf.reduce_sum(wgts[cnum] ** 2.) for cnum in range(nchunks)]))
 
         def loss_function():
             return mse_chunked_sum_regularized(
