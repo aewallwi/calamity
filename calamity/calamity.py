@@ -434,6 +434,9 @@ def fit_gains_and_foregrounds(
     graph_mode=False,
     n_profile_steps=0,
     profile_log_dir="./logdir",
+    model_r=None,
+    model_i=None,
+    model_regularization=None,
     **opt_kwargs,
 ):
     """Run optimization loop to fit gains and foreground components.
@@ -500,6 +503,15 @@ def fit_gains_and_foregrounds(
     profile_log_dir: str, optional
         directory to save profile logs to
         default is './logdir'
+    model_r: list of tf.Tensor objects, optional
+        chunked tensors containing model in same format as data_r
+    model_i: list of tf.Tensor objects, optional
+        chunked tensors containing model in the same format as data_i
+    model_regularization: str, optional
+        type of model regularization to perform. Currently support "sum"
+        where the sums of real and imaginary parts (across all bls and freqs)
+        are constrained to be the same as the sum of real and imag parts
+        of data.
     opt_kwargs: kwarg dict
         additional kwargs for tf.opt.Optimizer(). See tensorflow docs.
 
@@ -565,22 +577,41 @@ def fit_gains_and_foregrounds(
             f"Foreground Parameters grouped into chunks of shape ((nvecs, ngrps): nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[1]) for fgr, dc in zip(fg_r, data_r)]}"
         )
 
-    def loss_function():
-        return mse_chunked(
-            g_r=g_r,
-            g_i=g_i,
-            fg_r=fg_r,
-            fg_i=fg_i,
-            fg_comps=fg_comps,
-            nchunks=nchunks,
-            data_r=data_r,
-            data_i=data_i,
-            wgts=wgts,
-            ant0_inds=ant0_inds,
-            ant1_inds=ant1_inds,
-            dtype=dtype,
-        )
 
+    if model_regularization == 'sum':
+        def loss_function():
+            return mse_chunked_sum_regularized(
+                g_r=g_r,
+                g_i=g_i,
+                fg_r=fg_r,
+                fg_i=fg_i,
+                fg_comps=fg_comps,
+                nchunks=nchunks,
+                data_r=data_r,
+                data_i=data_i,
+                wgts=wgts,
+                ant0_inds=ant0_inds,
+                ant1_inds=ant1_inds,
+                dtype=dtype,
+                prior_r_sum=tf.reduce_sum(tf.stack([model_r[cnum] * wgts[cnum] for cnum in range(nchunks)])),
+                prior_i_sum=tf.reduce_sum(tf.stack([model_i[cnum] * wgts[cnum] for cnum in range(nchunks)]))
+            )
+    else:
+        def loss_function():
+            return mse_chunked(
+                g_r=g_r,
+                g_i=g_i,
+                fg_r=fg_r,
+                fg_i=fg_i,
+                fg_comps=fg_comps,
+                nchunks=nchunks,
+                data_r=data_r,
+                data_i=data_i,
+                wgts=wgts,
+                ant0_inds=ant0_inds,
+                ant1_inds=ant1_inds,
+                dtype=dtype,
+        )
     def train_step_code():
         with tf.GradientTape() as tape:
             loss = loss_function()
@@ -853,6 +884,7 @@ def calibrate_and_model_tensor(
     grp_size_threshold=5,
     n_profile_steps=0,
     profile_log_dir="./logdir",
+    model_regularization='post_hoc',
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -939,6 +971,11 @@ def calibrate_and_model_tensor(
     profile_log_dir: str, optional
         directory to save profile logs to
         default is './logdir'
+    model_regularization: str, optional
+        option to regularize model
+        supported 'post_hoc', 'sum'
+        default is 'post_hoc'
+        which sets sum of amps equal and sum of phases equal.
     opt_kwargs: kwarg_dict
         kwargs for tf.optimizers
 
@@ -977,13 +1014,14 @@ def calibrate_and_model_tensor(
         )
         gains = cal_utils.blank_uvcal_from_uvdata(uvdata)
 
-    if sky_model is None:
+    if sky_model is None and model_regularization is not None:
         echo(
             f"{datetime.datetime.now()} Sky model is None. Initializing from data...\n",
             verbose=verbose,
         )
         sky_model = cal_utils.apply_gains(uvdata, gains)
-    sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
+    else:
+        sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
 
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
@@ -1036,6 +1074,18 @@ def calibrate_and_model_tensor(
                 weights=weights,
                 dtype=dtype,
             )
+            if sky_model is not None:
+                echo(f"{datetime.datetime.now()} Tensorizing sky model...\n", verbose=verbose)
+                sky_model_r, sky_model_i, _ = tensorize_data(
+                    sky_model,
+                    corr_inds=corr_inds,
+                    ants_map=ants_map,
+                    polarizations=pol,
+                    time_index=time_index,
+                    data_scale_factor=rmsdata,
+                    weights=weights,
+                    dtype=dtype
+                )
             echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
             g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
             # generate initial guess for foreground coeffs.
@@ -1080,6 +1130,9 @@ def calibrate_and_model_tensor(
                 graph_mode=graph_mode,
                 n_profile_steps=n_profile_steps,
                 profile_log_dir=profile_log_dir,
+                model_r=model_r,
+                model_i=model_i,
+                model_regularization=model_regularization,
                 **opt_kwargs,
             )
             # insert into model uvdata.
@@ -1114,7 +1167,8 @@ def calibrate_and_model_tensor(
                 gains_im=gains_i,
             )
         fit_history[polnum] = fit_history_p
-        if not freeze_model:
+        # normalize on sky model if we use post-hoc regularization
+        if not freeze_model and model_regularization=='post_hoc':
             renormalize(
                 uvdata_reference_model=sky_model,
                 uvdata_deconv=model,
@@ -1394,26 +1448,18 @@ def mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, a
         cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
     return tf.reduce_sum(tf.stack(cal_loss))
 
+def mse_chunked_sum_regularized(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, prior_r_sum, prior_i_sum, dtype=np.float32):
+    cal_loss = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
+    model_i_sum = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
+    model_r_sum = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
+    # now deal with dense components
+    for cnum in range(nchunks):
+        model_r, model_i = data_model(
+            g_r, g_i, fg_r[cnum], fg_i[cnum], fg_comps[cnum], ant0_inds[cnum], ant1_inds[cnum]
+        )
+        # compute sum of real and imag parts x weights for regularization.
+        model_r_sum[cnum] += tf.reduce_sum(model_r * wgts[cnum])
+        model_i_sum[cnum] += tf.reduce_sum(model_i * wgts[cnum])
 
-def log_prob_sigma(
-    g_r,
-    g_i,
-    fg_r,
-    fg_i,
-    fg_comps,
-    nchunks,
-    data_r,
-    data_i,
-    wgts,
-    ant0_inds,
-    ant1_inds,
-    sigma_sq,
-    sigma_sq_prior,
-    dtype=np.float32,
-):
-    return (
-        -0.5
-        * mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype)
-        / sigma_sq
-        - sigma_sq / sigma_sq_prior
-    )
+        cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
+    return tf.reduce_sum(tf.stack(cal_loss)) + tf.square(tf.reduce_sum(tf.stack(model_r_sum)) - prior_r_sum) + tf.square(tf.reduce_sum(tf.stack(model_i_sum)) - prior_i_sum)
