@@ -586,7 +586,6 @@ def fit_gains_and_foregrounds(
         prior_i_sum = tf.reduce_sum(
             tf.stack([tf.reduce_sum(sky_model_i[cnum] * wgts[cnum]) for cnum in range(nchunks)])
         )
-        wsqsum = tf.reduce_sum(tf.stack([tf.reduce_sum(wgts[cnum] ** 2.) for cnum in range(nchunks)]))
 
         def loss_function():
             return mse_chunked_sum_regularized(
@@ -604,7 +603,6 @@ def fit_gains_and_foregrounds(
                 dtype=dtype,
                 prior_r_sum=prior_r_sum,
                 prior_i_sum=prior_i_sum,
-                wsqsum=wsqsum,
             )
 
     else:
@@ -1478,7 +1476,6 @@ def mse_chunked_sum_regularized(
     ant1_inds,
     prior_r_sum,
     prior_i_sum,
-    wsqsum,
     dtype=np.float32,
 ):
     cal_loss = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
@@ -1496,6 +1493,6 @@ def mse_chunked_sum_regularized(
         cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
     return (
         tf.reduce_sum(tf.stack(cal_loss))
-        + tf.square(tf.reduce_sum(tf.stack(model_r_sum)) - prior_r_sum) / wsqsum
-        + tf.square(tf.reduce_sum(tf.stack(model_i_sum)) - prior_i_sum) / wsqsum
+        + tf.square(tf.reduce_sum(tf.stack(model_r_sum)) - prior_r_sum)
+        + tf.square(tf.reduce_sum(tf.stack(model_i_sum)) - prior_i_sum)
     )
