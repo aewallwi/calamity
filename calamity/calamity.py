@@ -896,6 +896,7 @@ def calibrate_and_model_tensor(
     n_profile_steps=0,
     profile_log_dir="./logdir",
     model_regularization="post_hoc",
+    use_first_time_to_init_future_times=True,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -987,6 +988,9 @@ def calibrate_and_model_tensor(
         supported 'post_hoc', 'sum'
         default is 'post_hoc'
         which sets sum of amps equal and sum of phases equal.
+    use_first_time_to_init_future_times: bool, optional
+        if True, then use foreground coeffs and gains from previous time-step to
+        initialize gains for next time step.
     opt_kwargs: kwarg_dict
         kwargs for tf.optimizers
 
@@ -1099,28 +1103,29 @@ def calibrate_and_model_tensor(
                 )
             else:
                 sky_model_r, sky_model_i = None, None
-            echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
-            g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
-            # generate initial guess for foreground coeffs.
-            echo(
-                f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
-                verbose=verbose,
-            )
-            fg_r = tensorize_fg_coeffs(
-                data=data_r,
-                wgts=wgts,
-                fg_model_comps=fg_model_comps,
-                verbose=verbose,
-                notebook_progressbar=notebook_progressbar,
-            )
+            if time_index == 0 or not use_first_time_to_init_future_times:
+                echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
+                g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
+                # generate initial guess for foreground coeffs.
+                echo(
+                    f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
+                    verbose=verbose,
+                )
+                fg_r = tensorize_fg_coeffs(
+                    data=data_r,
+                    wgts=wgts,
+                    fg_model_comps=fg_model_comps,
+                    verbose=verbose,
+                    notebook_progressbar=notebook_progressbar,
+                )
 
-            fg_i = tensorize_fg_coeffs(
-                data=data_i,
-                wgts=wgts,
-                fg_model_comps=fg_model_comps,
-                verbose=verbose,
-                notebook_progressbar=notebook_progressbar,
-            )
+                fg_i = tensorize_fg_coeffs(
+                    data=data_i,
+                    wgts=wgts,
+                    fg_model_comps=fg_model_comps,
+                    verbose=verbose,
+                    notebook_progressbar=notebook_progressbar,
+                )
 
             (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                 g_r=g_r,
