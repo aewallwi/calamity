@@ -896,7 +896,7 @@ def calibrate_and_model_tensor(
     n_profile_steps=0,
     profile_log_dir="./logdir",
     model_regularization="post_hoc",
-    use_first_time_to_init_future_times=True,
+    init_guesses_from_previous_time_step=True,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -988,7 +988,7 @@ def calibrate_and_model_tensor(
         supported 'post_hoc', 'sum'
         default is 'post_hoc'
         which sets sum of amps equal and sum of phases equal.
-    use_first_time_to_init_future_times: bool, optional
+    init_guesses_from_previous_time_step: bool, optional
         if True, then use foreground coeffs and gains from previous time-step to
         initialize gains for next time step.
     opt_kwargs: kwarg_dict
@@ -1103,7 +1103,7 @@ def calibrate_and_model_tensor(
                 )
             else:
                 sky_model_r, sky_model_i = None, None
-            if time_index == 0 or not use_first_time_to_init_future_times:
+            if time_index == 0 or not init_guesses_from_previous_time_step:
                 echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
                 g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
                 # generate initial guess for foreground coeffs.
