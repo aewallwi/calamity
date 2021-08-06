@@ -1127,7 +1127,7 @@ def calibrate_and_model_tensor(
                     notebook_progressbar=notebook_progressbar,
                 )
 
-            (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
+            (g_r, g_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                 g_r=g_r,
                 g_i=g_i,
                 fg_r=fg_r,
@@ -1181,8 +1181,8 @@ def calibrate_and_model_tensor(
                 uvcal=gains,
                 time_index=time_index,
                 polarization=pol,
-                gains_re=gains_r,
-                gains_im=gains_i,
+                gains_re=g_r,
+                gains_im=g_i,
             )
         fit_history[polnum] = fit_history_p
         # normalize on sky model if we use post-hoc regularization
