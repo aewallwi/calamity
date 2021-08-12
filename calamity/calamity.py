@@ -154,7 +154,9 @@ def tensorize_fg_model_comps_dict(
         verbose=verbose,
     )
     # chunk foreground components.
-    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=not use_redundancy, grp_size_threshold=grp_size_threshold)
+    fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(
+        fg_model_comps_dict, remove_redundancy=not use_redundancy, grp_size_threshold=grp_size_threshold
+    )
     fg_model_comps = []
     corr_inds = []
     for nbls, nvecs in fg_model_comps_dict:
@@ -429,7 +431,13 @@ def fit_gains_and_foregrounds(
     verbose=False,
     notebook_progressbar=False,
     dtype=np.float32,
-    graph_mode=True,
+    graph_mode=False,
+    n_profile_steps=0,
+    profile_log_dir="./logdir",
+    sky_model_r=None,
+    sky_model_i=None,
+    model_regularization=None,
+    graph_args_dict=None,
     **opt_kwargs,
 ):
     """Run optimization loop to fit gains and foreground components.
@@ -490,6 +498,21 @@ def fit_gains_and_foregrounds(
         if True, compile gradient update step in graph mode to speed up
         runtime by ~2-3x. I've found that this helps on CPUs but on GPUs
         it actually increases runtime by a similar factor.
+    n_profile_steps: bool, optional
+        number of steps to run profiling on
+        default is 0.
+    profile_log_dir: str, optional
+        directory to save profile logs to
+        default is './logdir'
+    sky_model_r: list of tf.Tensor objects, optional
+        chunked tensors containing model in same format as data_r
+    sky_model_i: list of tf.Tensor objects, optional
+        chunked tensors containing model in the same format as data_i
+    model_regularization: str, optional
+        type of model regularization to perform. Currently support "sum"
+        where the sums of real and imaginary parts (across all bls and freqs)
+        are constrained to be the same as the sum of real and imag parts
+        of data.
     opt_kwargs: kwarg dict
         additional kwargs for tf.opt.Optimizer(). See tensorflow docs.
 
@@ -507,7 +530,8 @@ def fit_gains_and_foregrounds(
         dictionary containing fit history for each time-step and polarization in the data with fields:
         'loss_history': list of values of the loss function in each minimization iteration.
     """
-
+    if graph_args_dict is None:
+        graph_args_dict = {}
     # initialize the optimizer.
     opt = OPTIMIZERS[optimizer](**opt_kwargs)
     # set up history recording
@@ -555,21 +579,49 @@ def fit_gains_and_foregrounds(
             f"Foreground Parameters grouped into chunks of shape ((nvecs, ngrps): nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[1]) for fgr, dc in zip(fg_r, data_r)]}"
         )
 
-    def loss_function():
-        return loss_function_chunked(
-            g_r=g_r,
-            g_i=g_i,
-            fg_r=fg_r,
-            fg_i=fg_i,
-            fg_comps=fg_comps,
-            nchunks=nchunks,
-            data_r=data_r,
-            data_i=data_i,
-            wgts=wgts,
-            ant0_inds=ant0_inds,
-            ant1_inds=ant1_inds,
-            dtype=dtype,
+    if model_regularization == "sum":
+        prior_r_sum = tf.reduce_sum(
+            tf.stack([tf.reduce_sum(sky_model_r[cnum] * wgts[cnum]) for cnum in range(nchunks)])
         )
+        prior_i_sum = tf.reduce_sum(
+            tf.stack([tf.reduce_sum(sky_model_i[cnum] * wgts[cnum]) for cnum in range(nchunks)])
+        )
+
+        def loss_function():
+            return mse_chunked_sum_regularized(
+                g_r=g_r,
+                g_i=g_i,
+                fg_r=fg_r,
+                fg_i=fg_i,
+                fg_comps=fg_comps,
+                nchunks=nchunks,
+                data_r=data_r,
+                data_i=data_i,
+                wgts=wgts,
+                ant0_inds=ant0_inds,
+                ant1_inds=ant1_inds,
+                dtype=dtype,
+                prior_r_sum=prior_r_sum,
+                prior_i_sum=prior_i_sum,
+            )
+
+    else:
+
+        def loss_function():
+            return mse_chunked(
+                g_r=g_r,
+                g_i=g_i,
+                fg_r=fg_r,
+                fg_i=fg_i,
+                fg_comps=fg_comps,
+                nchunks=nchunks,
+                data_r=data_r,
+                data_i=data_i,
+                wgts=wgts,
+                ant0_inds=ant0_inds,
+                ant1_inds=ant1_inds,
+                dtype=dtype,
+            )
 
     def train_step_code():
         with tf.GradientTape() as tape:
@@ -580,7 +632,7 @@ def fit_gains_and_foregrounds(
 
     if graph_mode:
 
-        @tf.function
+        @tf.function(**graph_args_dict)
         def train_step():
             return train_step_code()
 
@@ -588,6 +640,14 @@ def fit_gains_and_foregrounds(
 
         def train_step():
             return train_step_code()
+
+    if n_profile_steps > 0:
+        echo(f"{datetime.datetime.now()} Profiling with {n_profile_steps}. And writing output to {profile_log_dir}...")
+        tf.profiler.experimental.start(profile_log_dir)
+        for step in PBARS[notebook_progressbar](range(n_profile_steps)):
+            with tf.profiler.experimental.Trace("train", step_num=step):
+                train_step()
+        tf.profiler.experimental.stop()
 
     echo(
         f"{datetime.datetime.now()} Building Computational Graph...\n",
@@ -831,8 +891,12 @@ def calibrate_and_model_tensor(
     correct_resid=False,
     correct_model=False,
     weights=None,
-    graph_mode=True,
+    graph_mode=False,
     grp_size_threshold=5,
+    n_profile_steps=0,
+    profile_log_dir="./logdir",
+    model_regularization="post_hoc",
+    init_guesses_from_previous_time_step=True,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -913,6 +977,20 @@ def calibrate_and_model_tensor(
         if True, compile gradient update step in graph mode to speed up
         runtime by ~2-3x. I've found that this helps on CPUs but on GPUs
         it actually increases runtime by a similar factor.
+    n_profile_steps: bool, optional
+        number of steps to run profiling on
+        default is 0.
+    profile_log_dir: str, optional
+        directory to save profile logs to
+        default is './logdir'
+    model_regularization: str, optional
+        option to regularize model
+        supported 'post_hoc', 'sum'
+        default is 'post_hoc'
+        which sets sum of amps equal and sum of phases equal.
+    init_guesses_from_previous_time_step: bool, optional
+        if True, then use foreground coeffs and gains from previous time-step to
+        initialize gains for next time step.
     opt_kwargs: kwarg_dict
         kwargs for tf.optimizers
 
@@ -951,13 +1029,14 @@ def calibrate_and_model_tensor(
         )
         gains = cal_utils.blank_uvcal_from_uvdata(uvdata)
 
-    if sky_model is None:
+    if sky_model is None and model_regularization is not None:
         echo(
             f"{datetime.datetime.now()} Sky model is None. Initializing from data...\n",
             verbose=verbose,
         )
         sky_model = cal_utils.apply_gains(uvdata, gains)
-    sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
+    else:
+        sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
 
     fit_history = {}
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
@@ -1010,30 +1089,45 @@ def calibrate_and_model_tensor(
                 weights=weights,
                 dtype=dtype,
             )
-            echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
-            g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
-            # generate initial guess for foreground coeffs.
-            echo(
-                f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
-                verbose=verbose,
-            )
-            fg_r = tensorize_fg_coeffs(
-                data=data_r,
-                wgts=wgts,
-                fg_model_comps=fg_model_comps,
-                verbose=verbose,
-                notebook_progressbar=notebook_progressbar,
-            )
+            if sky_model is not None:
+                echo(f"{datetime.datetime.now()} Tensorizing sky model...\n", verbose=verbose)
+                sky_model_r, sky_model_i, _ = tensorize_data(
+                    sky_model,
+                    corr_inds=corr_inds,
+                    ants_map=ants_map,
+                    polarization=pol,
+                    time_index=time_index,
+                    data_scale_factor=rmsdata,
+                    weights=weights,
+                    dtype=dtype,
+                )
+            else:
+                sky_model_r, sky_model_i = None, None
+            if time_index == 0 or not init_guesses_from_previous_time_step:
+                echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
+                g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
+                # generate initial guess for foreground coeffs.
+                echo(
+                    f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
+                    verbose=verbose,
+                )
+                fg_r = tensorize_fg_coeffs(
+                    data=data_r,
+                    wgts=wgts,
+                    fg_model_comps=fg_model_comps,
+                    verbose=verbose,
+                    notebook_progressbar=notebook_progressbar,
+                )
 
-            fg_i = tensorize_fg_coeffs(
-                data=data_i,
-                wgts=wgts,
-                fg_model_comps=fg_model_comps,
-                verbose=verbose,
-                notebook_progressbar=notebook_progressbar,
-            )
+                fg_i = tensorize_fg_coeffs(
+                    data=data_i,
+                    wgts=wgts,
+                    fg_model_comps=fg_model_comps,
+                    verbose=verbose,
+                    notebook_progressbar=notebook_progressbar,
+                )
 
-            (gains_r, gains_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
+            (g_r, g_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                 g_r=g_r,
                 g_i=g_i,
                 fg_r=fg_r,
@@ -1052,6 +1146,11 @@ def calibrate_and_model_tensor(
                 dtype=dtype,
                 maxsteps=maxsteps,
                 graph_mode=graph_mode,
+                n_profile_steps=n_profile_steps,
+                profile_log_dir=profile_log_dir,
+                sky_model_r=sky_model_r,
+                sky_model_i=sky_model_i,
+                model_regularization=model_regularization,
                 **opt_kwargs,
             )
             # insert into model uvdata.
@@ -1082,11 +1181,12 @@ def calibrate_and_model_tensor(
                 uvcal=gains,
                 time_index=time_index,
                 polarization=pol,
-                gains_re=gains_r,
-                gains_im=gains_i,
+                gains_re=g_r,
+                gains_im=g_i,
             )
         fit_history[polnum] = fit_history_p
-        if not freeze_model:
+        # normalize on sky model if we use post-hoc regularization
+        if not freeze_model and model_regularization == "post_hoc":
             renormalize(
                 uvdata_reference_model=sky_model,
                 uvdata_deconv=model,
@@ -1331,25 +1431,73 @@ def calibrate_and_model_dpss(
     return model, resid, gains, fitted_info
 
 
-def loss_function_chunked(
-    g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32
-):
+def fg_model(fg_r, fg_i, fg_comps):
+    vr = tf.reduce_sum(fg_r * fg_comps, axis=0)
+    vi = tf.reduce_sum(fg_i * fg_comps, axis=0)
+    return vr, vi
+
+
+def data_model(g_r, g_i, fg_r, fg_i, fg_comps, ant0_inds, ant1_inds):
+    gr0 = tf.gather(g_r, ant0_inds)
+    gr1 = tf.gather(g_r, ant1_inds)
+    gi0 = tf.gather(g_i, ant0_inds)
+    gi1 = tf.gather(g_i, ant1_inds)
+    grgr = gr0 * gr1
+    gigi = gi0 * gi1
+    grgi = gr0 * gi1
+    gigr = gi0 * gr1
+    vr, vi = fg_model(fg_r, fg_i, fg_comps)
+    model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
+    model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
+    return model_r, model_i
+
+
+def mse(model_r, model_i, data_r, data_i, wgts):
+    return tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
+
+
+def mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32):
     cal_loss = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
     # now deal with dense components
     for cnum in range(nchunks):
-        gr0 = tf.gather(g_r, ant0_inds[cnum])
-        gr1 = tf.gather(g_r, ant1_inds[cnum])
-        gi0 = tf.gather(g_i, ant0_inds[cnum])
-        gi1 = tf.gather(g_i, ant1_inds[cnum])
-        grgr = gr0 * gr1
-        gigi = gi0 * gi1
-        grgi = gr0 * gi1
-        gigr = gi0 * gr1
-        vr = tf.reduce_sum(fg_r[cnum] * fg_comps[cnum], axis=0)
-        vi = tf.reduce_sum(fg_i[cnum] * fg_comps[cnum], axis=0)
-        model_r = (grgr + gigi) * vr + (grgi - gigr) * vi
-        model_i = (gigr - grgi) * vr + (grgr + gigi) * vi
-        cal_loss[cnum] += tf.reduce_sum(
-            (tf.square(data_r[cnum] - model_r) + tf.square(data_i[cnum] - model_i)) * wgts[cnum]
+        model_r, model_i = data_model(
+            g_r, g_i, fg_r[cnum], fg_i[cnum], fg_comps[cnum], ant0_inds[cnum], ant1_inds[cnum]
         )
+        cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
     return tf.reduce_sum(tf.stack(cal_loss))
+
+
+def mse_chunked_sum_regularized(
+    g_r,
+    g_i,
+    fg_r,
+    fg_i,
+    fg_comps,
+    nchunks,
+    data_r,
+    data_i,
+    wgts,
+    ant0_inds,
+    ant1_inds,
+    prior_r_sum,
+    prior_i_sum,
+    dtype=np.float32,
+):
+    cal_loss = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
+    model_i_sum = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
+    model_r_sum = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
+    # now deal with dense components
+    for cnum in range(nchunks):
+        model_r, model_i = data_model(
+            g_r, g_i, fg_r[cnum], fg_i[cnum], fg_comps[cnum], ant0_inds[cnum], ant1_inds[cnum]
+        )
+        # compute sum of real and imag parts x weights for regularization.
+        model_r_sum[cnum] += tf.reduce_sum(model_r * wgts[cnum])
+        model_i_sum[cnum] += tf.reduce_sum(model_i * wgts[cnum])
+
+        cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
+    return (
+        tf.reduce_sum(tf.stack(cal_loss))
+        + tf.square(tf.reduce_sum(tf.stack(model_r_sum)) - prior_r_sum)
+        + tf.square(tf.reduce_sum(tf.stack(model_i_sum)) - prior_i_sum)
+    )
