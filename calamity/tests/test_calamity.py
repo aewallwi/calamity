@@ -488,6 +488,7 @@ def test_calibrate_and_model_dpss_redundant(
     weights_redundant,
     use_redundancy,
     graph_mode,
+    nsamples_in_weights,
 ):
     model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
         min_dly=2.0 / 0.3,
