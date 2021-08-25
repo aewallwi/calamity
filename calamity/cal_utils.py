@@ -53,6 +53,7 @@ def blank_uvcal_from_uvdata(uvdata):
         uvcal.time_array.min() - uvcal.integration_time / 2.0,
         uvcal.time_array.max() + uvcal.integration_time / 2.0,
     )
+    uvcal.channel_width =  np.median(np.diff(uvcal.freq_array))
 
     return uvcal
 
