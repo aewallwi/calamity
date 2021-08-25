@@ -195,6 +195,7 @@ def tensorize_data(
     time_index,
     data_scale_factor=1.0,
     weights=None,
+    nsamples_in_weights=False,
     dtype=np.float32,
 ):
     """Convert data in uvdata object to a tensor
@@ -219,8 +220,12 @@ def tensorize_data(
         overall scaling factor to divide tensorized data by.
         default is 1.0
     weights: UVFlag object, optional
-        UVFlag object wgts array contains weights for fitting.
-        default is None -> weight by nsamples x ~flags
+        UVFlag weights object containing weights to use for data fitting.
+        default is None -> use nsamples * ~flags if nsamples_in_weights
+        or ~flags if not nsamples_in_weights
+    nsamples_in_weights: bool, optional
+        If True and weights is None, generate weights proportional to nsamples.
+        default is False.
     dtype: numpy.dtype
         data-type to store in tensor.
         default is np.float32
@@ -257,7 +262,10 @@ def tensorize_data(
                 data_r[i, j] = data.real.astype(dtype)
                 data_i[i, j] = data.imag.astype(dtype)
                 if weights is None:
-                    wgts[i, j] = iflags * nsamples
+                    if nsamples_in_weights:
+                        wgts[i, j] = iflags * nsamples
+                    else:
+                        wgts[i, j] = iflags
                 else:
                     if ap in weights.get_antpairs():
                         dinds = weights.antpair2ind(*ap)
@@ -891,6 +899,7 @@ def calibrate_and_model_tensor(
     correct_resid=False,
     correct_model=False,
     weights=None,
+    nsamples_in_weights=False,
     graph_mode=False,
     grp_size_threshold=5,
     n_profile_steps=0,
@@ -972,7 +981,11 @@ def calibrate_and_model_tensor(
         default is False
     weights: UVFlag object, optional.
         UVFlag weights object containing weights to use for data fitting.
-        default is None -> use nsamples * ~flags
+        default is None -> use nsamples * ~flags if nsamples_in_weights
+        or ~flags if not nsamples_in_weights
+    nsamples_in_weights: bool, optional
+        If True and weights is None, generate weights proportional to nsamples.
+        default is False.
     graph_mode: bool, optional
         if True, compile gradient update step in graph mode to speed up
         runtime by ~2-3x. I've found that this helps on CPUs but on GPUs
@@ -1087,6 +1100,7 @@ def calibrate_and_model_tensor(
                 time_index=time_index,
                 data_scale_factor=rmsdata,
                 weights=weights,
+                nsamples_in_weights=nsamples_in_weights,
                 dtype=dtype,
             )
             if sky_model is not None:

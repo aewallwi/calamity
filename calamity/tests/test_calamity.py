@@ -478,8 +478,8 @@ def test_calibrate_and_model_dpss(
 
 
 @pytest.mark.parametrize(
-    "use_redundancy, graph_mode",
-    [(True, False), (False, False), (True, True), (False, True)],
+    "use_redundancy, graph_mode, nsamples_in_weights",
+    [(True, False, True), (False, False, False), (True, True, True), (False, True, False)],
 )
 def test_calibrate_and_model_dpss_redundant(
     uvdata_redundant,
@@ -488,6 +488,7 @@ def test_calibrate_and_model_dpss_redundant(
     weights_redundant,
     use_redundancy,
     graph_mode,
+    nsamples_in_weights,
 ):
     model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
         min_dly=2.0 / 0.3,
@@ -503,6 +504,7 @@ def test_calibrate_and_model_dpss_redundant(
         correct_model=False,
         graph_mode=graph_mode,
         model_regularization="sum",
+        nsamples_in_weights=nsamples_in_weights,
     )
 
     # post hoc correction
