@@ -9,8 +9,8 @@ from setuptools import setup, find_packages
 import pathlib
 import os
 import sys
-
 sys.path.append("calamity")
+import version
 
 def package_files(package_dir, subdirectory):
     # walk the input package_dir/subdirectory
@@ -29,7 +29,7 @@ data_files = package_files('calamity', 'data')
 
 setup(
     name='calamity',  # Required
-    version='0.0.1',  # Required
+    version=version.version,  # Required
     description='Mostly sky-independent calibration.',  # Optional
     long_description=long_description,  # Optional
     long_description_content_type='text/markdown',  # Optional (see note above)
