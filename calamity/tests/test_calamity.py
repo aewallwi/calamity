@@ -577,6 +577,16 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
     assert len(fit_history[0]) == 1
 
 
+def test_dpss_fit_argparser():
+    sys.argv = [sys.argv[0], "--input_data_files", "input.uvh5"]
+    ap = calamity.dpss_fit_argparser()
+    args = ap.parse_args()
+    assert args.learning_rate == 1e-3
+    assert args.tol == 1e-14
+    assert args.maxsteps == 10000
+    assert args.input_data_files == ["input.uvh5"]
+
+
 @pytest.mark.parametrize(
     "use_tensorflow, n_profile_steps, model_regularization, graph_mode",
     [(True, 10, "post_hoc", True), (False, 0, "post_hoc", True), (True, 0, "sum", False)],

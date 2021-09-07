@@ -1525,7 +1525,8 @@ def read_calibrate_and_model_dpss(
     gain_outfilename=None,
     model_outfilename=None,
     fitted_info_outfilename=None,
-    x_orientation='east',
+    x_orientation="east",
+    clobber=False,
     **calibration_kwargs,
 ):
     """
@@ -1533,23 +1534,149 @@ def read_calibrate_and_model_dpss(
 
     Parameters
     ----------
-    input_data_files: list of strings
+    input_data_files: list of strings or UVData object.
         list of paths to input files to read in and calibrate.
-    input_model_files: list of strings, optional
+    input_model_files: list of strings or UVData object, optional
         list of paths to model files for overal phase/amp reference.
         Default is None -> use input files as model for overall
         phase and amplitude calibration.
-    input_gain_files: list of strings, optional
+    input_gain_files: list of strings or UVCal object, optional
         list of paths to gain files to use as initial guesses for calibration.
-
     resid_outfilename: str, optional
-        path for file to write as output residual
+        path for file to write residuals.
+        default is None -> don't write out residuals.
     gain_outfilename: str, optional
-        path to
+        path to gain calfits to write fitted gains.
+        default is None -> don't write out gains.
+    model_outfilename, str, optional
+        path to file to write model output.
+        default is None -> Don't write model.
+    fitting_info_outfilename, str, optional
+        string to pickel fitting info to.
+    calibration_kwargs: kwarg dict
+        see kwrags for calibration_and_model_dpss()
+
+    Returns
+    -------
+
+    model_fit: UVData object
+        uvdata object containing DPSS model of intrinsic foregrounds.
+    resid_fit: UVData object
+        uvdata object containing residuals after subtracting model times gains and applying gains.
+    gains_fit: UVCal object
+        uvcal object containing fitted gains.
+    fit_info:
+        dictionary containing fit history for each time-step and polarization in the data with fields:
+        'loss_history': list of values of the loss function in each minimization iteration.
     """
-    uvd = UVData()
-    uvd.read(input_files)
+    if isinstance(input_data_files, list):
+        uvd = UVData()
+        uvd.read(input_data_files)
+    else:
+        uvd = input_files
 
     if input_models is not None:
-        uvd_model = UVData()
-        uvd_model.read(input_models)
+        if isinstance(input_models, list):
+            uvd_model = UVData()
+            uvd_model.read(input_models)
+        else:
+            uvd_model = input_models
+    else:
+        uvd_model = None
+    if input_gain_files is not None:
+        if isinstance(input_gain_files, list):
+            uvc = UVCal()
+            uvc.read_calfits(input_gain_files)
+        else:
+            uvc = input_gain_files
+    else:
+        uvc = None
+    model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
+        uvdata=uvd, model=uvd_model, gains=uvc, **calibration_kwargs
+    )
+    if resid_outfilename is not None:
+        resid_fit.write_uvh5(model_outfilename, clobber=clobber)
+    if gain_outfilename is not None:
+        gains_fit.x_orientation = x_orientation
+        gains_fit.write_calfits(gain_outfilename, clobber=clobber)
+    if model_outfilename is not None:
+        model_fit.write_uvh5(model_outfilename, clobber=clobber)
+    # don't write fitting_info_outfilename for now.
+    return model_fit, resid_fit, gains_fit, fit_info
+
+
+def input_output_parser():
+    ap = argparse.ArgumentParser()
+    sp = ap.add_argument_group("Input and Output Arguments.")
+    sp.add_argument("--input_data_files", type=str, nargs="+", help="paths to data files to calibrate.", required=True)
+    sp.add_argument(
+        "--input_model_files", type=str, nargs="+", help="paths to model files to set overal amplitude and phase."
+    )
+    sp.add_argument("--input_gain_files", type=str, nargs="+", help="paths to gains to use as a staring point.")
+    sp.add_argument("--resid_outfilename", type=str, default=None, help="path for writing calibration residuals.")
+    sp.add_argument("--model_outfilename", type=str, default=None, help="path for writing fitted foreground model.")
+    sp.add_argument("--gain_outfilename", type=str, default=None, help="path for writing fitted gains.")
+    sp.add_argument("--clobber", action="store_true", default="False", help="Overwrite existing outputs.")
+    sp.add_argument("--x_orientation", default="east", type=str, help="x_orientation of feeds to set in output gains.")
+    return ap
+
+
+def fitting_argparser():
+    ap = input_output_parser()
+    sp = ap.add_argument_group("General Fitting Arguments.")
+    sp.add_argument(
+        "--tol",
+        type=float,
+        default=1e-14,
+        help="Stop gradient descent after cost function converges to within this value.",
+    )
+    sp.add_argument(
+        "--optimizer", type=str, default="Adamax", help="First order optimizer to use for gradient descent."
+    )
+    sp.add_argument("--maxsteps", type=int, default=10000, help="Max number of steps to iterate during optimization.")
+    sp.add_argument("--verbose", default=False, action="store_true", help="lots of text ouputs.")
+    sp.add_argument(
+        "--use_min",
+        default=False,
+        action="store_true",
+        help="Use params for mimimum cost function derived. Otherwise, use the params last visited by the descent. Avoids momentum overshoot.",
+    )
+    sp.add_argument(
+        "--use_redundancy",
+        default=False,
+        action="store_true",
+        help="Model redundant visibilities with the same set of foreground parameters.",
+    )
+    sp.add_argument(
+        "--correct_model", default=False, action="store_true", help="Remove gain effects from foreground model."
+    )
+    sp.add_argument(
+        "--correct_resid", default=False, action="store_true", help="Apply fitted gains to the fitted residuals."
+    )
+    sp.add_argument(
+        "--graph_mode",
+        default=False,
+        action="store_true",
+        help="Pre-compile computational graph before running gradient descent. Not reccomended for GPUs.",
+    )
+    sp.add_argument(
+        "--init_guesses_from_previous_time_step",
+        default=False,
+        action="store_true",
+        help="initialize gain and foreground guesses from previous time step when calibrating multiple times.",
+    )
+    sp.add_argument("--learning_rate", type=float, default=1e-3, help="gradient descent learning rate.")
+    sp.add_argument(
+        "--red_tol", type=float, default=1.0, help="Tolerance for determining redundancy between baselines [meters]."
+    )
+    return ap
+
+
+def dpss_fit_argparser():
+    ap = fitting_argparser()
+    sp = ap.add_argument_group("DPSS Specific Fitting Arguments.")
+    sp.add_argument("--horizon", default=1.0, type=float, help="Fraction of horizon delay to model with DPSS modes.")
+    sp.add_argument("--min_dly", default=0.0, type=float, help="Minimum delay [ns] to model with DPSS modes.")
+    sp.add_argument(
+        "--offset", default=0.0, type=float, help="Offset from horizon delay [ns] to model with DPSS modes."
+    )
