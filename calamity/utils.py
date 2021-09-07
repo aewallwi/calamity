@@ -1,5 +1,6 @@
 import tqdm
 import tqdm.notebook as tqdm_notebook
+import numpy as np
 
 PBARS = {True: tqdm_notebook.tqdm, False: tqdm.tqdm}
 
@@ -14,7 +15,7 @@ def select_baselines_on_length(uvdata, bllen_min=0., bllen_max=np.inf, bl_ew_min
     antpos, antnums = uvdata.get_ENU_antpos(pick_data_ants=True)
     antpairs = uvdata.get_antpairs()
     posdict = {an: ap for an, ap in zip(antnums, antpairs)}
-    antpairs_to_select = []
+    antpairs_to_keep = []
     for ap in antpairs:
         blvec = posdict[ap[0]] - posdict[ap[1]]
         bllen = np.linalg.norm(blvec)
