@@ -24,7 +24,7 @@ OPTIMIZERS = {
 }
 
 
-def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True, grp_size_threshold=5):
+def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, use_redundancy=False, grp_size_threshold=5):
     """
     Order dict keys in order of number of baselines in each group
 
@@ -43,8 +43,8 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True, grp_
         each element of each 'redundant group' is a 2-tuple antenna pair. Our formalism easily accomodates modeling
         visibilities as redundant or non redundant (one simply needs to make each redundant group length 1).
 
-    remove_redundancy: bool, optional
-        break fitting groups with the same number of baselines in each redundant
+    use_redundancy: bool, optional
+        If False, break fitting groups with the same number of baselines in each redundant
         sub_group into different fitting groups with no redundancy in each
         redundant subgroup. This is to prevent fitting groups with single
         redundant groups of varying lengths from being lumped into different chunks
@@ -63,7 +63,7 @@ def chunk_fg_comp_dict_by_nbls(fg_model_comps_dict, remove_redundancy=True, grp_
     chunked_keys = {}
     maxvecs = {}
     fg_model_comps_dict = copy.deepcopy(fg_model_comps_dict)
-    if remove_redundancy:
+    if not use_redundancy:
         # We can remove redundancies for fitting groups of baselines that have the same
         # number of elements in each redundant group.
         keys_with_redundancy = list(fg_model_comps_dict.keys())
@@ -102,7 +102,7 @@ def tensorize_fg_model_comps_dict(
     fg_model_comps_dict,
     ants_map,
     nfreqs,
-    use_redundancy=True,
+    use_redundancy=False,
     dtype=np.float32,
     notebook_progressbar=False,
     verbose=False,
@@ -155,7 +155,7 @@ def tensorize_fg_model_comps_dict(
     )
     # chunk foreground components.
     fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(
-        fg_model_comps_dict, remove_redundancy=not use_redundancy, grp_size_threshold=grp_size_threshold
+        fg_model_comps_dict, use_redundancy=use_redundancy, grp_size_threshold=grp_size_threshold
     )
     fg_model_comps = []
     corr_inds = []
@@ -1068,7 +1068,8 @@ def calibrate_and_model_tensor(
         f"{datetime.datetime.now()}Finished Converting Foreground Modeling Components to Tensors...\n",
         verbose=verbose,
     )
-
+    # delete fg_model_comps_dict. It can take up a lot of memory.
+    del fg_model_comps_dict
     # loop through polarization and times.
     for polnum, pol in enumerate(uvdata.get_pols()):
         echo(
@@ -1377,6 +1378,7 @@ def calibrate_and_model_dpss(
     verbose=False,
     red_tol=1.0,
     notebook_progressbar=False,
+    fg_model_comps_dict=None,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with DPSS vectors.
@@ -1406,7 +1408,12 @@ def calibrate_and_model_dpss(
     red_tol: float, optional
         tolerance for treating baselines as redundant (meters)
         default is 1.0
-
+    notebook_progressbar: bool, optional
+        use progress bar optimized for notebook output.
+        default is False.
+    fg_model_comps_dict: dict, optional
+        dictionary containing precomputed foreground model components.
+        Currently only supported if use_redundancy is False.
     fitting_kwargs: kwarg dict
         additional kwargs for calibrate_and_model_pbl.
         see docstring of calibrate_and_model_pbl.
@@ -1528,6 +1535,8 @@ def read_calibrate_and_model_dpss(
     fitted_info_outfilename=None,
     x_orientation="east",
     clobber=False,
+    bllen_min=0.0,
+    bllen_max=np.inf,
     **calibration_kwargs,
 ):
     """
@@ -1554,9 +1563,14 @@ def read_calibrate_and_model_dpss(
         default is None -> Don't write model.
     fitting_info_outfilename, str, optional
         string to pickel fitting info to.
+    bllen_min: float, optional
+        select all baselines with length greater then this value [meters].
+        default is 0.0
+    bllen_max: float, optional
+        select only baselines with length less then this value [meters].
+        default is np.inf.
     calibration_kwargs: kwarg dict
         see kwrags for calibration_and_model_dpss()
-
     Returns
     -------
 
@@ -1578,6 +1592,8 @@ def read_calibrate_and_model_dpss(
     else:
         uvd = input_data_files
 
+    utils.select_baselines_on_length(uvd, bllen_min=bllen_min, bllen_max=bllen_max)
+
     if isinstance(input_model_files, str):
         input_model_files = [input_model_files]
 
@@ -1589,6 +1605,9 @@ def read_calibrate_and_model_dpss(
             uvd_model = input_model_files
     else:
         uvd_model = None
+    if uvd_model is not None:
+        utils.select_baselines_on_length(uvd, bllen_min=bllen_min, bllen_max=bllen_max)
+
     if isinstance(input_gain_files, str):
         input_gain_files = [input_gain_files]
     if input_gain_files is not None:
@@ -1626,6 +1645,8 @@ def input_output_parser():
     sp.add_argument("--gain_outfilename", type=str, default=None, help="path for writing fitted gains.")
     sp.add_argument("--clobber", action="store_true", default="False", help="Overwrite existing outputs.")
     sp.add_argument("--x_orientation", default="east", type=str, help="x_orientation of feeds to set in output gains.")
+    ap.add_argument("--bllen_min", default=0.0, type=float, help="minimum baseline length to include in calibration and resid outputs.")
+    ap.add_argument("--bllen_max", default=np.inf, type=float, help="maximum baseline length to include in calbration and resid outputs.")
     return ap
 
 
