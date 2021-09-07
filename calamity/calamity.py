@@ -1573,7 +1573,7 @@ def read_calibrate_and_model_dpss(
         uvd = UVData()
         uvd.read(input_data_files)
     else:
-        uvd = input_files
+        uvd = input_data_files
 
     if input_models is not None:
         if isinstance(input_models, list):
