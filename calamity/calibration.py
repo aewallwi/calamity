@@ -1537,6 +1537,7 @@ def read_calibrate_and_model_dpss(
     clobber=False,
     bllen_min=0.0,
     bllen_max=np.inf,
+    bl_ew_min=0.0,
     **calibration_kwargs,
 ):
     """
@@ -1569,6 +1570,9 @@ def read_calibrate_and_model_dpss(
     bllen_max: float, optional
         select only baselines with length less then this value [meters].
         default is np.inf.
+    bl_ew_min: float, optional
+        select all baselines with EW projected length greater then this value [meters].
+        default is 0.0
     calibration_kwargs: kwarg dict
         see kwrags for calibration_and_model_dpss()
     Returns
@@ -1592,7 +1596,7 @@ def read_calibrate_and_model_dpss(
     else:
         uvd = input_data_files
 
-    utils.select_baselines_on_length(uvd, bllen_min=bllen_min, bllen_max=bllen_max)
+    utils.select_baselines_on_length(uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min)
 
     if isinstance(input_model_files, str):
         input_model_files = [input_model_files]
@@ -1606,7 +1610,7 @@ def read_calibrate_and_model_dpss(
     else:
         uvd_model = None
     if uvd_model is not None:
-        utils.select_baselines_on_length(uvd, bllen_min=bllen_min, bllen_max=bllen_max)
+        utils.select_baselines_on_length(uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min)
 
     if isinstance(input_gain_files, str):
         input_gain_files = [input_gain_files]
@@ -1645,8 +1649,9 @@ def input_output_parser():
     sp.add_argument("--gain_outfilename", type=str, default=None, help="path for writing fitted gains.")
     sp.add_argument("--clobber", action="store_true", default="False", help="Overwrite existing outputs.")
     sp.add_argument("--x_orientation", default="east", type=str, help="x_orientation of feeds to set in output gains.")
-    ap.add_argument("--bllen_min", default=0.0, type=float, help="minimum baseline length to include in calibration and resid outputs.")
-    ap.add_argument("--bllen_max", default=np.inf, type=float, help="maximum baseline length to include in calbration and resid outputs.")
+    sp.add_argument("--bllen_min", default=0.0, type=float, help="minimum baseline length to include in calibration and outputs.")
+    sp.add_argument("--bllen_max", default=np.inf, type=float, help="maximum baseline length to include in calbration and outputs.")
+    sp.add_argument("--bl_ew_min", default=0.0, type=float, help="minimum EW baseline component to include in calibration and outputs.")
     return ap
 
 

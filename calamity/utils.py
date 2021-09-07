@@ -8,7 +8,7 @@ def echo(message, verbose=True):
     if verbose:
         print(message)
 
-def select_baselines_on_length(uvdata, bllen_min=0., bllen_max=np.inf):
+def select_baselines_on_length(uvdata, bllen_min=0., bllen_max=np.inf, bl_ew_min=0.0):
     """
     """
     antpos, antnums = uvdata.get_ENU_antpos(pick_data_ants=True)
@@ -16,8 +16,9 @@ def select_baselines_on_length(uvdata, bllen_min=0., bllen_max=np.inf):
     posdict = {an: ap for an, ap in zip(antnums, antpairs)}
     antpairs_to_select = []
     for ap in antpairs:
-        bllen = np.linalg.norm([posdict[ap[0]] - posdict[ap[1]]])
-        if bllen >= bllen_min and bllen <= bllen_max:
+        blvec = posdict[ap[0]] - posdict[ap[1]]
+        bllen = np.linalg.norm(blvec)
+        if bllen >= bllen_min and bllen <= bllen_max and np.abs(blvec[0]) > bl_ew_min:
             antpairs_to_keep.append(ap)
     uvdata.select(bls=antpairs_to_keep, inplace=True)
 
