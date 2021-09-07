@@ -49,6 +49,13 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
     red_grps, vec_bin_centers, lengths, conjugates = uvdata.get_redundancies(
         use_antpos=True, include_conjugates=True, include_autos=include_autos, tol=tol
     )
+    # remove autocorrelations... for some reason pyuvdata isn't doing this?
+    if not include_autos:
+        red_grps = [rgrp for rgrp, bllen in zip(red_grps, lengths) if bllen > 0.0]
+        vec_bin_centers = [vbc for vbc, bllen in zip(vec_bin_centers, lengths) if bllen > 0.0]
+        conjugates = [conjgrp for conjgrp, bllen in zip(conjugates, lengths) if bllen > 0.0]
+        lengths = [bllen for bllen in lengths if bllen > 0.0]
+
     # convert to ant pairs
     red_grps = [[uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps]
     conjugates = [uvdata.baseline_to_antnums(bl) for bl in conjugates]
