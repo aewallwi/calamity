@@ -1569,11 +1569,16 @@ def read_calibrate_and_model_dpss(
         dictionary containing fit history for each time-step and polarization in the data with fields:
         'loss_history': list of values of the loss function in each minimization iteration.
     """
+    if isinstance(input_data_files, str):
+        input_data_files = [input_data_files]
     if isinstance(input_data_files, list):
         uvd = UVData()
         uvd.read(input_data_files)
     else:
         uvd = input_data_files
+
+    if isinstance(input_model_files, str):
+        input_model_files = [input_model_files]
 
     if input_model_files is not None:
         if isinstance(input_model_files, list):
@@ -1583,6 +1588,8 @@ def read_calibrate_and_model_dpss(
             uvd_model = input_model_files
     else:
         uvd_model = None
+    if isinstance(input_gain_files, str):
+        input_gain_files = [input_gain_files]
     if input_gain_files is not None:
         if isinstance(input_gain_files, list):
             uvc = UVCal()
@@ -1592,10 +1599,10 @@ def read_calibrate_and_model_dpss(
     else:
         uvc = None
     model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
-        uvdata=uvd, model=uvd_model, gains=uvc, **calibration_kwargs
+        uvdata=uvd, sky_model=uvd_model, gains=uvc, **calibration_kwargs
     )
     if resid_outfilename is not None:
-        resid_fit.write_uvh5(model_outfilename, clobber=clobber)
+        resid_fit.write_uvh5(resid_outfilename, clobber=clobber)
     if gain_outfilename is not None:
         gains_fit.x_orientation = x_orientation
         gains_fit.write_calfits(gain_outfilename, clobber=clobber)

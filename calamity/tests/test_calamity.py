@@ -699,3 +699,54 @@ def test_calibrate_and_model_mixed_redundant(
     )
     assert len(fit_history) == 1
     assert len(fit_history[0]) == 1
+
+
+def test_read_calibrate_and_model_dpss(tmpdir, sky_model_projected, gains):
+    tmp_path = tmpdir.strpath
+    outfile_resid = os.path.join(tmp_path, "resid_fit.uvh5")
+    outfile_model = os.path.join(tmp_path, "model_fit.uvh5")
+    outfile_gain = os.path.join(tmp_path, "gains_fit.calfits")
+    gains.x_orientation = "east"
+    gname = os.path.join(tmp_path, "gains_input.calfits")
+    gains.write_calfits(gname)
+    input_data = os.path.join(
+        DATA_PATH,
+        "Garray_antenna_diameter2.0_fractional_spacing1.0_nant6_nf200_df100.000kHz_f0100.000MHzcompressed_True_autosFalse_gsm.uvh5",
+    )
+    for fn in [outfile_resid, outfile_model, outfile_gain]:
+        if os.path.exists(fn):
+            os.remove(fn)
+    calamity.read_calibrate_and_model_dpss(
+        input_data_files=input_data,
+        input_model_files=input_data,
+        input_gain_files=gname,
+        resid_outfilename=outfile_resid,
+        model_outfilename=outfile_model,
+        gain_outfilename=outfile_gain,
+    )
+    for fn in [outfile_resid, outfile_model, outfile_gain]:
+        assert os.path.exists(fn)
+        os.remove(fn)
+    # test argparser too.
+    sys.argv = [
+        sys.argv[0],
+        "--input_data_files",
+        input_data,
+        "--input_model_files",
+        input_data,
+        "--input_gain_files",
+        gname,
+        "--resid_outfilename",
+        outfile_resid,
+        "--model_outfilename",
+        outfile_model,
+        "--gain_outfilename",
+        outfile_gain,
+    ]
+
+    ap = calamity.dpss_fit_argparser()
+    args = ap.parse_args()
+    calamity.read_calibrate_and_model_dpss(**vars(args))
+    for fn in [outfile_resid, outfile_model, outfile_gain]:
+        assert os.path.exists(fn)
+        os.remove(fn)

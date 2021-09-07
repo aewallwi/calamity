@@ -65,6 +65,7 @@ setup(
                       'uvtools @ git+git://github.com/HERA-Team/uvtools',
                       ],
     include_package_data=True,
+    scripts = ['scripts/calibrate_and_model_dpss.py'],
     package_data={'calamity': data_files},
     exclude = ['tests'],
     zip_safe = False,
