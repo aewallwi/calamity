@@ -11,6 +11,12 @@ import os
 import sys
 sys.path.append("calamity")
 import version
+import json
+
+data = [version.git_origin, version.git_hash, version.git_description, version.git_branch]
+with open(os.path.join('calamity', 'GIT_INFO'), 'w') as outfile:
+    json.dump(data, outfile)
+
 
 def package_files(package_dir, subdirectory):
     # walk the input package_dir/subdirectory

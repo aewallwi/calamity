@@ -1680,3 +1680,4 @@ def dpss_fit_argparser():
     sp.add_argument(
         "--offset", default=0.0, type=float, help="Offset from horizon delay [ns] to model with DPSS modes."
     )
+    return ap
