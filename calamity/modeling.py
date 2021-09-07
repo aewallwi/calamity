@@ -7,7 +7,7 @@ from .utils import echo
 from .utils import PBARS
 
 
-def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, include_autos=False):
+def get_redundant_grps_data(uvdata, remove_redundancy=False, tol=1.0, include_autos=False):
     """Get lists of antenna pairs and redundancies in a uvdata set.
 
     Provides list of antenna pairs and ant-pairs organized in redundant groups
@@ -46,19 +46,17 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
     """
     antpairs = []
     # set up maps between antenna pairs and redundant groups.
-    red_grps, vec_bin_centers, lengths, conjugates = uvdata.get_redundancies(
+    red_grps, vec_bin_centers, lengths, _ = uvdata.get_redundancies(
         use_antpos=True, include_conjugates=True, include_autos=include_autos, tol=tol
     )
     # remove autocorrelations... for some reason pyuvdata isn't doing this?
     if not include_autos:
         red_grps = [rgrp for rgrp, bllen in zip(red_grps, lengths) if bllen > 0.0]
         vec_bin_centers = [vbc for vbc, bllen in zip(vec_bin_centers, lengths) if bllen > 0.0]
-        conjugates = [conjgrp for conjgrp, bllen in zip(conjugates, lengths) if bllen > 0.0]
         lengths = [bllen for bllen in lengths if bllen > 0.0]
 
     # convert to ant pairs
     red_grps = [[uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps]
-    conjugates = [uvdata.baseline_to_antnums(bl) for bl in conjugates]
 
     ap_data = set(uvdata.get_antpairs())
     # make sure all red_grps in data and all conjugates in data
@@ -66,25 +64,10 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
     lengths = [length for length, red_grp in zip(lengths, red_grps) if len(red_grp) > 0]
     vec_bin_centers = [vbc for vbc, red_grp in zip(vec_bin_centers, red_grps) if len(red_grp) > 0]
     red_grps = [red_grp for red_grp in red_grps if len(red_grp) > 0]
-    conjugates = [ap for ap in conjugates if ap in ap_data or ap[::-1] in ap_data]
-    # modeify red_grp lists to have conjugated antpairs ordered consistently.
-    red_grps_t = []
-    for red_grp in red_grps:
-        red_grps_t.append([])
-        for ap in red_grp:
-            if ap in conjugates:
-                red_grps_t[-1].append(ap[::-1])
-                antpairs.append(ap[::-1])
-            else:
-                red_grps_t[-1].append(ap)
-                antpairs.append(ap)
-
-    red_grps = red_grps_t
-    del red_grps_t
 
     antpairs = set(antpairs)
 
-    # convert all redundancies to redunant groups with length one if
+    # convert all redundancies to redundant groups with length one if
     # remove_redundancy is True.
     if remove_redundancy:
         red_grps_t = []
@@ -149,7 +132,7 @@ def get_uv_overlapping_grps_conjugated(
         indicates the
     """
     # first get redundant baselines.
-    antpairs, red_grps, vec_bin_centers, lengths = get_redundant_grps_conjugated(
+    antpairs, red_grps, vec_bin_centers, lengths = get_redundant_grps_data(
         uvdata,
         include_autos=include_autos,
         tol=red_tol,
@@ -369,7 +352,7 @@ def yield_pbl_dpss_model_comps(
         default is False.
     """
     operator_cache = {}
-    _, red_grps, vec_bin_centers, _ = get_redundant_grps_conjugated(
+    _, red_grps, vec_bin_centers, _ = get_redundant_grps_data(
         uvdata, remove_redundancy=not (use_redundancy), tol=red_tol, include_autos=include_autos
     )
     fitting_grps = [(tuple(red_grp),) for red_grp in red_grps]

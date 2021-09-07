@@ -145,7 +145,7 @@ def sky_model_projected_redundant(sky_model_redundant, dpss_vectors_redundant):
 
 @pytest.fixture
 def redundant_groups(sky_model):
-    return modeling.get_redundant_grps_conjugated(sky_model)[1]
+    return modeling.get_redundant_grps_data(sky_model)[1]
 
 
 @pytest.fixture
