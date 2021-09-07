@@ -1611,7 +1611,7 @@ def read_calibrate_and_model_dpss(
     else:
         uvd_model = None
     if uvd_model is not None:
-        utils.select_baselines_on_length(uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min)
+        utils.select_baselines(uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min)
 
     if isinstance(input_gain_files, str):
         input_gain_files = [input_gain_files]
