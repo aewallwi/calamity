@@ -47,7 +47,7 @@ def get_redundant_grps_conjugated(uvdata, remove_redundancy=False, tol=1.0, incl
     antpairs = []
     # set up maps between antenna pairs and redundant groups.
     red_grps, vec_bin_centers, lengths, conjugates = uvdata.get_redundancies(
-        include_conjugates=True, include_autos=include_autos, tol=tol
+        use_antpos=True, include_conjugates=True, include_autos=include_autos, tol=tol
     )
     # convert to ant pairs
     red_grps = [[uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps]
