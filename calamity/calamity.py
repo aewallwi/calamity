@@ -195,7 +195,7 @@ def tensorize_data(
     time_index,
     data_scale_factor=1.0,
     weights=None,
-    nsamples_in_weights=False,
+    nsamples_in_weights=True,
     dtype=np.float32,
 ):
     """Convert data in uvdata object to a tensor
@@ -225,7 +225,7 @@ def tensorize_data(
         or ~flags if not nsamples_in_weights
     nsamples_in_weights: bool, optional
         If True and weights is None, generate weights proportional to nsamples.
-        default is False.
+        default is True.
     dtype: numpy.dtype
         data-type to store in tensor.
         default is np.float32
@@ -899,7 +899,7 @@ def calibrate_and_model_tensor(
     correct_resid=False,
     correct_model=False,
     weights=None,
-    nsamples_in_weights=False,
+    nsamples_in_weights=True,
     graph_mode=False,
     grp_size_threshold=5,
     n_profile_steps=0,
@@ -985,7 +985,7 @@ def calibrate_and_model_tensor(
         or ~flags if not nsamples_in_weights
     nsamples_in_weights: bool, optional
         If True and weights is None, generate weights proportional to nsamples.
-        default is False.
+        default is True.
     graph_mode: bool, optional
         if True, compile gradient update step in graph mode to speed up
         runtime by ~2-3x. I've found that this helps on CPUs but on GPUs
@@ -1515,3 +1515,41 @@ def mse_chunked_sum_regularized(
         + tf.square(tf.reduce_sum(tf.stack(model_r_sum)) - prior_r_sum)
         + tf.square(tf.reduce_sum(tf.stack(model_i_sum)) - prior_i_sum)
     )
+
+
+def read_calibrate_and_model_dpss(
+    input_data_files,
+    input_model_files=None,
+    input_gain_files=None,
+    resid_outfilename=None,
+    gain_outfilename=None,
+    model_outfilename=None,
+    fitted_info_outfilename=None,
+    x_orientation='east',
+    **calibration_kwargs,
+):
+    """
+    Driver function for using calamity with DPSS modeling.
+
+    Parameters
+    ----------
+    input_data_files: list of strings
+        list of paths to input files to read in and calibrate.
+    input_model_files: list of strings, optional
+        list of paths to model files for overal phase/amp reference.
+        Default is None -> use input files as model for overall
+        phase and amplitude calibration.
+    input_gain_files: list of strings, optional
+        list of paths to gain files to use as initial guesses for calibration.
+
+    resid_outfilename: str, optional
+        path for file to write as output residual
+    gain_outfilename: str, optional
+        path to
+    """
+    uvd = UVData()
+    uvd.read(input_files)
+
+    if input_models is not None:
+        uvd_model = UVData()
+        uvd_model.read(input_models)
