@@ -1538,6 +1538,7 @@ def read_calibrate_and_model_dpss(
     bllen_min=0.0,
     bllen_max=np.inf,
     bl_ew_min=0.0,
+    ex_ants=None,
     **calibration_kwargs,
 ):
     """
@@ -1596,7 +1597,7 @@ def read_calibrate_and_model_dpss(
     else:
         uvd = input_data_files
 
-    utils.select_baselines_on_length(uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min)
+    utils.select_baselines(uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min, ex_ants=ex_ants)
 
     if isinstance(input_model_files, str):
         input_model_files = [input_model_files]
@@ -1652,6 +1653,7 @@ def input_output_parser():
     sp.add_argument("--bllen_min", default=0.0, type=float, help="minimum baseline length to include in calibration and outputs.")
     sp.add_argument("--bllen_max", default=np.inf, type=float, help="maximum baseline length to include in calbration and outputs.")
     sp.add_argument("--bl_ew_min", default=0.0, type=float, help="minimum EW baseline component to include in calibration and outputs.")
+    sp.add_argument("--ex_ants", default=None, type=int, nargs="+", help="Antennas to exclude from calibration and modeling.")
     return ap
 
 
