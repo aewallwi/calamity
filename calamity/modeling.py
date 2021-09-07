@@ -49,7 +49,7 @@ def get_redundant_grps_data(uvdata, remove_redundancy=False, tol=1.0, include_au
     red_grps, vec_bin_centers, lengths, _ = uvdata.get_redundancies(
         use_antpos=True, include_conjugates=True, include_autos=include_autos, tol=tol
     )
-    
+
     # convert to ant pairs
     red_grps = [[uvdata.baseline_to_antnums(bl) for bl in red_grp] for red_grp in red_grps]
 
@@ -311,6 +311,7 @@ def yield_pbl_dpss_model_comps(
     red_tol=1.0,
     eigenval_cutoff=1e-10,
     notebook_progressbar=False,
+    verbose=False,
 ):
     """Get per-baseline dpss modeling components.
 
@@ -345,6 +346,8 @@ def yield_pbl_dpss_model_comps(
     notebook_progressbar: bool, optional
         if True, use pretty progressbar that renders well in jupyter.
         default is False.
+    verbose: bool, optional
+        Send helpful messages.
     """
     operator_cache = {}
     _, red_grps, vec_bin_centers, _ = get_redundant_grps_data(
@@ -353,6 +356,10 @@ def yield_pbl_dpss_model_comps(
     fitting_grps = [(tuple(red_grp),) for red_grp in red_grps]
     modeling_vectors = {}
     freqs = uvdata.freq_array[0]
+    echo(
+        f"{datetime.datetime.now()} Computing DPSS modeling vectors...\n",
+        verbose=verbose,
+    )
     for grpnum in PBARS[notebook_progressbar](range(len(fitting_grps))):
         bllen = np.linalg.norm(vec_bin_centers[grpnum])
         modeling_vectors[fitting_grps[grpnum]] = yield_dpss_model_comps_bl_grp(

@@ -1431,6 +1431,7 @@ def calibrate_and_model_dpss(
         include_autos=include_autos,
         red_tol=red_tol,
         notebook_progressbar=notebook_progressbar,
+        verbose=verbose,
     )
 
     (model, resid, gains, fitted_info,) = calibrate_and_model_tensor(
