@@ -2,8 +2,8 @@
 # bash interface script for dpss calibration and modeling.
 
 
-import calamity
+from calamity import calibration
 
 ap = calamity.dpss_fit_argparser()
 args = ap.parse_args()
-calamity.calibrate_and_model_dpss(**vars(args))
+calibration.calibrate_and_model_dpss(**vars(args))

@@ -1,6 +1,6 @@
 from ..data import DATA_PATH
 import pytest
-from .. import calamity
+from .. import calibration
 from .. import utils
 from .. import modeling
 from .. import cal_utils
@@ -186,13 +186,13 @@ def test_renormalize(sky_model, gains):
     sky_model.data_array *= 51.0 + 23j
     assert not np.allclose(gains.gain_array, 1.0)
     assert not np.allclose(sky_model_ref.data_array, sky_model.data_array)
-    calamity.renormalize(sky_model_ref, sky_model, gains, polarization="xx")
+    calibration.renormalize(sky_model_ref, sky_model, gains, polarization="xx")
     assert np.allclose(gains.gain_array, 1.0)
     assert np.allclose(sky_model_ref.data_array, sky_model.data_array)
 
 
 def test_tensorize_gains(gains_antscale):
-    gains_r, gains_i = calamity.tensorize_gains(gains_antscale, polarization="xx", time_index=0, dtype=np.float64)
+    gains_r, gains_i = calibration.tensorize_gains(gains_antscale, polarization="xx", time_index=0, dtype=np.float64)
     assert gains_r.dtype == np.float64
     assert gains_i.dtype == np.float64
     for i, ant in enumerate(gains_antscale.ant_array):
@@ -207,7 +207,7 @@ def test_tensorize_fg_model_comps_dpsss(
     gains,
 ):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensor, corr_inds = calamity.tensorize_fg_model_comps_dict(
+    fg_comp_tensor, corr_inds = calibration.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=dpss_vectors,
         ants_map=ants_map,
         dtype=np.float64,
@@ -231,7 +231,7 @@ def test_tensorize_fg_model_comps_dpsss(
 
 
 def test_chunk_fg_comp_dict_by_nbls(dpss_vectors):
-    dpss_vectors_chunked = calamity.chunk_fg_comp_dict_by_nbls(dpss_vectors)
+    dpss_vectors_chunked = calibration.chunk_fg_comp_dict_by_nbls(dpss_vectors)
     maxvecs = np.max([dpss_vectors[k].shape[1] for k in dpss_vectors])
     assert len(dpss_vectors_chunked) == 1
     assert list(dpss_vectors_chunked.keys())[0] == (1, maxvecs)
@@ -265,7 +265,7 @@ def test_tensorize_fg_model_comps_mixed(
     nants = sky_model.Nants_data
 
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comp_tensors, corr_inds = calamity.tensorize_fg_model_comps_dict(
+    fg_comp_tensors, corr_inds = calibration.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=fg_comps_dict,
         ants_map=ants_map,
         dtype=np.float64,
@@ -332,28 +332,28 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
     nfreqs = sky_model.Nfreqs
     nants = sky_model.Nants_data
 
-    fg_comp_tensors_chunked, corr_inds_chunked = calamity.tensorize_fg_model_comps_dict(
+    fg_comp_tensors_chunked, corr_inds_chunked = calibration.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=fg_comps_dict,
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=nfreqs,
         use_redundancy=redundant_modeling,
     )
-    data_r, data_i, wgts = calamity.tensorize_data(
+    data_r, data_i, wgts = calibration.tensorize_data(
         sky_model, corr_inds_chunked, ants_map, polarization="xx", time_index=0, dtype=np.float64
     )
 
-    fg_coeffs_chunked_re = calamity.tensorize_fg_coeffs(data_r, wgts, fg_comp_tensors_chunked)
-    fg_coeffs_chunked_im = calamity.tensorize_fg_coeffs(data_i, wgts, fg_comp_tensors_chunked)
+    fg_coeffs_chunked_re = calibration.tensorize_fg_coeffs(data_r, wgts, fg_comp_tensors_chunked)
+    fg_coeffs_chunked_im = calibration.tensorize_fg_coeffs(data_i, wgts, fg_comp_tensors_chunked)
     # now retrieve Nants x Nants x Nfreq complex visibility cube from representation.
-    model_r = calamity.yield_fg_model_array(
+    model_r = calibration.yield_fg_model_array(
         fg_model_comps=fg_comp_tensors_chunked,
         fg_coeffs=fg_coeffs_chunked_re,
         corr_inds=corr_inds_chunked,
         nants=nants,
         nfreqs=nfreqs,
     )
-    model_i = calamity.yield_fg_model_array(
+    model_i = calibration.yield_fg_model_array(
         fg_model_comps=fg_comp_tensors_chunked,
         fg_coeffs=fg_coeffs_chunked_im,
         corr_inds=corr_inds_chunked,
@@ -374,14 +374,14 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
 
 def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_model_projected, gains):
     ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    fg_comps_tensor, corr_inds = calamity.tensorize_fg_model_comps_dict(
+    fg_comps_tensor, corr_inds = calibration.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=dpss_vectors,
         ants_map=ants_map,
         dtype=np.float64,
         nfreqs=sky_model_projected.Nfreqs,
     )
     rmsdata = np.mean(np.abs(sky_model_projected.data_array) ** 2.0) ** 0.5
-    data_r, data_i, wgts = calamity.tensorize_data(
+    data_r, data_i, wgts = calibration.tensorize_data(
         sky_model_projected,
         corr_inds,
         ants_map,
@@ -391,8 +391,8 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
         data_scale_factor=rmsdata,
     )
 
-    fg_coeffs_re = calamity.tensorize_fg_coeffs(data_r, wgts, fg_comps_tensor)
-    fg_coeffs_im = calamity.tensorize_fg_coeffs(data_i, wgts, fg_comps_tensor)
+    fg_coeffs_re = calibration.tensorize_fg_coeffs(data_r, wgts, fg_comps_tensor)
+    fg_coeffs_im = calibration.tensorize_fg_coeffs(data_i, wgts, fg_comps_tensor)
     inserted_model = copy.deepcopy(sky_model_projected)
     # set data array to be noise.
     inserted_model.data_array = np.random.randn(*inserted_model.data_array.shape) + 1j * np.random.randn(
@@ -401,14 +401,14 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
     # get model tensor.
     nants = sky_model_projected.Nants_data
     nfreqs = sky_model_projected.Nfreqs
-    model_r = calamity.yield_fg_model_array(
+    model_r = calibration.yield_fg_model_array(
         fg_model_comps=fg_comps_tensor, fg_coeffs=fg_coeffs_re, nants=nants, nfreqs=nfreqs, corr_inds=corr_inds
     )
-    model_i = calamity.yield_fg_model_array(
+    model_i = calibration.yield_fg_model_array(
         fg_model_comps=fg_comps_tensor, fg_coeffs=fg_coeffs_im, nants=nants, nfreqs=nfreqs, corr_inds=corr_inds
     )
     # insert tensors
-    calamity.insert_model_into_uvdata_tensor(
+    calibration.insert_model_into_uvdata_tensor(
         inserted_model,
         0,
         "xx",
@@ -440,7 +440,7 @@ def test_calibrate_and_model_dpss(
         weight = weights
     # check that resid is much smaller then model and original data.
     if perfect_data:
-        model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+        model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
             min_dly=2.0 / 0.3,
             offset=2.0 / 0.3,
             uvdata=sky_model_projected,
@@ -456,7 +456,7 @@ def test_calibrate_and_model_dpss(
             use_min=use_min,
         )
     else:
-        model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+        model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
             min_dly=2.0 / 0.3,
             offset=2.0 / 0.3,
             uvdata=uvdata,
@@ -490,7 +490,7 @@ def test_calibrate_and_model_dpss_redundant(
     graph_mode,
     nsamples_in_weights,
 ):
-    model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+    model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
         min_dly=2.0 / 0.3,
         offset=2.0 / 0.3,
         uvdata=uvdata_redundant,
@@ -525,7 +525,7 @@ def test_calibrate_and_model_dpss_dont_correct_resid(
     weights,
 ):
     # check that resid is much smaller then model and original data.
-    model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+    model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
         min_dly=2.0 / 0.3,
         offset=2.0 / 0.3,
         uvdata=uvdata,
@@ -551,7 +551,7 @@ def test_calibrate_and_model_dpss_dont_correct_resid(
 
 def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gains_randomized, weights):
     # test that calibrating with a perfect sky model and only optimizing gains yields nearly perfect solutions for the gains.
-    model, resid, gains, fit_history = calamity.calibrate_and_model_dpss(
+    model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
         min_dly=2.0 / 0.3,
         offset=2.0 / 0.3,
         uvdata=sky_model_projected,
@@ -579,7 +579,7 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
 
 def test_dpss_fit_argparser():
     sys.argv = [sys.argv[0], "--input_data_files", "input.uvh5"]
-    ap = calamity.dpss_fit_argparser()
+    ap = calibration.dpss_fit_argparser()
     args = ap.parse_args()
     assert args.learning_rate == 1e-3
     assert args.tol == 1e-14
@@ -605,7 +605,7 @@ def test_calibrate_and_model_mixed(
     tmp_path = tmpdir.strpath
     logdir = os.path.join(tmp_path, "logdir")
     # check that mixec components and dpss components give similar resids
-    model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
+    model, resid, gains, fit_history = calibration.calibrate_and_model_mixed(
         min_dly=0.0,
         offset=0.0,
         ant_dly=2.0 / 3.0,
@@ -655,7 +655,7 @@ def test_calibrate_and_model_mixed_redundant(
 ):
     if not perfect_data:
         # check that mixec components and dpss components give similar resids
-        model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
+        model, resid, gains, fit_history = calibration.calibrate_and_model_mixed(
             min_dly=0.0,
             offset=0.0,
             ant_dly=2.0 / 0.3,
@@ -673,7 +673,7 @@ def test_calibrate_and_model_mixed_redundant(
             use_tensorflow_to_derive_modeling_comps=True,
         )
     else:
-        model, resid, gains, fit_history = calamity.calibrate_and_model_mixed(
+        model, resid, gains, fit_history = calibration.calibrate_and_model_mixed(
             min_dly=0.0,
             offset=0.0,
             ant_dly=2.0 / 0.3,
@@ -716,7 +716,7 @@ def test_read_calibrate_and_model_dpss(tmpdir, sky_model_projected, gains):
     for fn in [outfile_resid, outfile_model, outfile_gain]:
         if os.path.exists(fn):
             os.remove(fn)
-    calamity.read_calibrate_and_model_dpss(
+    calibration.read_calibrate_and_model_dpss(
         input_data_files=input_data,
         input_model_files=input_data,
         input_gain_files=gname,
@@ -744,9 +744,9 @@ def test_read_calibrate_and_model_dpss(tmpdir, sky_model_projected, gains):
         outfile_gain,
     ]
 
-    ap = calamity.dpss_fit_argparser()
+    ap = calibration.dpss_fit_argparser()
     args = ap.parse_args()
-    calamity.read_calibrate_and_model_dpss(**vars(args))
+    calibration.read_calibrate_and_model_dpss(**vars(args))
     for fn in [outfile_resid, outfile_model, outfile_gain]:
         assert os.path.exists(fn)
         os.remove(fn)
