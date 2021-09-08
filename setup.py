@@ -57,8 +57,7 @@ setup(
     packages=['calamity'],
     python_requires='>=3.6, <4',
     install_requires=[
-                      'pyuvdata',
-                      'numpy',
+                      'pyuvdata>=2.1.5',
                       'tensorflow>=2.4.0',
                       'scipy',
                       'tqdm',
