@@ -9,9 +9,9 @@ def echo(message, verbose=True):
     if verbose:
         print(message)
 
-def select_baselines(uvdata, bllen_min=0., bllen_max=np.inf, bl_ew_min=0.0, ex_ants=None):
-    """
-    """
+
+def select_baselines(uvdata, bllen_min=0.0, bllen_max=np.inf, bl_ew_min=0.0, ex_ants=None):
+    """ """
     if ex_ants is None:
         ex_ants = []
     ex_ants = set(ex_ants)
@@ -22,13 +22,18 @@ def select_baselines(uvdata, bllen_min=0., bllen_max=np.inf, bl_ew_min=0.0, ex_a
     for ap in antpairs:
         blvec = posdict[ap[0]] - posdict[ap[1]]
         bllen = np.linalg.norm(blvec)
-        if bllen >= bllen_min and bllen <= bllen_max and np.abs(blvec[0]) > bl_ew_min and ap[0] not in ex_ants and ap[1] not in ex_ants:
+        if (
+            bllen >= bllen_min
+            and bllen <= bllen_max
+            and np.abs(blvec[0]) > bl_ew_min
+            and ap[0] not in ex_ants
+            and ap[1] not in ex_ants
+        ):
             antpairs_to_keep.append(ap)
     uvdata.select(bls=antpairs_to_keep, inplace=True)
 
 
-
-#def fitting_group_nested_tuple_to_str(fit_grp_tuple):
+# def fitting_group_nested_tuple_to_str(fit_grp_tuple):
 #    """
 #    Convert a fitting group nested tuple
 #    to a string / legal python variable name
@@ -47,7 +52,7 @@ def select_baselines(uvdata, bllen_min=0., bllen_max=np.inf, bl_ew_min=0.0, ex_a
 #        for ap in redgrp:
 #            output_str += f'{ap[0]}x{ap[1]}and'
 #
-#def fitting_group_str_to_nested_tuple():
+# def fitting_group_str_to_nested_tuple():
 #    """
 #
 #    """
