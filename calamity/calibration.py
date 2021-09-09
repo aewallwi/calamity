@@ -1533,7 +1533,7 @@ def read_calibrate_and_model_dpss(
     resid_outfilename=None,
     gain_outfilename=None,
     model_outfilename=None,
-    output_directory='./',
+    output_directory="./",
     fitted_info_outfilename=None,
     x_orientation="east",
     clobber=False,
@@ -1602,17 +1602,18 @@ def read_calibrate_and_model_dpss(
         dictionary containing fit history for each time-step and polarization in the data with fields:
         'loss_history': list of values of the loss function in each minimization iteration.
     """
-    gpus = tf.config.list_physical_devices('GPU')
+    gpus = tf.config.list_physical_devices("GPU")
     if gpu_index is not None:
         # See https://www.tensorflow.org/guide/gpu
         if gpus:
             if gpu_memory_limit is None:
-                tf.config.set_visible_devices(gpus[gpu_index], 'GPU')
+                tf.config.set_visible_devices(gpus[gpu_index], "GPU")
             else:
-                tf.config.set_logical_device_configuration(gpus[gpu_index],
-                    [tf.config.LogicalDeviceConfiguration(memory_limit=gpu_memory_limit * 1024)])
+                tf.config.set_logical_device_configuration(
+                    gpus[gpu_index], [tf.config.LogicalDeviceConfiguration(memory_limit=gpu_memory_limit * 1024)]
+                )
 
-            logical_gpus = tf.config.list_logical_devices('GPU')
+            logical_gpus = tf.config.list_logical_devices("GPU")
             print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPU")
 
     if isinstance(input_data_files, str):
@@ -1651,7 +1652,7 @@ def read_calibrate_and_model_dpss(
         uvc = None
     # run calibration with specified GPU device.
     if gpu_index is not None and gpus:
-        with tf.device(f'/device:GPU:{gpus[gpu_index].name[-1]}'):
+        with tf.device(f"/device:GPU:{gpus[gpu_index].name[-1]}"):
             model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
                 uvdata=uvd, sky_model=uvd_model, gains=uvc, **calibration_kwargs
             )
@@ -1668,7 +1669,6 @@ def read_calibrate_and_model_dpss(
     if model_outfilename is not None:
         model_fit.write_uvh5(model_outfilename, clobber=clobber)
     # don't write fitting_info_outfilename for now.
-
 
     # don't write fitting_info_outfilename for now.
     return model_fit, resid_fit, gains_fit, fit_info
@@ -1687,10 +1687,21 @@ def input_output_parser():
     sp.add_argument("--gain_outfilename", type=str, default=None, help="path for writing fitted gains.")
     sp.add_argument("--clobber", action="store_true", default="False", help="Overwrite existing outputs.")
     sp.add_argument("--x_orientation", default="east", type=str, help="x_orientation of feeds to set in output gains.")
-    sp.add_argument("--bllen_min", default=0.0, type=float, help="minimum baseline length to include in calibration and outputs.")
-    sp.add_argument("--bllen_max", default=np.inf, type=float, help="maximum baseline length to include in calbration and outputs.")
-    sp.add_argument("--bl_ew_min", default=0.0, type=float, help="minimum EW baseline component to include in calibration and outputs.")
-    sp.add_argument("--ex_ants", default=None, type=int, nargs="+", help="Antennas to exclude from calibration and modeling.")
+    sp.add_argument(
+        "--bllen_min", default=0.0, type=float, help="minimum baseline length to include in calibration and outputs."
+    )
+    sp.add_argument(
+        "--bllen_max", default=np.inf, type=float, help="maximum baseline length to include in calbration and outputs."
+    )
+    sp.add_argument(
+        "--bl_ew_min",
+        default=0.0,
+        type=float,
+        help="minimum EW baseline component to include in calibration and outputs.",
+    )
+    sp.add_argument(
+        "--ex_ants", default=None, type=int, nargs="+", help="Antennas to exclude from calibration and modeling."
+    )
     sp.add_argument("--gpu_index", default=None, type=int, help="Index of GPU to run on (if on a multi-GPU machine).")
     sp.add_argument("--gpu_memory_limit", default=None, type=int, help="Limit GPU memory use to this many GBytes.")
     return ap
