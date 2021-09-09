@@ -11,6 +11,7 @@ from .utils import echo
 from .utils import PBARS
 from . import cal_utils
 from . import modeling
+import postprocess
 
 
 OPTIMIZERS = {
@@ -130,7 +131,7 @@ def tensorize_fg_model_comps_dict(
     Returns
     -------
     fg_model_comps: list
-        list of tf.Tensor objects where each tensor has shape (nvecs, ngrps, nbls, nfreqs)
+        list of np.ndarray objects where each tensor has shape (nvecs, ngrps, nbls, nfreqs)
         where nbls varies from tensor to tensor. Fitting groups with vectors that span nbls are lumped into the same
         modeling tensor along the ngrps axis. nvecs is chosen in chunk_fg_comp_dict_by_nbls
         to be the maximum number of vectors representing any of the ngrps baseline grps
@@ -181,7 +182,7 @@ def tensorize_fg_model_comps_dict(
                     nbl += 1
             corr_inds_chunk.append(corr_inds_grp)
 
-        fg_model_comps.append(tf.convert_to_tensor(modeling_matrix, dtype=dtype))
+        fg_model_comps.append(modeling_matrix.astype(dtype))
         corr_inds.append(corr_inds_chunk)
 
     return fg_model_comps, corr_inds
@@ -881,9 +882,95 @@ def tensorize_fg_coeffs(
     return fg_coeffs
 
 
-def calibrate_and_model_tensor(
+def calibrate_and_model_tensor(uvdata, fg_model_comps_dict, gains=None, sky_model=None, model_regularization=None, nparallel=1,
+                               **calibrate_and_model_tensor_kwargs):
+    """
+    Driver method that selects out polarizations and times and applies calibrate
+    and model tensor in parallel.
+    """
+
+    antpairs_data = uvdata.get_antpairs()
+    if not include_autos:
+        antpairs_data = set([ap for ap in antpairs_data if ap[0] != ap[1]])
+    uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
+
+    if gains is None:
+        echo(
+            f"{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n",
+            verbose=verbose,
+        )
+        gains = cal_utils.blank_uvcal_from_uvdata(uvdata)
+
+    if sky_model is None and model_regularization is not None:
+        echo(
+            f"{datetime.datetime.now()} Sky model is None. Initializing from data...\n",
+            verbose=verbose,
+        )
+        sky_model = cal_utils.apply_gains(uvdata, gains)
+    else:
+        sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
+
+
+    # get redundant groups
+    red_grps = []
+    for fit_grp in fg_model_comps_dict.keys():
+        for red_grp in fit_grp:
+            red_grps.append(red_grp)
+
+    fit_history = {}
+    ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
+    # generate tensors to hold foreground components.
+    fg_model_comps, corr_inds = tensorize_fg_model_comps_dict(
+        fg_model_comps_dict=fg_model_comps_dict,
+        ants_map=ants_map,
+        dtype=dtype,
+        nfreqs=sky_model.Nfreqs,
+        verbose=verbose,
+        notebook_progressbar=notebook_progressbar,
+        use_redundancy=use_redundancy,
+        grp_size_threshold=grp_size_threshold,
+    )
+    echo(
+        f"{datetime.datetime.now()}Finished Converting Foreground Modeling Components to Tensors...\n",
+        verbose=verbose,
+    )
+    # delete fg_model_comps_dict. It can take up a lot of memory.
+    del fg_model_comps_dict
+
+    if nparallel > 1:
+        # split up data, model, gains into pol-time chunks.
+        chata_chunks = []
+        gain_chunks = []
+        model_chunks = []
+        for pol in uvdata.polarization_array:
+            for time in np.unique(uvdata.time_array):
+                data_chunks.append(uvdata.select(times=[time], polarizations=[pol], inplace=False))
+                if sky_model is not None:
+                    model_chunks.append(sky_model.select(times=[time], polarizations=[pol], inplace=False))
+                else:
+                    model_chunks.append(None)
+                if gains is not None:
+                    gain_chunks.append(gains.select(times=[time], polarizations=[pol], inplace=False))
+                else:
+                    gain_chunks.append(None)
+        # get the number of GPUs
+        ngpus = len(tf.config.list_phisical_defices('GPU'))
+        ncpus =
+
+    else:
+        calibrate_and_model_tensor_chunk(uvdata, sky_model=sky_model,
+                                         gains=gains, fg_model_comps=fg_model_comps,
+                                         corr_inds=corr_inds, **calibrate_and_model_tensor_kwargs)
+
+
+
+
+def calibrate_and_model_tensor_chunk(
     uvdata,
-    fg_model_comps_dict,
+    fg_model_comps,
+    corr_inds,
+    gpu=None,
+    gpu_frac=None,
     gains=None,
     freeze_model=False,
     optimizer="Adamax",
@@ -1021,55 +1108,12 @@ def calibrate_and_model_tensor(
         dictionary containing fit history with fields:
         'loss_history': list of values of the loss function in each minimization iteration.
     """
-    antpairs_data = uvdata.get_antpairs()
-    if not include_autos:
-        antpairs_data = set([ap for ap in antpairs_data if ap[0] != ap[1]])
-    uvdata = uvdata.select(inplace=False, bls=[ap for ap in antpairs_data])
-
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
 
-    # get redundant groups
-    red_grps = []
-    for fit_grp in fg_model_comps_dict.keys():
-        for red_grp in fit_grp:
-            red_grps.append(red_grp)
+    if ngpu is not None:
+        tf.config.set_visible_devices()
 
-    if gains is None:
-        echo(
-            f"{datetime.datetime.now()} Gains are None. Initializing gains starting with unity...\n",
-            verbose=verbose,
-        )
-        gains = cal_utils.blank_uvcal_from_uvdata(uvdata)
-
-    if sky_model is None and model_regularization is not None:
-        echo(
-            f"{datetime.datetime.now()} Sky model is None. Initializing from data...\n",
-            verbose=verbose,
-        )
-        sky_model = cal_utils.apply_gains(uvdata, gains)
-    else:
-        sky_model = sky_model.select(inplace=False, bls=[ap for ap in antpairs_data])
-
-    fit_history = {}
-    ants_map = {ant: i for i, ant in enumerate(gains.ant_array)}
-    # generate tensors to hold foreground components.
-    fg_model_comps, corr_inds = tensorize_fg_model_comps_dict(
-        fg_model_comps_dict=fg_model_comps_dict,
-        ants_map=ants_map,
-        dtype=dtype,
-        nfreqs=sky_model.Nfreqs,
-        verbose=verbose,
-        notebook_progressbar=notebook_progressbar,
-        use_redundancy=use_redundancy,
-        grp_size_threshold=grp_size_threshold,
-    )
-    echo(
-        f"{datetime.datetime.now()}Finished Converting Foreground Modeling Components to Tensors...\n",
-        verbose=verbose,
-    )
-    # delete fg_model_comps_dict. It can take up a lot of memory.
-    del fg_model_comps_dict
     # loop through polarization and times.
     for polnum, pol in enumerate(uvdata.get_pols()):
         echo(
@@ -1078,6 +1122,7 @@ def calibrate_and_model_tensor(
         )
         fit_history_p = {}
         for time_index in range(uvdata.Ntimes):
+
             rmsdata = np.sqrt(
                 np.mean(
                     np.abs(
@@ -1141,6 +1186,7 @@ def calibrate_and_model_tensor(
                     verbose=verbose,
                     notebook_progressbar=notebook_progressbar,
                 )
+            # check that fraction of wgts above zero.
 
             (g_r, g_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                 g_r=g_r,
