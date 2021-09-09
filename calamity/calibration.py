@@ -907,6 +907,7 @@ def calibrate_and_model_tensor(
     profile_log_dir="./logdir",
     model_regularization="post_hoc",
     init_guesses_from_previous_time_step=True,
+    skip_threshold=0.5,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -1005,6 +1006,9 @@ def calibrate_and_model_tensor(
     init_guesses_from_previous_time_step: bool, optional
         if True, then use foreground coeffs and gains from previous time-step to
         initialize gains for next time step.
+    skip_threshold: float, optional
+        if less then this fraction of data is unflagged on a particular poltime,
+        flag the entire poltime.
     opt_kwargs: kwarg_dict
         kwargs for tf.optimizers
 
@@ -1029,6 +1033,9 @@ def calibrate_and_model_tensor(
 
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
+    resid.data_array[:] = 0.0
+    model.data_array[:] = 0.0
+    model.flag_array[:] = False
 
     # get redundant groups
     red_grps = []
@@ -1105,111 +1112,122 @@ def calibrate_and_model_tensor(
                 nsamples_in_weights=nsamples_in_weights,
                 dtype=dtype,
             )
-            if sky_model is not None:
-                echo(f"{datetime.datetime.now()} Tensorizing sky model...\n", verbose=verbose)
-                sky_model_r, sky_model_i, _ = tensorize_data(
-                    sky_model,
+            if (
+                np.all([np.all(np.isfinite(w.numpy())) for w in wgts])
+                and np.sum([np.count_nonzero(w.numpy()) for w in wgts]) / (uvdata.Nbls * uvdata.Nfreqs)
+                >= skip_threshold
+            ):
+                if sky_model is not None:
+                    echo(f"{datetime.datetime.now()} Tensorizing sky model...\n", verbose=verbose)
+                    sky_model_r, sky_model_i, _ = tensorize_data(
+                        sky_model,
+                        corr_inds=corr_inds,
+                        ants_map=ants_map,
+                        polarization=pol,
+                        time_index=time_index,
+                        data_scale_factor=rmsdata,
+                        weights=weights,
+                        dtype=dtype,
+                    )
+                else:
+                    sky_model_r, sky_model_i = None, None
+                if time_index == 0 or not init_guesses_from_previous_time_step:
+                    echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
+                    g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
+                    # generate initial guess for foreground coeffs.
+                    echo(
+                        f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
+                        verbose=verbose,
+                    )
+                    fg_r = tensorize_fg_coeffs(
+                        data=data_r,
+                        wgts=wgts,
+                        fg_model_comps=fg_model_comps,
+                        verbose=verbose,
+                        notebook_progressbar=notebook_progressbar,
+                    )
+
+                    fg_i = tensorize_fg_coeffs(
+                        data=data_i,
+                        wgts=wgts,
+                        fg_model_comps=fg_model_comps,
+                        verbose=verbose,
+                        notebook_progressbar=notebook_progressbar,
+                    )
+
+                (g_r, g_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
+                    g_r=g_r,
+                    g_i=g_i,
+                    fg_r=fg_r,
+                    fg_i=fg_i,
+                    data_r=data_r,
+                    data_i=data_i,
+                    wgts=wgts,
+                    fg_comps=fg_model_comps,
                     corr_inds=corr_inds,
-                    ants_map=ants_map,
-                    polarization=pol,
-                    time_index=time_index,
-                    data_scale_factor=rmsdata,
-                    weights=weights,
+                    optimizer=optimizer,
+                    use_min=use_min,
+                    freeze_model=freeze_model,
+                    notebook_progressbar=notebook_progressbar,
+                    verbose=verbose,
+                    tol=tol,
                     dtype=dtype,
+                    maxsteps=maxsteps,
+                    graph_mode=graph_mode,
+                    n_profile_steps=n_profile_steps,
+                    profile_log_dir=profile_log_dir,
+                    sky_model_r=sky_model_r,
+                    sky_model_i=sky_model_i,
+                    model_regularization=model_regularization,
+                    **opt_kwargs,
+                )
+                # insert into model uvdata.
+                insert_model_into_uvdata_tensor(
+                    uvdata=model,
+                    time_index=time_index,
+                    polarization=pol,
+                    ants_map=ants_map,
+                    red_grps=red_grps,
+                    model_r=yield_fg_model_array(
+                        fg_model_comps=fg_model_comps,
+                        fg_coeffs=fg_r,
+                        corr_inds=corr_inds,
+                        nants=uvdata.Nants_data,
+                        nfreqs=uvdata.Nfreqs,
+                    ),
+                    model_i=yield_fg_model_array(
+                        fg_model_comps=fg_model_comps,
+                        fg_coeffs=fg_i,
+                        corr_inds=corr_inds,
+                        nants=uvdata.Nants_data,
+                        nfreqs=uvdata.Nfreqs,
+                    ),
+                    scale_factor=rmsdata,
+                )
+                # insert gains into uvcal
+                insert_gains_into_uvcal(
+                    uvcal=gains,
+                    time_index=time_index,
+                    polarization=pol,
+                    gains_re=g_r,
+                    gains_im=g_i,
+                )
+            fit_history[polnum] = fit_history_p
+            # normalize on sky model if we use post-hoc regularization
+            if not freeze_model and model_regularization == "post_hoc":
+                renormalize(
+                    uvdata_reference_model=sky_model,
+                    uvdata_deconv=model,
+                    gains=gains,
+                    polarization=pol,
+                    uvdata_flags=uvdata,
                 )
             else:
-                sky_model_r, sky_model_i = None, None
-            if time_index == 0 or not init_guesses_from_previous_time_step:
-                echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
-                g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
-                # generate initial guess for foreground coeffs.
-                echo(
-                    f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
-                    verbose=verbose,
-                )
-                fg_r = tensorize_fg_coeffs(
-                    data=data_r,
-                    wgts=wgts,
-                    fg_model_comps=fg_model_comps,
-                    verbose=verbose,
-                    notebook_progressbar=notebook_progressbar,
-                )
+                flag_poltime(uvcal, time_index=time_index, polarization=pol)
+                flag_poltime(resid, time_index=time_index, polarization=pol)
+                flag_poltime(gains, time_index=time_index, polarization=pol)
+                fit_history[polnum] = "skipped!"
 
-                fg_i = tensorize_fg_coeffs(
-                    data=data_i,
-                    wgts=wgts,
-                    fg_model_comps=fg_model_comps,
-                    verbose=verbose,
-                    notebook_progressbar=notebook_progressbar,
-                )
-
-            (g_r, g_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
-                g_r=g_r,
-                g_i=g_i,
-                fg_r=fg_r,
-                fg_i=fg_i,
-                data_r=data_r,
-                data_i=data_i,
-                wgts=wgts,
-                fg_comps=fg_model_comps,
-                corr_inds=corr_inds,
-                optimizer=optimizer,
-                use_min=use_min,
-                freeze_model=freeze_model,
-                notebook_progressbar=notebook_progressbar,
-                verbose=verbose,
-                tol=tol,
-                dtype=dtype,
-                maxsteps=maxsteps,
-                graph_mode=graph_mode,
-                n_profile_steps=n_profile_steps,
-                profile_log_dir=profile_log_dir,
-                sky_model_r=sky_model_r,
-                sky_model_i=sky_model_i,
-                model_regularization=model_regularization,
-                **opt_kwargs,
-            )
-            # insert into model uvdata.
-            insert_model_into_uvdata_tensor(
-                uvdata=model,
-                time_index=time_index,
-                polarization=pol,
-                ants_map=ants_map,
-                red_grps=red_grps,
-                model_r=yield_fg_model_array(
-                    fg_model_comps=fg_model_comps,
-                    fg_coeffs=fg_r,
-                    corr_inds=corr_inds,
-                    nants=uvdata.Nants_data,
-                    nfreqs=uvdata.Nfreqs,
-                ),
-                model_i=yield_fg_model_array(
-                    fg_model_comps=fg_model_comps,
-                    fg_coeffs=fg_i,
-                    corr_inds=corr_inds,
-                    nants=uvdata.Nants_data,
-                    nfreqs=uvdata.Nfreqs,
-                ),
-                scale_factor=rmsdata,
-            )
-            # insert gains into uvcal
-            insert_gains_into_uvcal(
-                uvcal=gains,
-                time_index=time_index,
-                polarization=pol,
-                gains_re=g_r,
-                gains_im=g_i,
-            )
-        fit_history[polnum] = fit_history_p
-        # normalize on sky model if we use post-hoc regularization
-        if not freeze_model and model_regularization == "post_hoc":
-            renormalize(
-                uvdata_reference_model=sky_model,
-                uvdata_deconv=model,
-                gains=gains,
-                polarization=pol,
-                uvdata_flags=uvdata,
-            )
     model_with_gains = cal_utils.apply_gains(model, gains, inverse=True)
     if not correct_model:
         model = model_with_gains
@@ -1218,6 +1236,21 @@ def calibrate_and_model_tensor(
         resid = cal_utils.apply_gains(resid, gains)
 
     return model, resid, gains, fit_history
+
+
+def flag_poltime(data_object, time_index, polarization):
+    if isinstance(data_object, UVData):
+        polnum = np.where(
+            uvdata.polarization_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
+        )[0][0]
+        data_object.flag_array[:: data_object.Nbls, :, :, polnum] = True
+        data_object.data_array[:: data_object.Nbls, :, :, polnum] = 0.0
+    elif isinstance(data_object, UVCal):
+        polnum = np.where(uvcal.jones_array == uvutils.polstr2num(polarization, x_orientation=uvcal.x_orientation))[0][
+            0
+        ]
+        data_object.gain_array[:, 0, :, time_index, polnum] = 1.0
+        data_ojbect.flag_array[:, 0, :, time_index, polnum] = True
 
 
 def calibrate_and_model_mixed(

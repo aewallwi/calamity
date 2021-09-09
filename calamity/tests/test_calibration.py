@@ -477,6 +477,30 @@ def test_calibrate_and_model_dpss(
     assert len(fit_history[0]) == 1
 
 
+def test_calibrate_and_model_dpss_flagged(sky_model_projected, gains):
+    sky_model_projected.flag_array[:] = True
+    model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
+        min_dly=2.0 / 0.3,
+        offset=2.0 / 0.3,
+        uvdata=sky_model_projected,
+        gains=gains,
+        verbose=True,
+        use_redundancy=False,
+        sky_model=None,
+        maxsteps=3000,
+        tol=1e-10,
+        correct_resid=True,
+        correct_model=True,
+        weights=weight,
+        use_min=use_min,
+        skip_threshold=0.5,
+    )
+    assert np.allclose(model.data_array, 0.0)
+    assert np.allclose(model.flag_array, True)
+    assert np.allclose(gains.gain_array, 1.0)
+    assert np.allclose(gains.flag_array, True)
+
+
 @pytest.mark.parametrize(
     "use_redundancy, graph_mode, nsamples_in_weights",
     [(True, False, True), (False, False, False), (True, True, True), (False, True, False)],
