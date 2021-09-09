@@ -1558,13 +1558,13 @@ def read_calibrate_and_model_dpss(
         phase and amplitude calibration.
     input_gain_files: list of strings or UVCal object, optional
         list of paths to gain files to use as initial guesses for calibration.
-    resid_output_postfix: str, optional
+    resid_outfilename: str, optional
         path for file to write residuals.
         default is None -> don't write out residuals.
-    gain_output_postfix: str, optional
+    gain_outfilename: str, optional
         path to gain calfits to write fitted gains.
         default is None -> don't write out gains.
-    model_output_postfix, str, optional
+    model_outfilename, str, optional
         path to file to write model output.
         default is None -> Don't write model.
     fitting_info_outfilename, str, optional
