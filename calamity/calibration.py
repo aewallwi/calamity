@@ -11,6 +11,7 @@ from .utils import echo
 from .utils import PBARS
 from . import cal_utils
 from . import modeling
+import re
 
 
 OPTIMIZERS = {
@@ -1529,16 +1530,19 @@ def read_calibrate_and_model_dpss(
     input_data_files,
     input_model_files=None,
     input_gain_files=None,
-    resid_outfilename=None,
-    gain_outfilename=None,
-    model_outfilename=None,
+    resid_output_postfix=None,
+    gain_output_postfix=None,
+    model_output_postfix=None,
     fitted_info_outfilename=None,
+    ntimes_per_output_chunk=None,
     x_orientation="east",
     clobber=False,
     bllen_min=0.0,
     bllen_max=np.inf,
     bl_ew_min=0.0,
     ex_ants=None,
+    gpu_index=None,
+    gpu_memory_limit=None,
     **calibration_kwargs,
 ):
     """
@@ -1554,17 +1558,20 @@ def read_calibrate_and_model_dpss(
         phase and amplitude calibration.
     input_gain_files: list of strings or UVCal object, optional
         list of paths to gain files to use as initial guesses for calibration.
-    resid_outfilename: str, optional
+    resid_output_postfix: str, optional
         path for file to write residuals.
         default is None -> don't write out residuals.
-    gain_outfilename: str, optional
+    gain_output_postfix: str, optional
         path to gain calfits to write fitted gains.
         default is None -> don't write out gains.
-    model_outfilename, str, optional
+    model_output_postfix, str, optional
         path to file to write model output.
         default is None -> Don't write model.
     fitting_info_outfilename, str, optional
         string to pickel fitting info to.
+    n_output_chunks: int optional
+        split up outputs into n_output_chunks chunked by time.
+        default is None -> write single output file.
     bllen_min: float, optional
         select all baselines with length greater then this value [meters].
         default is 0.0
@@ -1574,6 +1581,12 @@ def read_calibrate_and_model_dpss(
     bl_ew_min: float, optional
         select all baselines with EW projected length greater then this value [meters].
         default is 0.0
+    gpu_index: int, optional
+        limit visible GPUs to be the index of this GPU.
+        default: None -> all GPUs are visible.
+    gpu_memory_limit: float, optional
+        GiB of memory on GPU that can be used.
+        default None -> all memory available.
     calibration_kwargs: kwarg dict
         see kwrags for calibration_and_model_dpss()
     Returns
@@ -1589,6 +1602,19 @@ def read_calibrate_and_model_dpss(
         dictionary containing fit history for each time-step and polarization in the data with fields:
         'loss_history': list of values of the loss function in each minimization iteration.
     """
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpu_index is not None:
+        # See https://www.tensorflow.org/guide/gpu
+        if gpus:
+            if gpu_memory_limit is None:
+                tf.config.set_visible_devices(gpus[gpu_index], 'GPU')
+            else:
+                tf.config.set_logical_device_configuration(gpus[gpu_index],
+                    [tf.config.LogicalDeviceConfiguration(memory_limit=gpu_memory_limit * 1024)])
+
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPU")
+
     if isinstance(input_data_files, str):
         input_data_files = [input_data_files]
     if isinstance(input_data_files, list):
@@ -1623,18 +1649,53 @@ def read_calibrate_and_model_dpss(
             uvc = input_gain_files
     else:
         uvc = None
-    model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
-        uvdata=uvd, sky_model=uvd_model, gains=uvc, **calibration_kwargs
-    )
-    if resid_outfilename is not None:
-        resid_fit.write_uvh5(resid_outfilename, clobber=clobber)
-    if gain_outfilename is not None:
-        gains_fit.x_orientation = x_orientation
-        gains_fit.write_calfits(gain_outfilename, clobber=clobber)
-    if model_outfilename is not None:
-        model_fit.write_uvh5(model_outfilename, clobber=clobber)
+    # run calibration with specified GPU device.
+    if gpu_index is not None and gpus:
+        with tf.device(f'/device:GPU:{gpus[gpu_index].name[-1]}'):
+            model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
+                uvdata=uvd, sky_model=uvd_model, gains=uvc, **calibration_kwargs
+            )
+    else:
+        model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
+            uvdata=uvd, sky_model=uvd_model, gains=uvc, **calibration_kwargs
+        )
+
+    for output_data, output_postfix in zip([resid_fit, gains_fit, model_fit],
+                                           [resid_postfix, model_postfix, gain_postfix]):
+        write_outputs(output_data=output_data, output_prefix='zen.', output_postfix=output_postfix,
+                      clobber=clobber, ntimes_per_output_chunk=ntimes_per_output_chunk,
+                      x_orientation=x_orientation)
+
     # don't write fitting_info_outfilename for now.
     return model_fit, resid_fit, gains_fit, fit_info
+
+def write_outputs(output_data, ouput_prefix, output_postfix, clobber=False, ntimes_per_output_chunk=1, x_orientation='east'):
+    """
+    Write output data (either UVData or UVCal objects)
+
+    Parameters
+    ----------
+    output_data: UVData or UVCal object
+        output to be written.
+    output_filename: str
+        name of file to write (with JD omitted).
+        Will write out output_filename
+
+    """
+    if ntimes_per_output_chunk is None:
+        ntimes_per_output_chunk = output_data.Ntimes
+    nchunks = output_data.Ntimes // ntimes_per_output_chunk + 1
+    for cnum in range(nchunks):
+        ouput_chunk = output_data.select(times = np.unique(output_data.time_array)[cnum * ntimes_per_output_chunk: (cnum + 1) * ntimes_per_output_chunk], inplace=False)
+        if isinstance(output_data, UVData):
+            output_chunk.write_uvh5(output_prefix + f'.{output_chunk.time_array[0]:.5f}' + output_postfix + '.uvh5')
+        elif isinstance(output_data, UVCal):
+            output_chunk.x_orientation=x_orientation
+            output_chunk.write_calfits(output_prefix + f'.{output_chunk.time_array[0]:.5f}' + output_postfix + '.calfits')
+
+
+    if isinstance(output_data, UVData):
+
 
 
 def input_output_parser():
@@ -1645,15 +1706,18 @@ def input_output_parser():
         "--input_model_files", type=str, nargs="+", help="paths to model files to set overal amplitude and phase."
     )
     sp.add_argument("--input_gain_files", type=str, nargs="+", help="paths to gains to use as a staring point.")
-    sp.add_argument("--resid_outfilename", type=str, default=None, help="path for writing calibration residuals.")
-    sp.add_argument("--model_outfilename", type=str, default=None, help="path for writing fitted foreground model.")
-    sp.add_argument("--gain_outfilename", type=str, default=None, help="path for writing fitted gains.")
+    sp.add_argument("--resid_output_postfix", type=str, default=None, help="path for writing calibration residuals.")
+    sp.add_argument("--model_output_postfix", type=str, default=None, help="path for writing fitted foreground model.")
+    sp.add_argument("--gain_output_postfix", type=str, default=None, help="path for writing fitted gains.")
     sp.add_argument("--clobber", action="store_true", default="False", help="Overwrite existing outputs.")
     sp.add_argument("--x_orientation", default="east", type=str, help="x_orientation of feeds to set in output gains.")
     sp.add_argument("--bllen_min", default=0.0, type=float, help="minimum baseline length to include in calibration and outputs.")
     sp.add_argument("--bllen_max", default=np.inf, type=float, help="maximum baseline length to include in calbration and outputs.")
     sp.add_argument("--bl_ew_min", default=0.0, type=float, help="minimum EW baseline component to include in calibration and outputs.")
     sp.add_argument("--ex_ants", default=None, type=int, nargs="+", help="Antennas to exclude from calibration and modeling.")
+    sp.add_argument("--gpu_index", default=None, type=int, help="Index of GPU to run on (if on a multi-GPU machine).")
+    sp.add_argument("--gpu_memory_limit", default=None, type=int, help="Limit GPU memory use to this many GBytes.")
+    sp.add_argument("--ntimes_per_output_chunk", default=None, type=int, help="Number of times to write per output file.")
     return ap
 
 
