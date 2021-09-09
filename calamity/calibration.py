@@ -1530,11 +1530,11 @@ def read_calibrate_and_model_dpss(
     input_data_files,
     input_model_files=None,
     input_gain_files=None,
-    resid_output_postfix=None,
-    gain_output_postfix=None,
-    model_output_postfix=None,
+    resid_outfilename=None,
+    gain_outfilename=None,
+    model_outfilename=None,
+    output_directory='./',
     fitted_info_outfilename=None,
-    ntimes_per_output_chunk=None,
     x_orientation="east",
     clobber=False,
     bllen_min=0.0,
@@ -1660,42 +1660,18 @@ def read_calibrate_and_model_dpss(
             uvdata=uvd, sky_model=uvd_model, gains=uvc, **calibration_kwargs
         )
 
-    for output_data, output_postfix in zip([resid_fit, gains_fit, model_fit],
-                                           [resid_postfix, model_postfix, gain_postfix]):
-        write_outputs(output_data=output_data, output_prefix='zen.', output_postfix=output_postfix,
-                      clobber=clobber, ntimes_per_output_chunk=ntimes_per_output_chunk,
-                      x_orientation=x_orientation)
+    if resid_outfilename is not None:
+        resid_fit.write_uvh5(resid_outfilename, clobber=clobber)
+    if gain_outfilename is not None:
+        gains_fit.x_orientation = x_orientation
+        gains_fit.write_calfits(gain_outfilename, clobber=clobber)
+    if model_outfilename is not None:
+        model_fit.write_uvh5(model_outfilename, clobber=clobber)
+    # don't write fitting_info_outfilename for now.
+
 
     # don't write fitting_info_outfilename for now.
     return model_fit, resid_fit, gains_fit, fit_info
-
-def write_outputs(output_data, ouput_prefix, output_postfix, clobber=False, ntimes_per_output_chunk=1, x_orientation='east'):
-    """
-    Write output data (either UVData or UVCal objects)
-
-    Parameters
-    ----------
-    output_data: UVData or UVCal object
-        output to be written.
-    output_filename: str
-        name of file to write (with JD omitted).
-        Will write out output_filename
-
-    """
-    if ntimes_per_output_chunk is None:
-        ntimes_per_output_chunk = output_data.Ntimes
-    nchunks = output_data.Ntimes // ntimes_per_output_chunk + 1
-    for cnum in range(nchunks):
-        ouput_chunk = output_data.select(times = np.unique(output_data.time_array)[cnum * ntimes_per_output_chunk: (cnum + 1) * ntimes_per_output_chunk], inplace=False)
-        if isinstance(output_data, UVData):
-            output_chunk.write_uvh5(output_prefix + f'.{output_chunk.time_array[0]:.5f}' + output_postfix + '.uvh5')
-        elif isinstance(output_data, UVCal):
-            output_chunk.x_orientation=x_orientation
-            output_chunk.write_calfits(output_prefix + f'.{output_chunk.time_array[0]:.5f}' + output_postfix + '.calfits')
-
-
-    if isinstance(output_data, UVData):
-
 
 
 def input_output_parser():
@@ -1706,9 +1682,9 @@ def input_output_parser():
         "--input_model_files", type=str, nargs="+", help="paths to model files to set overal amplitude and phase."
     )
     sp.add_argument("--input_gain_files", type=str, nargs="+", help="paths to gains to use as a staring point.")
-    sp.add_argument("--resid_output_postfix", type=str, default=None, help="path for writing calibration residuals.")
-    sp.add_argument("--model_output_postfix", type=str, default=None, help="path for writing fitted foreground model.")
-    sp.add_argument("--gain_output_postfix", type=str, default=None, help="path for writing fitted gains.")
+    sp.add_argument("--resid_outfilename", type=str, default=None, help="postfix for resid output file.")
+    sp.add_argument("--model_outfilename", type=str, default=None, help="postfix for foreground model file.")
+    sp.add_argument("--gain_outfilename", type=str, default=None, help="path for writing fitted gains.")
     sp.add_argument("--clobber", action="store_true", default="False", help="Overwrite existing outputs.")
     sp.add_argument("--x_orientation", default="east", type=str, help="x_orientation of feeds to set in output gains.")
     sp.add_argument("--bllen_min", default=0.0, type=float, help="minimum baseline length to include in calibration and outputs.")
@@ -1717,7 +1693,6 @@ def input_output_parser():
     sp.add_argument("--ex_ants", default=None, type=int, nargs="+", help="Antennas to exclude from calibration and modeling.")
     sp.add_argument("--gpu_index", default=None, type=int, help="Index of GPU to run on (if on a multi-GPU machine).")
     sp.add_argument("--gpu_memory_limit", default=None, type=int, help="Limit GPU memory use to this many GBytes.")
-    sp.add_argument("--ntimes_per_output_chunk", default=None, type=int, help="Number of times to write per output file.")
     return ap
 
 
