@@ -319,30 +319,32 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
     if uvdata_flags is None:
         uvdata_flags = uvdata_reference_model
 
-    selection = ~uvdata_flags.flag_array[time_index :: uvdata_flags.Ntimes, :, :, polnum_data]
+    bltslice = slice(time_index * uvdata_flags.Nbls, (time_index + 1) * uvdata_flags.Nbls)
+
+    selection = ~uvdata_flags.flag_array[bltslice, :, :, polnum_data]
 
     scale_factor_phase = np.angle(
         np.mean(
-            uvdata_reference_model.data_array[time_index :: uvdata_flags.Ntimes, :, :, polnum_data][selection]
-            / uvdata_deconv.data_array[time_index :: uvdata_flags.Ntimes, :, :, polnum_data][selection]
+            uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
+            / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
         )
     )
     scale_factor_abs = np.sqrt(
         np.mean(
             np.abs(
-                uvdata_reference_model.data_array[time_index :: uvdata_flags.Ntimes, :, :, polnum_data][selection]
-                / uvdata_deconv.data_array[time_index :: uvdata_flags.Ntimes, :, :, polnum_data][selection]
+                uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
+                / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
             )
             ** 2.0
         )
     )
     scale_factor = scale_factor_abs * np.exp(1j * scale_factor_phase)
-    uvdata_deconv.data_array[:, :, :, polnum_data] *= scale_factor
+    uvdata_deconv.data_array[bltslice, :, :, polnum_data] *= scale_factor
 
     polnum_gains = np.where(
         gains.jones_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
-    gains.gain_array[:, :, :, :, polnum_data] *= (scale_factor) ** -0.5
+    gains.gain_array[:, :, :, time_index, polnum_data] *= (scale_factor) ** -0.5
 
 
 def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
@@ -1086,25 +1088,21 @@ def calibrate_and_model_tensor(
         fit_history_p = {}
         first_time = True
         for time_index in range(uvdata.Ntimes):
-            if (
-                # check that fraction of unflagged data > skip_threshold.
-                np.count_nonzero(~uvdata.flag_array[time_index :: uvdata.Ntimes, 0, :, polnum])
-                / (uvdata.Nbls * uvdata.Nfreqs)
-                >= skip_threshold
-            ):
+            echo(
+                f"{datetime.datetime.now()} Working on time {time_index + 1} of {uvdata.Ntimes}...\n",
+                verbose=verbose,
+            )
+            bltslice = slice(time_index * uvdata.Nbls, (time_index + 1) * uvdata.Nbls)
+            frac_unflagged = np.count_nonzero(~uvdata.flag_array[bltslice, 0, :, polnum]) / (
+                uvdata.Ntimes * uvdata.Nfreqs
+            )
+            # check that fraction of unflagged data > skip_threshold.
+            if frac_unflagged >= skip_threshold:
                 rmsdata = np.sqrt(
                     np.mean(
-                        np.abs(
-                            uvdata.data_array[time_index :: uvdata.Ntimes, 0, :, polnum][
-                                ~uvdata.flag_array[time_index :: uvdata.Ntimes, 0, :, polnum]
-                            ]
-                        )
+                        np.abs(uvdata.data_array[bltslice, 0, :, polnum][~uvdata.flag_array[bltslice, 0, :, polnum]])
                         ** 2.0
                     )
-                )
-                echo(
-                    f"{datetime.datetime.now()} Working on time {time_index + 1} of {uvdata.Ntimes}...\n",
-                    verbose=verbose,
                 )
                 echo(f"{datetime.datetime.now()} Tensorizing data...\n", verbose=verbose)
                 data_r, data_i, wgts = tensorize_data(
@@ -1216,12 +1214,16 @@ def calibrate_and_model_tensor(
                     gains_im=g_i,
                 )
             else:
+                echo(
+                    f"{datetime.datetime.now()}: Only {frac_unflagged * 100}-percent of data unflagged. Skipping...\n",
+                    verbose=verbose,
+                )
                 flag_poltime(resid, time_index=time_index, polarization=pol)
                 flag_poltime(gains, time_index=time_index, polarization=pol)
                 flag_poltime(model, time_index=time_index, polarization=pol)
                 fit_history[polnum] = "skipped!"
             # normalize on sky model if we use post-hoc regularization
-            if not freeze_model and model_regularization == "post_hoc" and np.any(~model.flag_array):
+            if not freeze_model and model_regularization == "post_hoc" and np.any(~model.flag_array[bltslice]):
                 renormalize(
                     uvdata_reference_model=sky_model,
                     uvdata_deconv=model,
@@ -1246,17 +1248,20 @@ def calibrate_and_model_tensor(
 
 def flag_poltime(data_object, time_index, polarization):
     if isinstance(data_object, UVData):
+        bltslice = slice(time_index * data_object.Nbls, (time_index + 1) * data_object.Nbls)
         polnum = np.where(
             data_object.polarization_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
         )[0][0]
-        data_object.flag_array[time_index :: data_object.Ntimes, :, :, polnum] = True
-        data_object.data_array[time_index :: data_object.Ntimes, :, :, polnum] = 0.0
+        data_object.flag_array[bltslice, :, :, polnum] = True
+        data_object.data_array[bltslice, :, :, polnum] = 0.0
     elif isinstance(data_object, UVCal):
         polnum = np.where(
             data_object.jones_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
         )[0][0]
         data_object.gain_array[:, 0, :, time_index, polnum] = 1.0
         data_object.flag_array[:, 0, :, time_index, polnum] = True
+    else:
+        raise ValueError("only supports data_object that is UVCal or UVData.")
 
 
 def calibrate_and_model_mixed(
