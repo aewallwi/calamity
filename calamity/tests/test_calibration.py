@@ -42,6 +42,15 @@ def gains(sky_model):
 
 
 @pytest.fixture
+def gains_multitime(gains):
+    gains_2 = copy.deepcopy(gains)
+    gains_2.time_array += 2.0
+    gains.x_orientation = "east"
+    gains_2.x_orientation = "east"
+    return gains_2 + gains
+
+
+@pytest.fixture
 def gains_redundant(sky_model_redundant):
     return cal_utils.blank_uvcal_from_uvdata(sky_model_redundant)
 
@@ -130,6 +139,13 @@ def sky_model_projected(sky_model, dpss_vectors):
 
 
 @pytest.fixture
+def sky_model_projected_multitime(sky_model_projected):
+    sky_model_2 = copy.deepcopy(sky_model_projected)
+    sky_model_2.time_array += 2.0
+    return sky_model_projected + sky_model_2
+
+
+@pytest.fixture
 def sky_model_projected_redundant(sky_model_redundant, dpss_vectors_redundant):
     for ap in sky_model_redundant.get_antpairs():
         dinds = sky_model_redundant.antpair2ind(ap)
@@ -186,7 +202,7 @@ def test_renormalize(sky_model, gains):
     sky_model.data_array *= 51.0 + 23j
     assert not np.allclose(gains.gain_array, 1.0)
     assert not np.allclose(sky_model_ref.data_array, sky_model.data_array)
-    calibration.renormalize(sky_model_ref, sky_model, gains, polarization="xx")
+    calibration.renormalize(sky_model_ref, sky_model, gains, polarization="xx", time_index=0)
     assert np.allclose(gains.gain_array, 1.0)
     assert np.allclose(sky_model_ref.data_array, sky_model.data_array)
 
@@ -475,6 +491,61 @@ def test_calibrate_and_model_dpss(
     assert np.sqrt(np.mean(np.abs(uvdata.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
     assert len(fit_history) == 1
     assert len(fit_history[0]) == 1
+
+
+def test_flag_poltime(sky_model_projected_multitime, sky_model_projected, gains_multitime):
+    uvd = copy.deepcopy(sky_model_projected_multitime)
+    calibration.flag_poltime(uvd, time_index=0, polarization="xx")
+    assert np.all(uvd.flag_array[: uvd.Nbls])
+    assert not np.any(uvd.flag_array[uvd.Nbls : 2 * uvd.Nbls])
+    assert np.allclose(uvd.data_array[: uvd.Nbls], 0.0)
+    sky_model_projected_multitime.select(times=[np.unique(sky_model_projected.time_array)[-1]])
+    assert np.allclose(uvd.data_array[uvd.Nbls : 2 * uvd.Nbls], sky_model_projected_multitime.data_array)
+    pytest.raises(ValueError, calibration.flag_poltime, data_object="Abolish Prop 13!", time_index=0, polarization="xx")
+
+
+def test_calibrate_and_model_dpss_flagged(sky_model_projected_multitime, gains_multitime):
+    sky_model_projected_multitime.flag_array[
+        sky_model_projected_multitime.time_array == sky_model_projected_multitime.time_array[0]
+    ] = True
+    model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
+        min_dly=2.0 / 0.3,
+        offset=2.0 / 0.3,
+        uvdata=sky_model_projected_multitime,
+        gains=gains_multitime,
+        verbose=True,
+        use_redundancy=False,
+        sky_model=None,
+        maxsteps=3000,
+        tol=1e-10,
+        correct_resid=True,
+        correct_model=True,
+        weights=None,
+        use_min=False,
+        skip_threshold=0.5,
+        model_regularization="post_hoc",
+    )
+    for ap in resid.get_antpairs():
+        bl = ap + ("xx",)
+        assert np.allclose(resid.get_data(bl)[0, :], 0.0)
+        assert np.allclose(model.get_data(bl)[0, :], 0.0)
+        assert np.all(model.get_flags(bl)[0, :])
+        assert np.all(resid.get_flags(bl)[0, :])
+        assert np.allclose(gains.get_gains(bl[0], "Jxx")[:, 0], 1.0)
+        assert np.all(gains.get_flags(bl[1], "Jxx")[:, 0])
+
+    # select the unflagged time and make sure all of our previous tests pass.
+
+    resid.select(times=[np.unique(resid.time_array)[-1]])
+    model.select(times=[np.unique(model.time_array)[-1]])
+    gains.select(times=[np.unique(gains.time_array)[-1]])
+    sky_model_projected_multitime.select(times=[np.unique(sky_model_projected_multitime.time_array)[-1]])
+    resid = cal_utils.apply_gains(resid, gains)
+    model = cal_utils.apply_gains(model, gains)
+    assert np.sqrt(np.mean(np.abs(model.data_array) ** 2.0)) >= 1e2 * np.sqrt(np.mean(np.abs(resid.data_array) ** 2.0))
+    assert np.sqrt(np.mean(np.abs(sky_model_projected_multitime.data_array) ** 2.0)) >= 1e2 * np.sqrt(
+        np.mean(np.abs(resid.data_array) ** 2.0)
+    )
 
 
 @pytest.mark.parametrize(

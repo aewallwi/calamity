@@ -290,7 +290,7 @@ def tensorize_data(
     return data_r, data_i, wgts
 
 
-def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, uvdata_flags=None):
+def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time_index, uvdata_flags=None):
     """Remove arbitrary phase and amplitude from deconvolved model and gains.
 
     Parameters
@@ -319,30 +319,32 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, uvda
     if uvdata_flags is None:
         uvdata_flags = uvdata_reference_model
 
-    selection = ~uvdata_flags.flag_array[:, :, :, polnum_data]
+    bltslice = slice(time_index * uvdata_flags.Nbls, (time_index + 1) * uvdata_flags.Nbls)
+
+    selection = ~uvdata_flags.flag_array[bltslice, :, :, polnum_data]
 
     scale_factor_phase = np.angle(
         np.mean(
-            uvdata_reference_model.data_array[:, :, :, polnum_data][selection]
-            / uvdata_deconv.data_array[:, :, :, polnum_data][selection]
+            uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
+            / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
         )
     )
     scale_factor_abs = np.sqrt(
         np.mean(
             np.abs(
-                uvdata_reference_model.data_array[:, :, :, polnum_data][selection]
-                / uvdata_deconv.data_array[:, :, :, polnum_data][selection]
+                uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
+                / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
             )
             ** 2.0
         )
     )
     scale_factor = scale_factor_abs * np.exp(1j * scale_factor_phase)
-    uvdata_deconv.data_array[:, :, :, polnum_data] *= scale_factor
+    uvdata_deconv.data_array[bltslice, :, :, polnum_data] *= scale_factor
 
     polnum_gains = np.where(
         gains.jones_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
-    gains.gain_array[:, :, :, :, polnum_data] *= (scale_factor) ** -0.5
+    gains.gain_array[:, :, :, time_index, polnum_data] *= (scale_factor) ** -0.5
 
 
 def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
@@ -907,6 +909,7 @@ def calibrate_and_model_tensor(
     profile_log_dir="./logdir",
     model_regularization="post_hoc",
     init_guesses_from_previous_time_step=True,
+    skip_threshold=0.5,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -1005,6 +1008,9 @@ def calibrate_and_model_tensor(
     init_guesses_from_previous_time_step: bool, optional
         if True, then use foreground coeffs and gains from previous time-step to
         initialize gains for next time step.
+    skip_threshold: float, optional
+        if less then this fraction of data is unflagged on a particular poltime,
+        flag the entire poltime.
     opt_kwargs: kwarg_dict
         kwargs for tf.optimizers
 
@@ -1029,6 +1035,8 @@ def calibrate_and_model_tensor(
 
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
+    model.data_array[:] = 0.0
+    model.flag_array[:] = False
 
     # get redundant groups
     red_grps = []
@@ -1078,146 +1086,182 @@ def calibrate_and_model_tensor(
             verbose=verbose,
         )
         fit_history_p = {}
+        first_time = True
         for time_index in range(uvdata.Ntimes):
-            rmsdata = np.sqrt(
-                np.mean(
-                    np.abs(
-                        uvdata.data_array[time_index :: uvdata.Ntimes, 0, :, polnum][
-                            ~uvdata.flag_array[time_index :: uvdata.Ntimes, 0, :, polnum]
-                        ]
-                    )
-                    ** 2.0
-                )
-            )
             echo(
                 f"{datetime.datetime.now()} Working on time {time_index + 1} of {uvdata.Ntimes}...\n",
                 verbose=verbose,
             )
-            echo(f"{datetime.datetime.now()} Tensorizing data...\n", verbose=verbose)
-            data_r, data_i, wgts = tensorize_data(
-                uvdata,
-                corr_inds=corr_inds,
-                ants_map=ants_map,
-                polarization=pol,
-                time_index=time_index,
-                data_scale_factor=rmsdata,
-                weights=weights,
-                nsamples_in_weights=nsamples_in_weights,
-                dtype=dtype,
+            bltslice = slice(time_index * uvdata.Nbls, (time_index + 1) * uvdata.Nbls)
+            frac_unflagged = np.count_nonzero(~uvdata.flag_array[bltslice, 0, :, polnum]) / (
+                uvdata.Ntimes * uvdata.Nfreqs
             )
-            if sky_model is not None:
-                echo(f"{datetime.datetime.now()} Tensorizing sky model...\n", verbose=verbose)
-                sky_model_r, sky_model_i, _ = tensorize_data(
-                    sky_model,
+            # check that fraction of unflagged data > skip_threshold.
+            if frac_unflagged >= skip_threshold:
+                rmsdata = np.sqrt(
+                    np.mean(
+                        np.abs(uvdata.data_array[bltslice, 0, :, polnum][~uvdata.flag_array[bltslice, 0, :, polnum]])
+                        ** 2.0
+                    )
+                )
+                echo(f"{datetime.datetime.now()} Tensorizing data...\n", verbose=verbose)
+                data_r, data_i, wgts = tensorize_data(
+                    uvdata,
                     corr_inds=corr_inds,
                     ants_map=ants_map,
                     polarization=pol,
                     time_index=time_index,
                     data_scale_factor=rmsdata,
                     weights=weights,
+                    nsamples_in_weights=nsamples_in_weights,
                     dtype=dtype,
                 )
+
+                if sky_model is not None:
+                    echo(f"{datetime.datetime.now()} Tensorizing sky model...\n", verbose=verbose)
+                    sky_model_r, sky_model_i, _ = tensorize_data(
+                        sky_model,
+                        corr_inds=corr_inds,
+                        ants_map=ants_map,
+                        polarization=pol,
+                        time_index=time_index,
+                        data_scale_factor=rmsdata,
+                        weights=weights,
+                        dtype=dtype,
+                    )
+                else:
+                    sky_model_r, sky_model_i = None, None
+                if first_time or not init_guesses_from_previous_time_step:
+                    first_time = False
+                    echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
+                    g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
+                    # generate initial guess for foreground coeffs.
+                    echo(
+                        f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
+                        verbose=verbose,
+                    )
+                    fg_r = tensorize_fg_coeffs(
+                        data=data_r,
+                        wgts=wgts,
+                        fg_model_comps=fg_model_comps,
+                        verbose=verbose,
+                        notebook_progressbar=notebook_progressbar,
+                    )
+
+                    fg_i = tensorize_fg_coeffs(
+                        data=data_i,
+                        wgts=wgts,
+                        fg_model_comps=fg_model_comps,
+                        verbose=verbose,
+                        notebook_progressbar=notebook_progressbar,
+                    )
+
+                (g_r, g_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
+                    g_r=g_r,
+                    g_i=g_i,
+                    fg_r=fg_r,
+                    fg_i=fg_i,
+                    data_r=data_r,
+                    data_i=data_i,
+                    wgts=wgts,
+                    fg_comps=fg_model_comps,
+                    corr_inds=corr_inds,
+                    optimizer=optimizer,
+                    use_min=use_min,
+                    freeze_model=freeze_model,
+                    notebook_progressbar=notebook_progressbar,
+                    verbose=verbose,
+                    tol=tol,
+                    dtype=dtype,
+                    maxsteps=maxsteps,
+                    graph_mode=graph_mode,
+                    n_profile_steps=n_profile_steps,
+                    profile_log_dir=profile_log_dir,
+                    sky_model_r=sky_model_r,
+                    sky_model_i=sky_model_i,
+                    model_regularization=model_regularization,
+                    **opt_kwargs,
+                )
+                # insert into model uvdata.
+                insert_model_into_uvdata_tensor(
+                    uvdata=model,
+                    time_index=time_index,
+                    polarization=pol,
+                    ants_map=ants_map,
+                    red_grps=red_grps,
+                    model_r=yield_fg_model_array(
+                        fg_model_comps=fg_model_comps,
+                        fg_coeffs=fg_r,
+                        corr_inds=corr_inds,
+                        nants=uvdata.Nants_data,
+                        nfreqs=uvdata.Nfreqs,
+                    ),
+                    model_i=yield_fg_model_array(
+                        fg_model_comps=fg_model_comps,
+                        fg_coeffs=fg_i,
+                        corr_inds=corr_inds,
+                        nants=uvdata.Nants_data,
+                        nfreqs=uvdata.Nfreqs,
+                    ),
+                    scale_factor=rmsdata,
+                )
+                # insert gains into uvcal
+                insert_gains_into_uvcal(
+                    uvcal=gains,
+                    time_index=time_index,
+                    polarization=pol,
+                    gains_re=g_r,
+                    gains_im=g_i,
+                )
             else:
-                sky_model_r, sky_model_i = None, None
-            if time_index == 0 or not init_guesses_from_previous_time_step:
-                echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
-                g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
-                # generate initial guess for foreground coeffs.
                 echo(
-                    f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
+                    f"{datetime.datetime.now()}: Only {frac_unflagged * 100}-percent of data unflagged. Skipping...\n",
                     verbose=verbose,
                 )
-                fg_r = tensorize_fg_coeffs(
-                    data=data_r,
-                    wgts=wgts,
-                    fg_model_comps=fg_model_comps,
-                    verbose=verbose,
-                    notebook_progressbar=notebook_progressbar,
+                flag_poltime(resid, time_index=time_index, polarization=pol)
+                flag_poltime(gains, time_index=time_index, polarization=pol)
+                flag_poltime(model, time_index=time_index, polarization=pol)
+                fit_history[polnum] = "skipped!"
+            # normalize on sky model if we use post-hoc regularization
+            if not freeze_model and model_regularization == "post_hoc" and np.any(~model.flag_array[bltslice]):
+                renormalize(
+                    uvdata_reference_model=sky_model,
+                    uvdata_deconv=model,
+                    gains=gains,
+                    polarization=pol,
+                    time_index=time_index,
+                    uvdata_flags=uvdata,
                 )
-
-                fg_i = tensorize_fg_coeffs(
-                    data=data_i,
-                    wgts=wgts,
-                    fg_model_comps=fg_model_comps,
-                    verbose=verbose,
-                    notebook_progressbar=notebook_progressbar,
-                )
-
-            (g_r, g_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
-                g_r=g_r,
-                g_i=g_i,
-                fg_r=fg_r,
-                fg_i=fg_i,
-                data_r=data_r,
-                data_i=data_i,
-                wgts=wgts,
-                fg_comps=fg_model_comps,
-                corr_inds=corr_inds,
-                optimizer=optimizer,
-                use_min=use_min,
-                freeze_model=freeze_model,
-                notebook_progressbar=notebook_progressbar,
-                verbose=verbose,
-                tol=tol,
-                dtype=dtype,
-                maxsteps=maxsteps,
-                graph_mode=graph_mode,
-                n_profile_steps=n_profile_steps,
-                profile_log_dir=profile_log_dir,
-                sky_model_r=sky_model_r,
-                sky_model_i=sky_model_i,
-                model_regularization=model_regularization,
-                **opt_kwargs,
-            )
-            # insert into model uvdata.
-            insert_model_into_uvdata_tensor(
-                uvdata=model,
-                time_index=time_index,
-                polarization=pol,
-                ants_map=ants_map,
-                red_grps=red_grps,
-                model_r=yield_fg_model_array(
-                    fg_model_comps=fg_model_comps,
-                    fg_coeffs=fg_r,
-                    corr_inds=corr_inds,
-                    nants=uvdata.Nants_data,
-                    nfreqs=uvdata.Nfreqs,
-                ),
-                model_i=yield_fg_model_array(
-                    fg_model_comps=fg_model_comps,
-                    fg_coeffs=fg_i,
-                    corr_inds=corr_inds,
-                    nants=uvdata.Nants_data,
-                    nfreqs=uvdata.Nfreqs,
-                ),
-                scale_factor=rmsdata,
-            )
-            # insert gains into uvcal
-            insert_gains_into_uvcal(
-                uvcal=gains,
-                time_index=time_index,
-                polarization=pol,
-                gains_re=g_r,
-                gains_im=g_i,
-            )
         fit_history[polnum] = fit_history_p
-        # normalize on sky model if we use post-hoc regularization
-        if not freeze_model and model_regularization == "post_hoc":
-            renormalize(
-                uvdata_reference_model=sky_model,
-                uvdata_deconv=model,
-                gains=gains,
-                polarization=pol,
-                uvdata_flags=uvdata,
-            )
+
     model_with_gains = cal_utils.apply_gains(model, gains, inverse=True)
     if not correct_model:
         model = model_with_gains
     resid.data_array -= model_with_gains.data_array
+    resid.data_array[model_with_gains.flag_array] = 0.0  # set resid to zero where model is flagged.
+    resid.data_array[uvdata.flag_array] = 0.0  # also set resid to zero where data is flagged.
     if correct_resid:
         resid = cal_utils.apply_gains(resid, gains)
 
     return model, resid, gains, fit_history
+
+
+def flag_poltime(data_object, time_index, polarization):
+    if isinstance(data_object, UVData):
+        bltslice = slice(time_index * data_object.Nbls, (time_index + 1) * data_object.Nbls)
+        polnum = np.where(
+            data_object.polarization_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
+        )[0][0]
+        data_object.flag_array[bltslice, :, :, polnum] = True
+        data_object.data_array[bltslice, :, :, polnum] = 0.0
+    elif isinstance(data_object, UVCal):
+        polnum = np.where(
+            data_object.jones_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
+        )[0][0]
+        data_object.gain_array[:, 0, :, time_index, polnum] = 1.0
+        data_object.flag_array[:, 0, :, time_index, polnum] = True
+    else:
+        raise ValueError("only supports data_object that is UVCal or UVData.")
 
 
 def calibrate_and_model_mixed(
@@ -1754,6 +1798,12 @@ def fitting_argparser():
     sp.add_argument("--learning_rate", type=float, default=1e-3, help="gradient descent learning rate.")
     sp.add_argument(
         "--red_tol", type=float, default=1.0, help="Tolerance for determining redundancy between baselines [meters]."
+    )
+    sp.add_argument(
+        "--skip_threshold",
+        type=float,
+        default=0.5,
+        help="Skip and flag time/polarization if more then this fractionf of data is flagged.",
     )
     return ap
 
