@@ -1033,7 +1033,6 @@ def calibrate_and_model_tensor(
 
     resid = copy.deepcopy(uvdata)
     model = copy.deepcopy(uvdata)
-    resid.data_array[:] = 0.0
     model.data_array[:] = 0.0
     model.flag_array[:] = False
 
@@ -1217,7 +1216,6 @@ def calibrate_and_model_tensor(
                     gains_im=g_i,
                 )
             else:
-                flag_poltime(uvcal, time_index=time_index, polarization=pol)
                 flag_poltime(resid, time_index=time_index, polarization=pol)
                 flag_poltime(gains, time_index=time_index, polarization=pol)
                 flag_poltime(model, time_index=time_index, polarization=pol)
@@ -1238,6 +1236,8 @@ def calibrate_and_model_tensor(
     if not correct_model:
         model = model_with_gains
     resid.data_array -= model_with_gains.data_array
+    resid.data_array[model_with_gains.flag_array] = 0.0 # set resid to zero where model is flagged.
+    resid.data_array[uvdata.flag_array] = 0.0 # also set resid to zero where data is flagged.
     if correct_resid:
         resid = cal_utils.apply_gains(resid, gains)
 
