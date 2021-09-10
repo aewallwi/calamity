@@ -491,10 +491,10 @@ def test_calibrate_and_model_dpss_flagged(sky_model_projected, gains):
         tol=1e-10,
         correct_resid=True,
         correct_model=True,
-        weights=weight,
-        use_min=use_min,
+        weights=None,
+        use_min=False,
         skip_threshold=0.5,
-        model_regularization='post_hoc',
+        model_regularization="post_hoc",
     )
     assert np.allclose(model.data_array, 0.0)
     assert np.allclose(model.flag_array, True)

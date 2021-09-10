@@ -319,19 +319,19 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
     if uvdata_flags is None:
         uvdata_flags = uvdata_reference_model
 
-    selection = ~uvdata_flags.flag_array[time_index::uvdata_flags.Ntimes, :, :, polnum_data]
+    selection = ~uvdata_flags.flag_array[time_index :: uvdata_flags.Ntimes, :, :, polnum_data]
 
     scale_factor_phase = np.angle(
         np.mean(
-            uvdata_reference_model.data_array[time_index::uvdata_flags.Ntimes, :, :, polnum_data][selection]
-            / uvdata_deconv.data_array[time_index::uvdata_flags.Ntimes, :, :, polnum_data][selection]
+            uvdata_reference_model.data_array[time_index :: uvdata_flags.Ntimes, :, :, polnum_data][selection]
+            / uvdata_deconv.data_array[time_index :: uvdata_flags.Ntimes, :, :, polnum_data][selection]
         )
     )
     scale_factor_abs = np.sqrt(
         np.mean(
             np.abs(
-                uvdata_reference_model.data_array[time_index::uvdata_flags.Ntimes, :, :, polnum_data][selection]
-                / uvdata_deconv.data_array[time_index::uvdata_flags.Ntimes, :, :, polnum_data][selection]
+                uvdata_reference_model.data_array[time_index :: uvdata_flags.Ntimes, :, :, polnum_data][selection]
+                / uvdata_deconv.data_array[time_index :: uvdata_flags.Ntimes, :, :, polnum_data][selection]
             )
             ** 2.0
         )
@@ -1084,12 +1084,12 @@ def calibrate_and_model_tensor(
             verbose=verbose,
         )
         fit_history_p = {}
-        first_time=True
+        first_time = True
         for time_index in range(uvdata.Ntimes):
             if (
                 # check that fraction of unflagged data > skip_threshold.
-                np.count_nonzero(~uvdata.flag_array[time_index :: uvdata.Ntimes, 0, :, polnum])\
-                 / (uvdata.Nbls * uvdata.Nfreqs)
+                np.count_nonzero(~uvdata.flag_array[time_index :: uvdata.Ntimes, 0, :, polnum])
+                / (uvdata.Nbls * uvdata.Nfreqs)
                 >= skip_threshold
             ):
                 rmsdata = np.sqrt(
@@ -1134,7 +1134,7 @@ def calibrate_and_model_tensor(
                 else:
                     sky_model_r, sky_model_i = None, None
                 if first_time or not init_guesses_from_previous_time_step:
-                    first_time=False
+                    first_time = False
                     echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
                     g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
                     # generate initial guess for foreground coeffs.
@@ -1236,8 +1236,8 @@ def calibrate_and_model_tensor(
     if not correct_model:
         model = model_with_gains
     resid.data_array -= model_with_gains.data_array
-    resid.data_array[model_with_gains.flag_array] = 0.0 # set resid to zero where model is flagged.
-    resid.data_array[uvdata.flag_array] = 0.0 # also set resid to zero where data is flagged.
+    resid.data_array[model_with_gains.flag_array] = 0.0  # set resid to zero where model is flagged.
+    resid.data_array[uvdata.flag_array] = 0.0  # also set resid to zero where data is flagged.
     if correct_resid:
         resid = cal_utils.apply_gains(resid, gains)
 
@@ -1247,16 +1247,16 @@ def calibrate_and_model_tensor(
 def flag_poltime(data_object, time_index, polarization):
     if isinstance(data_object, UVData):
         polnum = np.where(
-            uvdata.polarization_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
+            data_object.polarization_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
         )[0][0]
-        data_object.flag_array[time_index:: data_object.Ntimes, :, :, polnum] = True
-        data_object.data_array[time_index:: data_object.Ntimes, :, :, polnum] = 0.0
+        data_object.flag_array[time_index :: data_object.Ntimes, :, :, polnum] = True
+        data_object.data_array[time_index :: data_object.Ntimes, :, :, polnum] = 0.0
     elif isinstance(data_object, UVCal):
-        polnum = np.where(data_object.jones_array == uvutils.polstr2num(polarization, x_orientation=uvcal.x_orientation))[0][
-            0
-        ]
+        polnum = np.where(
+            data_object.jones_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
+        )[0][0]
         data_object.gain_array[:, 0, :, time_index, polnum] = 1.0
-        data_ojbect.flag_array[:, 0, :, time_index, polnum] = True
+        data_object.flag_array[:, 0, :, time_index, polnum] = True
 
 
 def calibrate_and_model_mixed(
@@ -1794,7 +1794,12 @@ def fitting_argparser():
     sp.add_argument(
         "--red_tol", type=float, default=1.0, help="Tolerance for determining redundancy between baselines [meters]."
     )
-    sp.add_argument('--skip_threshold', type=float, default=0.5, help="Skip and flag time/polarization if more then this fractionf of data is flagged.")
+    sp.add_argument(
+        "--skip_threshold",
+        type=float,
+        default=0.5,
+        help="Skip and flag time/polarization if more then this fractionf of data is flagged.",
+    )
     return ap
 
 
