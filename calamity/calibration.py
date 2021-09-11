@@ -290,7 +290,9 @@ def tensorize_data(
     return data_r, data_i, wgts
 
 
-def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time_index, uvdata_flags=None):
+
+def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time_index, additional_flags=None):
+
     """Remove arbitrary phase and amplitude from deconvolved model and gains.
 
     Parameters
@@ -303,10 +305,11 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
         Gains solved for in self-cal loop.
     polarization: str
         Polarization string to compute phase and amplitude correction for.
-    uvdata_flags: optional
-        UVData object storing flags.
-        Default is None -> use flags from uvdata_reference_model.
-
+    additional_flags: np.ndarray
+        Any additional flags you wish to use for excluding data from normalization
+        fed as an np.ndarray with same shape as uvdata_reference_model and uvdata_deconv.
+        default is None -> Only exclude data in flags from reference model and deconv from
+        determinging normalization.
     Returns
     -------
     N/A: Modifies uvdata_deconv and gains in-place.
@@ -316,28 +319,25 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
         uvdata_deconv.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
 
-    if uvdata_flags is None:
-        uvdata_flags = uvdata_reference_model
 
-    bltslice = slice(time_index * uvdata_flags.Nbls, (time_index + 1) * uvdata_flags.Nbls)
+    bltslice = slice(time_index * uvdata_deconv.Nbls, (time_index + 1) * uvdata_deconv.Nbls)
 
-    selection = ~uvdata_flags.flag_array[bltslice, :, :, polnum_data]
-
-    scale_factor_phase = np.angle(
-        np.mean(
-            uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
-            / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
-        )
+    selection = (
+        ~uvdata_deconv.flag_array[bltslice, :, :, polnum_data]
+        & ~uvdata_reference_model.flag_array[bltslice, :, :, polnum_data]
     )
-    scale_factor_abs = np.sqrt(
-        np.mean(
-            np.abs(
-                uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
-                / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
-            )
-            ** 2.0
-        )
+    if additional_flags is not None:
+        selection = selection & ~additional_flags[bltslice, :, :, polnum_data]
+
+    data_ratio = (
+        uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
+        / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
     )
+
+    data_ratio[~np.isfinite(data_ratio)] = np.nan
+
+    scale_factor_phase = np.angle(np.nanmean(data_ratio))
+    scale_factor_abs = np.sqrt(np.nanmean(np.abs(data_ratio) ** 2.0))
     scale_factor = scale_factor_abs * np.exp(1j * scale_factor_phase)
     uvdata_deconv.data_array[bltslice, :, :, polnum_data] *= scale_factor
 
@@ -584,10 +584,12 @@ def fit_gains_and_foregrounds(
     )
     if not freeze_model:
         echo(
-            f"Performing gradient descent on total of {int(np.sum([fgr.shape[0] * fgr.shape[1] for fgr in fg_r]))} complex foreground parameters"
+            f"Performing gradient descent on total of {int(np.sum([fgr.shape[0] * fgr.shape[1] for fgr in fg_r]))} complex foreground parameters",
+            verbose=verbose,
         )
         echo(
-            f"Foreground Parameters grouped into chunks of shape ((nvecs, ngrps): nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[1]) for fgr, dc in zip(fg_r, data_r)]}"
+            f"Foreground Parameters grouped into chunks of shape ((nvecs, ngrps): nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[1]) for fgr, dc in zip(fg_r, data_r)]}",
+            verbose=verbose,
         )
 
     if model_regularization == "sum":
@@ -1230,7 +1232,7 @@ def calibrate_and_model_tensor(
                     gains=gains,
                     polarization=pol,
                     time_index=time_index,
-                    uvdata_flags=uvdata,
+                    additional_flags=uvdata.flag_array,
                 )
         fit_history[polnum] = fit_history_p
 
