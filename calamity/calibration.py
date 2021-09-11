@@ -316,28 +316,22 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
         uvdata_deconv.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
 
-    if uvdata_flags is None:
-        uvdata_flags = uvdata_reference_model
-
     bltslice = slice(time_index * uvdata_flags.Nbls, (time_index + 1) * uvdata_flags.Nbls)
 
-    selection = ~uvdata_flags.flag_array[bltslice, :, :, polnum_data]
+    selection = (
+        ~uvdata_flags.flag_array[bltslice, :, :, polnum_data]
+        & ~uvdata_reference_model.flag_array[bltslice, :, :, polnum_data]
+    )
 
-    scale_factor_phase = np.angle(
-        np.mean(
-            uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
-            / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
-        )
+    data_ratio = (
+        uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
+        / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
     )
-    scale_factor_abs = np.sqrt(
-        np.mean(
-            np.abs(
-                uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
-                / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
-            )
-            ** 2.0
-        )
-    )
+
+    data_ration[~np.isfinite(data_ratio)] = np.nan
+
+    scale_factor_phase = np.angle(np.nanmean(data_ratio))
+    scale_factor_abs = np.sqrt(np.nanmean(np.abs(data_ratio) ** 2.0))
     scale_factor = scale_factor_abs * np.exp(1j * scale_factor_phase)
     uvdata_deconv.data_array[bltslice, :, :, polnum_data] *= scale_factor
 
@@ -585,11 +579,11 @@ def fit_gains_and_foregrounds(
     if not freeze_model:
         echo(
             f"Performing gradient descent on total of {int(np.sum([fgr.shape[0] * fgr.shape[1] for fgr in fg_r]))} complex foreground parameters",
-            verbose=verbose
+            verbose=verbose,
         )
         echo(
             f"Foreground Parameters grouped into chunks of shape ((nvecs, ngrps): nbls) {[str(fgr.shape[:2]) + ':' + str(dc.shape[1]) for fgr, dc in zip(fg_r, data_r)]}",
-            verbose=verbose
+            verbose=verbose,
         )
 
     if model_regularization == "sum":
