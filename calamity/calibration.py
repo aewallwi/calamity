@@ -331,7 +331,7 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
         / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
     )
 
-    data_ration[~np.isfinite(data_ratio)] = np.nan
+    data_ratio[~np.isfinite(data_ratio)] = np.nan
 
     scale_factor_phase = np.angle(np.nanmean(data_ratio))
     scale_factor_abs = np.sqrt(np.nanmean(np.abs(data_ratio) ** 2.0))
