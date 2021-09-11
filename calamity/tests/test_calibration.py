@@ -47,6 +47,7 @@ def mwa_noise_sim_realistic_flags():
     uvd.read_uvh5(os.path.join(DATA_PATH, "mwa_noise_sim_realistic_flags.uvh5"))
     return uvd
 
+
 @pytest.fixture
 def gains_multitime(gains):
     gains_2 = copy.deepcopy(gains)
@@ -512,13 +513,14 @@ def test_calibrate_and_model_dpss_multitime(
     assert len(fit_history) == 1
     assert len(fit_history[0]) == 2
 
+
 def test_calibrate_and_model_dpss_with_rfi_flags(mwa_noise_sim_realistic_flags, gains_randomized):
     """
     Test that post_hoc normalization does not introduce nans
     """
     model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
-        min_dly=4. / .3,
-        offset=100.,
+        min_dly=4.0 / 0.3,
+        offset=100.0,
         uvdata=mwa_noise_sim_realistic_flags,
         gains=None,
         verbose=True,
