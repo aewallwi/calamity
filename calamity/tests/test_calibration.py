@@ -49,6 +49,7 @@ def mwa_noise_sim_realistic_flags():
 
 
 @pytest.fixture
+
 def gains_multitime(gains):
     gains_2 = copy.deepcopy(gains)
     gains_2.time_array += 2.0

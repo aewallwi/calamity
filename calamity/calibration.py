@@ -290,7 +290,9 @@ def tensorize_data(
     return data_r, data_i, wgts
 
 
+
 def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time_index, additional_flags=None):
+
     """Remove arbitrary phase and amplitude from deconvolved model and gains.
 
     Parameters
@@ -316,6 +318,7 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
     polnum_data = np.where(
         uvdata_deconv.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
+
 
     bltslice = slice(time_index * uvdata_deconv.Nbls, (time_index + 1) * uvdata_deconv.Nbls)
 
