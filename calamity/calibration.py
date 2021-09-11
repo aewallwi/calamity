@@ -196,7 +196,7 @@ def tensorize_data(
     time_index,
     data_scale_factor=1.0,
     weights=None,
-    nsamples_in_weights=True,
+    nsamples_in_weights=False,
     dtype=np.float32,
 ):
     """Convert data in uvdata object to a tensor
@@ -226,7 +226,7 @@ def tensorize_data(
         or ~flags if not nsamples_in_weights
     nsamples_in_weights: bool, optional
         If True and weights is None, generate weights proportional to nsamples.
-        default is True.
+        default is False.
     dtype: numpy.dtype
         data-type to store in tensor.
         default is np.float32
