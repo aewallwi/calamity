@@ -530,11 +530,13 @@ def test_calibrate_and_model_dpss_with_rfi_flags(mwa_noise_sim_realistic_flags, 
         tol=1e-10,
         correct_resid=True,
         correct_model=True,
-        weights=weights,
-        use_min=use_min,
+        weights=None,
+        use_min=False,
+        red_tol=0.3,
     )
     assert np.all(np.isfinite(resid.data_array))
-    assert np.all(np.isfinte(model.data_array))
+    assert np.all(np.isfinite(model.data_array))
+    assert np.all(np.isfinite(gains.gain_array))
 
 
 @pytest.mark.parametrize(
