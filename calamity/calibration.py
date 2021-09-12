@@ -1810,6 +1810,11 @@ def fitting_argparser():
         default=0.5,
         help="Skip and flag time/polarization if more then this fractionf of data is flagged.",
     )
+    sp.add_argument(
+        "--model_regularization",
+        type=str,
+        default="post_hoc"
+    )
     return ap
 
 
