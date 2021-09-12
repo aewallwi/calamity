@@ -755,7 +755,7 @@ def test_dpss_fit_argparser():
     sys.argv = [sys.argv[0], "--input_data_files", "input.uvh5"]
     ap = calibration.dpss_fit_argparser()
     args = ap.parse_args()
-    assert args.learning_rate == 1e-3
+    assert args.learning_rate == 1e-2
     assert args.tol == 1e-14
     assert args.maxsteps == 10000
     assert args.input_data_files == ["input.uvh5"]

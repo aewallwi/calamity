@@ -320,18 +320,18 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
     )[0][0]
 
 
-    bltslice = slice(time_index * uvdata_deconv.Nbls, (time_index + 1) * uvdata_deconv.Nbls)
+    bltsel = uvdata_deconv.time_array == np.unique(uvdata_deconv.time_array)[time_index]
 
     selection = (
-        ~uvdata_deconv.flag_array[bltslice, :, :, polnum_data]
-        & ~uvdata_reference_model.flag_array[bltslice, :, :, polnum_data]
+        ~uvdata_deconv.flag_array[bltsel, :, :, polnum_data]
+        & ~uvdata_reference_model.flag_array[bltsel, :, :, polnum_data]
     )
     if additional_flags is not None:
-        selection = selection & ~additional_flags[bltslice, :, :, polnum_data]
+        selection = selection & ~additional_flags[bltsel, :, :, polnum_data]
 
     data_ratio = (
-        uvdata_reference_model.data_array[bltslice, :, :, polnum_data][selection]
-        / uvdata_deconv.data_array[bltslice, :, :, polnum_data][selection]
+        uvdata_reference_model.data_array[bltsel, :, :, polnum_data][selection]
+        / uvdata_deconv.data_array[bltsel, :, :, polnum_data][selection]
     )
 
     data_ratio[~np.isfinite(data_ratio)] = np.nan
@@ -339,7 +339,7 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
     scale_factor_phase = np.angle(np.nanmean(data_ratio))
     scale_factor_abs = np.sqrt(np.nanmean(np.abs(data_ratio) ** 2.0))
     scale_factor = scale_factor_abs * np.exp(1j * scale_factor_phase)
-    uvdata_deconv.data_array[bltslice, :, :, polnum_data] *= scale_factor
+    uvdata_deconv.data_array[bltsel, :, :, polnum_data] *= scale_factor
 
     polnum_gains = np.where(
         gains.jones_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
@@ -1097,15 +1097,15 @@ def calibrate_and_model_tensor(
                 f"{datetime.datetime.now()} Working on time {time_index + 1} of {uvdata.Ntimes}...\n",
                 verbose=verbose,
             )
-            bltslice = slice(time_index * uvdata.Nbls, (time_index + 1) * uvdata.Nbls)
-            frac_unflagged = np.count_nonzero(~uvdata.flag_array[bltslice, 0, :, polnum]) / (
+            bltsel = uvdata.time_array == np.unique(uvdata.time_array)[time_index]
+            frac_unflagged = np.count_nonzero(~uvdata.flag_array[bltsel, 0, :, polnum]) / (
                 uvdata.Ntimes * uvdata.Nfreqs
             )
             # check that fraction of unflagged data > skip_threshold.
             if frac_unflagged >= skip_threshold:
                 rmsdata = np.sqrt(
                     np.mean(
-                        np.abs(uvdata.data_array[bltslice, 0, :, polnum][~uvdata.flag_array[bltslice, 0, :, polnum]])
+                        np.abs(uvdata.data_array[bltsel, 0, :, polnum][~uvdata.flag_array[bltsel, 0, :, polnum]])
                         ** 2.0
                     )
                 )
@@ -1228,7 +1228,7 @@ def calibrate_and_model_tensor(
                 flag_poltime(model, time_index=time_index, polarization=pol)
                 fit_history[polnum] = "skipped!"
             # normalize on sky model if we use post-hoc regularization
-            if not freeze_model and model_regularization == "post_hoc" and np.any(~model.flag_array[bltslice]):
+            if not freeze_model and model_regularization == "post_hoc" and np.any(~model.flag_array[bltsel]):
                 renormalize(
                     uvdata_reference_model=sky_model,
                     uvdata_deconv=model,
@@ -1253,12 +1253,12 @@ def calibrate_and_model_tensor(
 
 def flag_poltime(data_object, time_index, polarization):
     if isinstance(data_object, UVData):
-        bltslice = slice(time_index * data_object.Nbls, (time_index + 1) * data_object.Nbls)
+        bltsel = data_object.time_array == np.unique(data_object.time_array)[time_index]
         polnum = np.where(
             data_object.polarization_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
         )[0][0]
-        data_object.flag_array[bltslice, :, :, polnum] = True
-        data_object.data_array[bltslice, :, :, polnum] = 0.0
+        data_object.flag_array[bltsel, :, :, polnum] = True
+        data_object.data_array[bltsel, :, :, polnum] = 0.0
     elif isinstance(data_object, UVCal):
         polnum = np.where(
             data_object.jones_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
@@ -1783,7 +1783,7 @@ def fitting_argparser():
         help="Model redundant visibilities with the same set of foreground parameters.",
     )
     sp.add_argument(
-        "--correct_model", default=False, action="store_true", help="Remove gain effects from foreground model."
+        "--correct_model", default=True, action="store_true", help="Remove gain effects from foreground model."
     )
     sp.add_argument(
         "--correct_resid", default=False, action="store_true", help="Apply fitted gains to the fitted residuals."
@@ -1800,7 +1800,7 @@ def fitting_argparser():
         action="store_true",
         help="initialize gain and foreground guesses from previous time step when calibrating multiple times.",
     )
-    sp.add_argument("--learning_rate", type=float, default=1e-3, help="gradient descent learning rate.")
+    sp.add_argument("--learning_rate", type=float, default=1e-2, help="gradient descent learning rate.")
     sp.add_argument(
         "--red_tol", type=float, default=1.0, help="Tolerance for determining redundancy between baselines [meters]."
     )
