@@ -544,6 +544,9 @@ def fit_gains_and_foregrounds(
     if graph_args_dict is None:
         graph_args_dict = {}
     # initialize the optimizer.
+    echo(f"{datetime.datetime.now()} Provided the following opt_kwargs")
+    for k in opt_kwargs:
+        echo(f"{k}: {opt_kwargs[k]}")
     opt = OPTIMIZERS[optimizer](**opt_kwargs)
     # set up history recording
     fit_history = {"loss": []}
