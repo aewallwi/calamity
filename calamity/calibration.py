@@ -1590,6 +1590,7 @@ def read_calibrate_and_model_dpss(
     bllen_max=np.inf,
     bl_ew_min=0.0,
     ex_ants=None,
+    select_ants=None,
     gpu_index=None,
     gpu_memory_limit=None,
     **calibration_kwargs,
@@ -1673,7 +1674,7 @@ def read_calibrate_and_model_dpss(
     else:
         uvd = input_data_files
 
-    utils.select_baselines(uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min, ex_ants=ex_ants)
+    utils.select_baselines(uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min, ex_ants=ex_ants, select_ants=select_ants)
 
     if isinstance(input_model_files, str):
         input_model_files = [input_model_files]
@@ -1750,6 +1751,9 @@ def input_output_parser():
     )
     sp.add_argument(
         "--ex_ants", default=None, type=int, nargs="+", help="Antennas to exclude from calibration and modeling."
+    )
+    sp.add_argument(
+        "--select_ants", default=None, type=int, nargs="+", help="Antennas to select exclusively for calibration and modeling."
     )
     sp.add_argument("--gpu_index", default=None, type=int, help="Index of GPU to run on (if on a multi-GPU machine).")
     sp.add_argument("--gpu_memory_limit", default=None, type=int, help="Limit GPU memory use to this many GBytes.")
