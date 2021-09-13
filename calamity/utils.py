@@ -15,7 +15,6 @@ def select_baselines(uvdata, bllen_min=0.0, bllen_max=np.inf, bl_ew_min=0.0, ex_
     if ex_ants is None:
         ex_ants = []
     ex_ants = set(ex_ants)
-    select_ants = set(select_ants)
     antpos, antnums = uvdata.get_ENU_antpos(pick_data_ants=True)
     if select_ants is None:
         select_ants = set(antnums)
