@@ -223,11 +223,11 @@ def test_renormalize(sky_model, gains):
     gains.gain_array *= (51.0 + 23j) ** -0.5
     sky_model_ref = copy.deepcopy(sky_model)
     sky_model.data_array *= 51.0 + 23j
-    assert not np.allclose(gains.gain_array, 1.0)
+    assert not np.allclose(np.abs(gains.gain_array), 1.0)
     assert not np.allclose(sky_model_ref.data_array, sky_model.data_array)
     calibration.renormalize(sky_model_ref, sky_model, gains, polarization="xx", time=sky_model.time_array[0])
-    assert np.allclose(gains.gain_array, 1.0)
-    assert np.allclose(sky_model_ref.data_array, sky_model.data_array)
+    assert np.allclose(np.abs(gains.gain_array), 1.0)
+    assert np.allclose(np.abs(sky_model_ref.data_array), np.abs(sky_model.data_array))
 
 
 def test_tensorize_gains(gains_antscale):
@@ -748,7 +748,7 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
         sky_model_projected.data_array,
         atol=1e-5 * np.mean(np.abs(model.data_array) ** 2.0) ** 0.5,
     )
-    assert np.allclose(gains.gain_array, gains_randomized.gain_array, rtol=0.0, atol=1e-4)
+    assert np.allclose(np.abs(gains.gain_array), np.abs(gains_randomized.gain_array), rtol=0.0, atol=1e-4)
     assert len(fit_history) == 1
     assert len(fit_history[0]) == 1
 
