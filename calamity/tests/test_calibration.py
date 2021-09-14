@@ -652,8 +652,8 @@ def test_calibrate_and_model_dpss_flagged(sky_model_projected_multitime, gains_m
 
 
 @pytest.mark.parametrize(
-    "use_redundancy, graph_mode, nsamples_in_weights",
-    [(True, False, True), (False, False, False), (True, True, True), (False, True, False)],
+    "use_redundancy, graph_mode, nsamples_in_weights, use_model_snr_weights",
+    [(True, False, True, False), (False, False, False, False), (True, True, True, False), (False, True, False, True)],
 )
 def test_calibrate_and_model_dpss_redundant(
     uvdata_redundant,

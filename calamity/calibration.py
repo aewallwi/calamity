@@ -544,6 +544,7 @@ def fit_gains_and_foregrounds(
     if graph_args_dict is None:
         graph_args_dict = {}
     # initialize the optimizer.
+    echo(f"Using {str(dtype)} precision.")
     echo(f"{datetime.datetime.now()} Provided the following opt_kwargs")
     for k in opt_kwargs:
         echo(f"{k}: {opt_kwargs[k]}")
@@ -915,6 +916,7 @@ def calibrate_and_model_tensor(
     model_regularization="post_hoc",
     init_guesses_from_previous_time_step=True,
     skip_threshold=0.5,
+    use_model_snr_weights=False,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -1160,6 +1162,26 @@ def calibrate_and_model_tensor(
                         verbose=verbose,
                         notebook_progressbar=notebook_progressbar,
                     )
+
+                    if use_model_snr_weights:
+                        wgts_r=yield_fg_model_array(
+                            fg_model_comps=fg_model_comps,
+                            fg_coeffs=fg_r,
+                            corr_inds=corr_inds,
+                            nants=uvdata.Nants_data,
+                            nfreqs=uvdata.Nfreqs,
+                        ),
+                        wgts_i=yield_fg_model_array(
+                            fg_model_comps=fg_model_comps,
+                            fg_coeffs=fg_i,
+                            corr_inds=corr_inds,
+                            nants=uvdata.Nants_data,
+                            nfreqs=uvdata.Nfreqs,
+                        )
+                        wgts = [(tf.square(wi) + tf.square(wr)) * w for wr, wi, w in zip(wgts_r, wgts_i, wgts)]
+                        # renormalize
+                        wgts_sum = np.sum([np.sum(w) for w in wgts])
+                        wgts = [ w / wgts_sum for w in wgts ]
 
                 (g_r, g_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                     g_r=g_r,
@@ -1823,6 +1845,8 @@ def fitting_argparser():
         type=str,
         default="post_hoc"
     )
+    sp.add_argument("--nsamples_in_weights", default=False, action="store_true", help="Weight contributions to MSE by nsamples.")
+    sp.add_argument("--use_model_snr_weights", default=False, action="store_true", help="If True, weight contributions to MSE as proportional to SNR.")
     return ap
 
 
