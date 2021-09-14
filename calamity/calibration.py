@@ -1593,6 +1593,7 @@ def read_calibrate_and_model_dpss(
     select_ants=None,
     gpu_index=None,
     gpu_memory_limit=None,
+    precision=32,
     **calibration_kwargs,
 ):
     """
@@ -1708,7 +1709,9 @@ def read_calibrate_and_model_dpss(
             )
     else:
         model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
-            uvdata=uvd, sky_model=uvd_model, gains=uvc, **calibration_kwargs
+            uvdata=uvd, sky_model=uvd_model, gains=uvc,
+            dtype={32: np.float32, 64: np.float64}[precision],
+            **calibration_kwargs
         )
 
     if resid_outfilename is not None:
@@ -1757,6 +1760,7 @@ def input_output_parser():
     )
     sp.add_argument("--gpu_index", default=None, type=int, help="Index of GPU to run on (if on a multi-GPU machine).")
     sp.add_argument("--gpu_memory_limit", default=None, type=int, help="Limit GPU memory use to this many GBytes.")
+    sp.add_argument("--precision", default=32, type=int, help="Number of bits to keep track of.")
     return ap
 
 
