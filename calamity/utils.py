@@ -37,6 +37,12 @@ def select_baselines(uvdata, bllen_min=0.0, bllen_max=np.inf, bl_ew_min=0.0, ex_
     uvdata.select(bls=antpairs_to_keep, inplace=True)
 
 
+# def get_snr_weights(uvdata):
+#    """
+#    Get SNR weighting for each baseline based on autocorr amplitudes.
+#    """
+
+
 # def fitting_group_nested_tuple_to_str(fit_grp_tuple):
 #    """
 #    Convert a fitting group nested tuple

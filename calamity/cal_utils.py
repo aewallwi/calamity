@@ -1,6 +1,7 @@
 from pyuvdata import UVCal
 import numpy as np
 import copy
+from pyuvdata import utils as uvutils
 
 
 def blank_uvcal_from_uvdata(uvdata):
@@ -75,21 +76,30 @@ def apply_gains(uvdata, gains, inverse=False):
         UVData object containing calibrated data.
     """
     calibrated = copy.deepcopy(uvdata)
-    for ap in calibrated.get_antpairs():
-        for pnum, pol in enumerate(uvdata.get_pols()):
+    for pnum, pol in enumerate(uvdata.get_pols()):
+        for ap in calibrated.get_antpairs():
             dinds = calibrated.antpair2ind(ap)
-            if not inverse:
-                calibrated.data_array[dinds, 0, :, pnum] = (
-                    calibrated.data_array[dinds, 0, :, pnum]
-                    / (gains.get_gains(ap[0], "J" + pol) * np.conj(gains.get_gains(ap[1], "J" + pol))).T
+            gindp = np.where(gains.jones_array == uvutils.polstr2num(pol, x_orientation=gains.x_orientation))[0][0]
+            for time in calibrated.time_array[dinds]:
+                dindt = np.where(calibrated.time_array[dinds] == time)[0][0]
+                gindt = np.where(np.isclose(gains.time_array, time, rtol=0.0, atol=1e-7))[0][0]
+                aind0 = np.where(gains.ant_array == ap[0])[0][0]
+                aind1 = np.where(gains.ant_array == ap[1])[0][0]
+                if not inverse:
+                    calibrated.data_array[dinds[dindt], 0, :, pnum] = calibrated.data_array[
+                        dinds[dindt], 0, :, pnum
+                    ] / (
+                        gains.gain_array[aind0, 0, :, gindt, gindp]
+                        * np.conj(gains.gain_array[aind1, 0, :, gindt, gindp])
+                    )
+                else:
+                    calibrated.data_array[dinds[dindt], 0, :, pnum] = calibrated.data_array[
+                        dinds[dindt], 0, :, pnum
+                    ] * (
+                        gains.gain_array[aind0, 0, :, gindt, gindp]
+                        * np.conj(gains.gain_array[aind1, 0, :, gindt, gindp])
+                    )
+                calibrated.flag_array[dinds[dindt], 0, :, pnum] = calibrated.flag_array[dinds[dindt], 0, :, pnum] | (
+                    gains.flag_array[aind0, 0, :, gindt, gindp] | gains.flag_array[aind1, 0, :, gindt, gindp]
                 )
-            else:
-                calibrated.data_array[dinds, 0, :, pnum] = (
-                    calibrated.data_array[dinds, 0, :, pnum]
-                    * (gains.get_gains(ap[0], "J" + pol) * np.conj(gains.get_gains(ap[1], "J" + pol))).T
-                )
-            calibrated.flag_array[dinds, 0, :, pnum] = (
-                calibrated.flag_array[dinds, 0, :, pnum]
-                | (gains.get_flags(ap[0], "J" + pol) | gains.get_flags(ap[1], "J" + pol)).T
-            )
     return calibrated

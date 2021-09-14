@@ -290,7 +290,6 @@ def tensorize_data(
     return data_r, data_i, wgts
 
 
-
 def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time_index, additional_flags=None):
 
     """Remove arbitrary phase and amplitude from deconvolved model and gains.
@@ -318,7 +317,6 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
     polnum_data = np.where(
         uvdata_deconv.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
-
 
     bltsel = uvdata_deconv.time_array == np.unique(uvdata_deconv.time_array)[time_index]
 
@@ -544,6 +542,7 @@ def fit_gains_and_foregrounds(
     if graph_args_dict is None:
         graph_args_dict = {}
     # initialize the optimizer.
+    echo(f"Using {str(dtype)} precision.")
     echo(f"{datetime.datetime.now()} Provided the following opt_kwargs")
     for k in opt_kwargs:
         echo(f"{k}: {opt_kwargs[k]}")
@@ -915,6 +914,7 @@ def calibrate_and_model_tensor(
     model_regularization="post_hoc",
     init_guesses_from_previous_time_step=True,
     skip_threshold=0.5,
+    use_model_snr_weights=False,
     **opt_kwargs,
 ):
     """Perform simultaneous calibration and foreground fitting using tensors.
@@ -1105,8 +1105,7 @@ def calibrate_and_model_tensor(
             if frac_unflagged >= skip_threshold:
                 rmsdata = np.sqrt(
                     np.mean(
-                        np.abs(uvdata.data_array[bltsel, 0, :, polnum][~uvdata.flag_array[bltsel, 0, :, polnum]])
-                        ** 2.0
+                        np.abs(uvdata.data_array[bltsel, 0, :, polnum][~uvdata.flag_array[bltsel, 0, :, polnum]]) ** 2.0
                     )
                 )
                 echo(f"{datetime.datetime.now()} Tensorizing data...\n", verbose=verbose)
@@ -1160,6 +1159,15 @@ def calibrate_and_model_tensor(
                         verbose=verbose,
                         notebook_progressbar=notebook_progressbar,
                     )
+
+                    if use_model_snr_weights:
+                        wgts_model = [fg_model(fgr, fgi, fgc) for fgr, fgi, fgc in zip(fg_r, fg_i, fg_model_comps)]
+
+                        wgts = [(tf.square(wm[0]) + tf.square(wm[1])) * w for wm, w in zip(wgts_model, wgts)]
+                        del wgts_model
+                        # renormalize
+                        wgts_sum = np.sum([np.sum(w) for w in wgts])
+                        wgts = [w / wgts_sum for w in wgts]
 
                 (g_r, g_i, fg_r, fg_i, fit_history_p[time_index],) = fit_gains_and_foregrounds(
                     g_r=g_r,
@@ -1582,7 +1590,6 @@ def read_calibrate_and_model_dpss(
     resid_outfilename=None,
     gain_outfilename=None,
     model_outfilename=None,
-    output_directory="./",
     fitted_info_outfilename=None,
     x_orientation="east",
     clobber=False,
@@ -1675,7 +1682,9 @@ def read_calibrate_and_model_dpss(
     else:
         uvd = input_data_files
 
-    utils.select_baselines(uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min, ex_ants=ex_ants, select_ants=select_ants)
+    utils.select_baselines(
+        uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min, ex_ants=ex_ants, select_ants=select_ants
+    )
 
     if isinstance(input_model_files, str):
         input_model_files = [input_model_files]
@@ -1702,16 +1711,15 @@ def read_calibrate_and_model_dpss(
     else:
         uvc = None
     # run calibration with specified GPU device.
+    dtype = {32: np.float32, 64: np.float64}[precision]
     if gpu_index is not None and gpus:
         with tf.device(f"/device:GPU:{gpus[gpu_index].name[-1]}"):
             model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
-                uvdata=uvd, sky_model=uvd_model, gains=uvc, **calibration_kwargs
+                uvdata=uvd, sky_model=uvd_model, gains=uvc, dtype=dtype, **calibration_kwargs
             )
     else:
         model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
-            uvdata=uvd, sky_model=uvd_model, gains=uvc,
-            dtype={32: np.float32, 64: np.float64}[precision],
-            **calibration_kwargs
+            uvdata=uvd, sky_model=uvd_model, gains=uvc, dtype=dtype, **calibration_kwargs
         )
 
     if resid_outfilename is not None:
@@ -1722,7 +1730,8 @@ def read_calibrate_and_model_dpss(
     if model_outfilename is not None:
         model_fit.write_uvh5(model_outfilename, clobber=clobber)
     # don't write fitting_info_outfilename for now.
-
+    fit_info["calibration_kwargs"] = calibration_kwargs
+    fit_info["calibration_kwargs"]["dtype"] = dtype
     # don't write fitting_info_outfilename for now.
     return model_fit, resid_fit, gains_fit, fit_info
 
@@ -1756,7 +1765,11 @@ def input_output_parser():
         "--ex_ants", default=None, type=int, nargs="+", help="Antennas to exclude from calibration and modeling."
     )
     sp.add_argument(
-        "--select_ants", default=None, type=int, nargs="+", help="Antennas to select exclusively for calibration and modeling."
+        "--select_ants",
+        default=None,
+        type=int,
+        nargs="+",
+        help="Antennas to select exclusively for calibration and modeling.",
     )
     sp.add_argument("--gpu_index", default=None, type=int, help="Index of GPU to run on (if on a multi-GPU machine).")
     sp.add_argument("--gpu_memory_limit", default=None, type=int, help="Limit GPU memory use to this many GBytes.")
@@ -1818,10 +1831,15 @@ def fitting_argparser():
         default=0.5,
         help="Skip and flag time/polarization if more then this fractionf of data is flagged.",
     )
+    sp.add_argument("--model_regularization", type=str, default="post_hoc")
     sp.add_argument(
-        "--model_regularization",
-        type=str,
-        default="post_hoc"
+        "--nsamples_in_weights", default=False, action="store_true", help="Weight contributions to MSE by nsamples."
+    )
+    sp.add_argument(
+        "--use_model_snr_weights",
+        default=False,
+        action="store_true",
+        help="If True, weight contributions to MSE as proportional to SNR.",
     )
     return ap
 
