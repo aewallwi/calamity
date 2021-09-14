@@ -225,13 +225,13 @@ def test_renormalize(sky_model, gains):
     sky_model.data_array *= 51.0 + 23j
     assert not np.allclose(gains.gain_array, 1.0)
     assert not np.allclose(sky_model_ref.data_array, sky_model.data_array)
-    calibration.renormalize(sky_model_ref, sky_model, gains, polarization="xx", time_index=0)
+    calibration.renormalize(sky_model_ref, sky_model, gains, polarization="xx", time=sky_model.time_array[0])
     assert np.allclose(gains.gain_array, 1.0)
     assert np.allclose(sky_model_ref.data_array, sky_model.data_array)
 
 
 def test_tensorize_gains(gains_antscale):
-    gains_r, gains_i = calibration.tensorize_gains(gains_antscale, polarization="xx", time_index=0, dtype=np.float64)
+    gains_r, gains_i = calibration.tensorize_gains(gains_antscale, polarization="xx", time=gains_antscale.time_array[0], dtype=np.float64)
     assert gains_r.dtype == np.float64
     assert gains_i.dtype == np.float64
     for i, ant in enumerate(gains_antscale.ant_array):
@@ -379,7 +379,7 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
         use_redundancy=redundant_modeling,
     )
     data_r, data_i, wgts = calibration.tensorize_data(
-        sky_model, corr_inds_chunked, ants_map, polarization="xx", time_index=0, dtype=np.float64
+        sky_model, corr_inds_chunked, ants_map, polarization="xx", time=sky_model.time_array[0], dtype=np.float64
     )
 
     fg_coeffs_chunked_re = calibration.tensorize_fg_coeffs(data_r, wgts, fg_comp_tensors_chunked)
@@ -425,7 +425,7 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
         corr_inds,
         ants_map,
         polarization="xx",
-        time_index=0,
+        time=sky_model_projected.time_array[0],
         dtype=np.float64,
         data_scale_factor=rmsdata,
     )
@@ -449,7 +449,7 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
     # insert tensors
     calibration.insert_model_into_uvdata_tensor(
         inserted_model,
-        0,
+        np.unique(inserted_model.time_array)[0],
         "xx",
         ants_map,
         redundant_groups,
@@ -596,13 +596,13 @@ def test_calibrate_and_model_dpss(
 
 def test_flag_poltime(sky_model_projected_multitime, sky_model_projected, gains_multitime):
     uvd = copy.deepcopy(sky_model_projected_multitime)
-    calibration.flag_poltime(uvd, time_index=0, polarization="xx")
+    calibration.flag_poltime(uvd, time=np.unique(uvd.time_array)[0], polarization="xx")
     assert np.all(uvd.flag_array[: uvd.Nbls])
     assert not np.any(uvd.flag_array[uvd.Nbls : 2 * uvd.Nbls])
     assert np.allclose(uvd.data_array[: uvd.Nbls], 0.0)
     sky_model_projected_multitime.select(times=[np.unique(sky_model_projected.time_array)[-1]])
     assert np.allclose(uvd.data_array[uvd.Nbls : 2 * uvd.Nbls], sky_model_projected_multitime.data_array)
-    pytest.raises(ValueError, calibration.flag_poltime, data_object="Abolish Prop 13!", time_index=0, polarization="xx")
+    pytest.raises(ValueError, calibration.flag_poltime, data_object="blarghle", time=0, polarization="xx")
 
 
 @pytest.mark.parametrize("flagtime", [0, 1])

@@ -193,7 +193,7 @@ def tensorize_data(
     corr_inds,
     ants_map,
     polarization,
-    time_index,
+    time,
     data_scale_factor=1.0,
     weights=None,
     nsamples_in_weights=False,
@@ -215,8 +215,8 @@ def tensorize_data(
         (typically the index of each antenna in ants_map)
     polarization: str
         pol-str of gain to extract.
-    time_index: int
-        index of time to convert to tensors
+    time: float
+        time of data to convert to tensor.
     data_scale_factor: float, optional
         overall scaling factor to divide tensorized data by.
         default is 1.0
@@ -257,9 +257,24 @@ def tensorize_data(
             for (i, j) in fitgrp:
                 ap = ants_map_inv[i], ants_map_inv[j]
                 bl = ap + (polarization,)
-                data = uvdata.get_data(bl)[time_index] / data_scale_factor
-                iflags = (~uvdata.get_flags(bl))[time_index].astype(dtype)
-                nsamples = uvdata.get_nsamples(bl)[time_index].astype(dtype)
+                dinds1, dinds2, pol_ind  = uvdata._key2inds(bl)
+                if len(dinds1) > 0:
+                    dinds = dinds1
+                    conjugate = False
+                    pol_ind = pol_ind[0]
+                else:
+                    dinds = dinds2
+                    conjugate = True
+                    pol_ind = pol_ind[1]
+
+                dind = dinds[np.where(np.isclose(uvdata.time_array[dinds], time, rtol=0.0, atol=1e-7))[0][0]]
+                data = uvdata.data_array[dind, 0, :, pol_ind]
+                iflags = ~uvdata.flag_array[dind, 0, :, pol_ind]
+                nsamples  = uvdata.nsample_array[dind, 0, :, pol_ind]
+                data /= data_scale_factor
+                if conjugate:
+                    data = np.conj(data)
+
                 data_r[i, j] = data.real.astype(dtype)
                 data_i[i, j] = data.imag.astype(dtype)
                 if weights is None:
@@ -272,11 +287,13 @@ def tensorize_data(
                         dinds = weights.antpair2ind(*ap)
                     else:
                         dinds = weights.antpair2ind(*ap[::-1])
+                    dind = dinds[np.where(np.isclose(weights.time_array[dinds], time, atol=1e-7, rtol=0.0))[0][0]]
                     polnum = np.where(
                         weights.polarization_array
                         == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation)
                     )[0][0]
-                    wgts[i, j] = weights.weights_array[dinds[time_index], 0, :, polnum].astype(dtype) * iflags
+                    wgts[i, j] = weights.weights_array[dind, 0, :, polnum].astype(dtype) * iflags
+
                 wgtsum += np.sum(wgts[i, j])
     data_r = tf.convert_to_tensor(data_r, dtype=dtype)
     data_i = tf.convert_to_tensor(data_i, dtype=dtype)
@@ -290,7 +307,7 @@ def tensorize_data(
     return data_r, data_i, wgts
 
 
-def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time_index, additional_flags=None):
+def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time, additional_flags=None):
 
     """Remove arbitrary phase and amplitude from deconvolved model and gains.
 
@@ -318,7 +335,7 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
         uvdata_deconv.polarization_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
 
-    bltsel = uvdata_deconv.time_array == np.unique(uvdata_deconv.time_array)[time_index]
+    bltsel = np.isclose(uvdata_deconv.time_array, time, atol=1e-7, rtol=0.0)
 
     selection = (
         ~uvdata_deconv.flag_array[bltsel, :, :, polnum_data]
@@ -336,17 +353,17 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
 
     scale_factor_phase = np.angle(np.nanmean(data_ratio))
     scale_factor_abs = np.sqrt(np.nanmean(np.abs(data_ratio) ** 2.0))
-    scale_factor = scale_factor_abs * np.exp(1j * scale_factor_phase)
+    scale_factor = scale_factor_abs #* np.exp(1j * scale_factor_phase) Need to figure this out later.
     uvdata_deconv.data_array[bltsel, :, :, polnum_data] *= scale_factor
 
     polnum_gains = np.where(
         gains.jones_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
-    gindt = np.where(np.isclose(gains.time_array, np.unique(uvdata_deconv.time_array)[time_index], atol=1e-7, rtol=0.0))[0][0]
+    gindt = np.where(np.isclose(gains.time_array, time, atol=1e-7, rtol=0.0))[0][0]
     gains.gain_array[:, :, :, gindt, polnum_gains] *= (scale_factor) ** -0.5
 
 
-def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
+def tensorize_gains(uvcal, polarization, time, dtype=np.float32):
     """Helper function to extract gains into fitting tensors.
 
     Parameters
@@ -355,8 +372,8 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
         UVCal object holding gain data to tensorize.
     polarization: str
         pol-str of gain to extract.
-    time_index: int
-        index of time to extract.
+    time: float
+        JD of time to convert to tensor.
     dtype: numpy.dtype
         dtype of tensors to output.
 
@@ -373,8 +390,9 @@ def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
 
     """
     polnum = np.where(uvcal.jones_array == uvutils.polstr2num(polarization, x_orientation=uvcal.x_orientation))[0][0]
-    gains_re = tf.convert_to_tensor(uvcal.gain_array[:, 0, :, time_index, polnum].squeeze().real, dtype=dtype)
-    gains_im = tf.convert_to_tensor(uvcal.gain_array[:, 0, :, time_index, polnum].squeeze().imag, dtype=dtype)
+    gindt = np.where(np.isclose(uvcal.time_array, time, atol=1e-7, rtol=0.0))[0][0]
+    gains_re = tf.convert_to_tensor(uvcal.gain_array[:, 0, :, gindt, polnum].squeeze().real, dtype=dtype)
+    gains_im = tf.convert_to_tensor(uvcal.gain_array[:, 0, :, gindt, polnum].squeeze().imag, dtype=dtype)
     return gains_re, gains_im
 
 
@@ -719,7 +737,7 @@ def fit_gains_and_foregrounds(
 
 def insert_model_into_uvdata_tensor(
     uvdata,
-    time_index,
+    time,
     polarization,
     ants_map,
     red_grps,
@@ -733,8 +751,8 @@ def insert_model_into_uvdata_tensor(
     ----------
     uvdata: UVData object
         uvdata object to insert model data into.
-    time_index: int
-        time index to insert model data at.
+    time: float
+        JD of time to insert.
     polarization: str
         polarization to insert.
     ants_map: dict mapping integers to integers
@@ -764,23 +782,25 @@ def insert_model_into_uvdata_tensor(
         for ap in red_grp:
             i, j = ants_map[ap[0]], ants_map[ap[1]]
             if ap in antpairs_data:
-                dinds = uvdata.antpair2ind(ap)[time_index]
+                dinds = uvdata.antpair2ind(ap)
+                dinds = dinds[np.where(np.isclose(time, uvdata.time_array[dinds], atol=1e-7, rtol=0.0))[0][0]]
                 model = model_r[i, j] + 1j * model_i[i, j]
             else:
-                dinds = uvdata.antpair2ind(ap[::-1])[time_index]
+                dinds = uvdata.antpair2ind(ap[::-1])
+                dinds = dinds[np.where(np.isclose(time, uvdata.time_array[dinds], atol=1e-7, rtol=0.0))[0][0]]
                 model = model_r[i, j] - 1j * model_i[i, j]
             uvdata.data_array[dinds, 0, :, polnum] = model * scale_factor
 
 
-def insert_gains_into_uvcal(uvcal, time_index, polarization, gains_re, gains_im):
+def insert_gains_into_uvcal(uvcal, time, polarization, gains_re, gains_im):
     """Insert tensorized gains back into uvcal object
 
     Parameters
     ----------
     uvdata: UVData object
         uvdata object to insert model data into.
-    time_index: int
-        time index to insert model data at.
+    time: float
+        JD of time to insert.
     polarization: str
         polarization to insert.
     gains_re: dict with int keys and tf.Tensor object values
@@ -795,8 +815,9 @@ def insert_gains_into_uvcal(uvcal, time_index, polarization, gains_re, gains_im)
     N/A: Modifies uvcal inplace.
     """
     polnum = np.where(uvcal.jones_array == uvutils.polstr2num(polarization, x_orientation=uvcal.x_orientation))[0][0]
+    gindt = np.where(np.isclose(uvcal.time_array, time, atol=1e-7, rtol=0.0))[0][0]
     for ant_index in range(uvcal.Nants_data):
-        uvcal.gain_array[ant_index, 0, :, time_index, polnum] = (
+        uvcal.gain_array[ant_index, 0, :, gindt, polnum] = (
             gains_re[ant_index].numpy() + 1j * gains_im[ant_index].numpy()
         )
 
@@ -1093,12 +1114,12 @@ def calibrate_and_model_tensor(
         )
         fit_history_p = {}
         first_time = True
-        for time_index in range(uvdata.Ntimes):
+        for time_index, time in enumerate(np.unique(uvdata.time_array)):
             echo(
                 f"{datetime.datetime.now()} Working on time {time_index + 1} of {uvdata.Ntimes}...\n",
                 verbose=verbose,
             )
-            bltsel = uvdata.time_array == np.unique(uvdata.time_array)[time_index]
+            bltsel = np.isclose(uvdata.time_array, time, atol=1e-7, rtol=0.0)
             frac_unflagged = np.count_nonzero(~uvdata.flag_array[bltsel, 0, :, polnum]) / (
                 uvdata.Ntimes * uvdata.Nfreqs
             )
@@ -1115,7 +1136,7 @@ def calibrate_and_model_tensor(
                     corr_inds=corr_inds,
                     ants_map=ants_map,
                     polarization=pol,
-                    time_index=time_index,
+                    time=time,
                     data_scale_factor=rmsdata,
                     weights=weights,
                     nsamples_in_weights=nsamples_in_weights,
@@ -1129,7 +1150,7 @@ def calibrate_and_model_tensor(
                         corr_inds=corr_inds,
                         ants_map=ants_map,
                         polarization=pol,
-                        time_index=time_index,
+                        time=time,
                         data_scale_factor=rmsdata,
                         weights=weights,
                         dtype=dtype,
@@ -1139,7 +1160,7 @@ def calibrate_and_model_tensor(
                 if first_time or not init_guesses_from_previous_time_step:
                     first_time = False
                     echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
-                    g_r, g_i = tensorize_gains(gains, dtype=dtype, time_index=time_index, polarization=pol)
+                    g_r, g_i = tensorize_gains(gains, dtype=dtype, time=time, polarization=pol)
                     # generate initial guess for foreground coeffs.
                     echo(
                         f"{datetime.datetime.now()} Tensorizing Foreground coeffs...\n",
@@ -1199,7 +1220,7 @@ def calibrate_and_model_tensor(
                 # insert into model uvdata.
                 insert_model_into_uvdata_tensor(
                     uvdata=model,
-                    time_index=time_index,
+                    time=time,
                     polarization=pol,
                     ants_map=ants_map,
                     red_grps=red_grps,
@@ -1222,7 +1243,7 @@ def calibrate_and_model_tensor(
                 # insert gains into uvcal
                 insert_gains_into_uvcal(
                     uvcal=gains,
-                    time_index=time_index,
+                    time=time,
                     polarization=pol,
                     gains_re=g_r,
                     gains_im=g_i,
@@ -1232,9 +1253,9 @@ def calibrate_and_model_tensor(
                     f"{datetime.datetime.now()}: Only {frac_unflagged * 100}-percent of data unflagged. Skipping...\n",
                     verbose=verbose,
                 )
-                flag_poltime(resid, time_index=time_index, polarization=pol)
-                flag_poltime(gains, time_index=time_index, polarization=pol)
-                flag_poltime(model, time_index=time_index, polarization=pol)
+                flag_poltime(resid, time=time, polarization=pol)
+                flag_poltime(gains, time=time, polarization=pol)
+                flag_poltime(model, time=time, polarization=pol)
                 fit_history[polnum] = "skipped!"
             # normalize on sky model if we use post-hoc regularization
             if not freeze_model and model_regularization == "post_hoc" and np.any(~model.flag_array[bltsel]):
@@ -1243,7 +1264,7 @@ def calibrate_and_model_tensor(
                     uvdata_deconv=model,
                     gains=gains,
                     polarization=pol,
-                    time_index=time_index,
+                    time=time,
                     additional_flags=uvdata.flag_array,
                 )
         fit_history[polnum] = fit_history_p
@@ -1260,9 +1281,9 @@ def calibrate_and_model_tensor(
     return model, resid, gains, fit_history
 
 
-def flag_poltime(data_object, time_index, polarization):
+def flag_poltime(data_object, time, polarization):
     if isinstance(data_object, UVData):
-        bltsel = data_object.time_array == np.unique(data_object.time_array)[time_index]
+        bltsel = np.isclose(data_object.time_array, time, atol=1e-7, rtol=0.0)
         polnum = np.where(
             data_object.polarization_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
         )[0][0]
@@ -1272,8 +1293,9 @@ def flag_poltime(data_object, time_index, polarization):
         polnum = np.where(
             data_object.jones_array == uvutils.polstr2num(polarization, x_orientation=data_object.x_orientation)
         )[0][0]
-        data_object.gain_array[:, 0, :, time_index, polnum] = 1.0
-        data_object.flag_array[:, 0, :, time_index, polnum] = True
+        gindt = np.where(np.isclose(data_object.time_array, time, atol=1e-7, rtol=0.0))[0][0]
+        data_object.gain_array[:, 0, :, gindt, polnum] = 1.0
+        data_object.flag_array[:, 0, :, gindt, polnum] = True
     else:
         raise ValueError("only supports data_object that is UVCal or UVData.")
 
