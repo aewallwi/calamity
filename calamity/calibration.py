@@ -342,7 +342,8 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
     polnum_gains = np.where(
         gains.jones_array == uvutils.polstr2num(polarization, x_orientation=uvdata_deconv.x_orientation)
     )[0][0]
-    gains.gain_array[:, :, :, time_index, polnum_data] *= (scale_factor) ** -0.5
+    gindt = np.where(np.isclose(gains.time_array, np.unique(uvdata_deconv.time_array)[time_index], atol=1e-7, rtol=0.0))[0][0]
+    gains.gain_array[:, :, :, gindt, polnum_gains] *= (scale_factor) ** -0.5
 
 
 def tensorize_gains(uvcal, polarization, time_index, dtype=np.float32):
