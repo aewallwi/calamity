@@ -1604,7 +1604,6 @@ def read_calibrate_and_model_dpss(
     resid_outfilename=None,
     gain_outfilename=None,
     model_outfilename=None,
-    output_directory="./",
     fitted_info_outfilename=None,
     x_orientation="east",
     clobber=False,
