@@ -663,6 +663,7 @@ def test_calibrate_and_model_dpss_redundant(
     use_redundancy,
     graph_mode,
     nsamples_in_weights,
+    use_model_snr_weights,
 ):
     model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
         min_dly=2.0 / 0.3,
@@ -678,6 +679,7 @@ def test_calibrate_and_model_dpss_redundant(
         correct_model=False,
         graph_mode=graph_mode,
         model_regularization="sum",
+        use_model_snr_weights=use_model_snr_weights,
         nsamples_in_weights=nsamples_in_weights,
     )
 
@@ -916,11 +918,14 @@ def test_read_calibrate_and_model_dpss(tmpdir, sky_model_projected, gains):
         outfile_model,
         "--gain_outfilename",
         outfile_gain,
+        "--precision",
+        "64",
     ]
 
     ap = calibration.dpss_fit_argparser()
     args = ap.parse_args()
-    calibration.read_calibrate_and_model_dpss(**vars(args))
+    _, _, _, fit_info = calibration.read_calibrate_and_model_dpss(**vars(args))
+    assert fit_info["calibration_kwargs"]["dtype"] == np.float64
     for fn in [outfile_resid, outfile_model, outfile_gain]:
         assert os.path.exists(fn)
         os.remove(fn)
