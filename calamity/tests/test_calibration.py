@@ -231,7 +231,9 @@ def test_renormalize(sky_model, gains):
 
 
 def test_tensorize_gains(gains_antscale):
-    gains_r, gains_i = calibration.tensorize_gains(gains_antscale, polarization="xx", time=gains_antscale.time_array[0], dtype=np.float64)
+    gains_r, gains_i = calibration.tensorize_gains(
+        gains_antscale, polarization="xx", time=gains_antscale.time_array[0], dtype=np.float64
+    )
     assert gains_r.dtype == np.float64
     assert gains_i.dtype == np.float64
     for i, ant in enumerate(gains_antscale.ant_array):
@@ -877,17 +879,17 @@ def test_calibrate_and_model_mixed_redundant(
     assert len(fit_history[0]) == 1
 
 
-def test_read_calibrate_and_model_dpss(tmpdir, sky_model_projected, gains):
+def test_read_calibrate_and_model_dpss(tmpdir, sky_model_projected_redundant, gains_redundant):
     tmp_path = tmpdir.strpath
     outfile_resid = os.path.join(tmp_path, "resid_fit.uvh5")
     outfile_model = os.path.join(tmp_path, "model_fit.uvh5")
     outfile_gain = os.path.join(tmp_path, "gains_fit.calfits")
-    gains.x_orientation = "east"
+    gains_redundant.x_orientation = "east"
     gname = os.path.join(tmp_path, "gains_input.calfits")
-    gains.write_calfits(gname)
+    gains_redundant.write_calfits(gname)
     input_data = os.path.join(
         DATA_PATH,
-        "Garray_antenna_diameter2.0_fractional_spacing1.0_nant6_nf200_df100.000kHz_f0100.000MHzcompressed_True_autosFalse_gsm.uvh5",
+        "garray_3ant_2_copies_ntimes_1compressed_False_autosTrue_fg_True_gleam_True_nsrc_10000.uvh5",
     )
     for fn in [outfile_resid, outfile_model, outfile_gain]:
         if os.path.exists(fn):
@@ -920,6 +922,7 @@ def test_read_calibrate_and_model_dpss(tmpdir, sky_model_projected, gains):
         outfile_gain,
         "--precision",
         "64",
+        "--use_autocorrs_in_weights",
     ]
 
     ap = calibration.dpss_fit_argparser()

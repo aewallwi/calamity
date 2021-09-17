@@ -257,7 +257,7 @@ def tensorize_data(
             for (i, j) in fitgrp:
                 ap = ants_map_inv[i], ants_map_inv[j]
                 bl = ap + (polarization,)
-                dinds1, dinds2, pol_ind  = uvdata._key2inds(bl)
+                dinds1, dinds2, pol_ind = uvdata._key2inds(bl)
                 if len(dinds1) > 0:
                     dinds = dinds1
                     conjugate = False
@@ -270,7 +270,7 @@ def tensorize_data(
                 dind = dinds[np.where(np.isclose(uvdata.time_array[dinds], time, rtol=0.0, atol=1e-7))[0][0]]
                 data = uvdata.data_array[dind, 0, :, pol_ind]
                 iflags = ~uvdata.flag_array[dind, 0, :, pol_ind]
-                nsamples  = uvdata.nsample_array[dind, 0, :, pol_ind]
+                nsamples = uvdata.nsample_array[dind, 0, :, pol_ind]
                 data /= data_scale_factor
                 if conjugate:
                     data = np.conj(data)
@@ -353,7 +353,7 @@ def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time
 
     scale_factor_phase = np.angle(np.nanmean(data_ratio))
     scale_factor_abs = np.sqrt(np.nanmean(np.abs(data_ratio) ** 2.0))
-    scale_factor = scale_factor_abs #* np.exp(1j * scale_factor_phase) Need to figure this out later.
+    scale_factor = scale_factor_abs  # * np.exp(1j * scale_factor_phase) Need to figure this out later.
     uvdata_deconv.data_array[bltsel, :, :, polnum_data] *= scale_factor
 
     polnum_gains = np.where(
@@ -908,6 +908,53 @@ def tensorize_fg_coeffs(
         verbose=verbose,
     )
     return fg_coeffs
+
+
+def get_auto_weights(uvdata, delay_extent=25.0):
+    """
+    inverse variance weights from interpolated autocorrelation data
+
+    Parameters
+    ----------
+    uvdata: UVData object
+        UVData object containing autocorrelation data to use for computing inverse noise weights.
+    offset: float, optional
+        Fit autocorrelation to delay components with this width.
+
+    Returns
+    -------
+    data_weights: UVFlag object
+        UFlag in flag-mode where flags contain original data flags and weights contain autocorr weights.
+    """
+    dpss_components = modeling.yield_dpss_model_comps_bl_grp(0.0, uvdata.freq_array[0], offset=delay_extent)
+    data_weights = UVFlag(uvdata, mode="flag")
+    data_weights.weights_array = np.zeros(uvdata.data_array.shape)
+    # compute autocorrelation weights
+    auto_fit_dict = {}
+    bls = uvdata.get_antpairpols()
+    for bl in bls:
+        if bl[0] == bl[1]:
+            d_wf = uvdata.get_data(bl)
+            w_wf = ~uvdata.get_flags(bl)
+            auto_fit_dict[bl] = []
+            for ds, fs in zip(d_wf, w_wf):
+                # fit autocorr waterfall to DPSS modes.
+                nunflagged = np.count_nonzero(fs)
+                amat = tf.convert_to_tensor(dpss_components[fs])
+                dvec = tf.reshape(tf.convert_to_tensor(ds[fs].real), (nunflagged, 1))
+                model = dpss_components @ tf.linalg.lstsq(amat, dvec).numpy().squeeze()
+                auto_fit_dict[bl].append(model)
+            auto_fit_dict[bl] = np.atleast_2d(np.asarray(model))
+    # from autocorrelation fits, weights
+    for bl in bls:
+        smooth_weights = 1.0 / (auto_fit_dict[bl[0], bl[0], bl[-1]] * auto_fit_dict[bl[1], bl[1], bl[-1]])
+        smooth_weights *= ~uvdata.get_flags(bl)
+        dinds = data_weights.antpair2ind(*bl[:2])
+        polnum = np.where(
+            data_weights.polarization_array == uvutils.polstr2num(bl[-1], x_orientation=data_weights.x_orientation)
+        )[0][0]
+        data_weights.weights_array[dinds, 0, :, polnum] = smooth_weights
+    return data_weights
 
 
 def calibrate_and_model_tensor(
@@ -1624,6 +1671,7 @@ def read_calibrate_and_model_dpss(
     gpu_index=None,
     gpu_memory_limit=None,
     precision=32,
+    use_autocorrs_in_weights=False,
     **calibration_kwargs,
 ):
     """
@@ -1668,6 +1716,10 @@ def read_calibrate_and_model_dpss(
     gpu_memory_limit: float, optional
         GiB of memory on GPU that can be used.
         default None -> all memory available.
+    use_autocorrs_in_weights: bool, optional
+        if True, use smooth fits to autocorrelations as
+        inverse variance weights.
+        default is False.
     calibration_kwargs: kwarg dict
         see kwrags for calibration_and_model_dpss()
     Returns
@@ -1704,7 +1756,10 @@ def read_calibrate_and_model_dpss(
         uvd.read(input_data_files)
     else:
         uvd = input_data_files
-
+    if use_autocorrs_in_weights:
+        weights = get_auto_weights(uvd)
+    else:
+        weights = None
     utils.select_baselines(
         uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min, ex_ants=ex_ants, select_ants=select_ants
     )
@@ -1738,11 +1793,11 @@ def read_calibrate_and_model_dpss(
     if gpu_index is not None and gpus:
         with tf.device(f"/device:GPU:{gpus[gpu_index].name[-1]}"):
             model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
-                uvdata=uvd, sky_model=uvd_model, gains=uvc, dtype=dtype, **calibration_kwargs
+                uvdata=uvd, sky_model=uvd_model, gains=uvc, dtype=dtype, weights=weights, **calibration_kwargs
             )
     else:
         model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
-            uvdata=uvd, sky_model=uvd_model, gains=uvc, dtype=dtype, **calibration_kwargs
+            uvdata=uvd, sky_model=uvd_model, gains=uvc, dtype=dtype, weights=weights, **calibration_kwargs
         )
 
     if resid_outfilename is not None:
@@ -1863,6 +1918,12 @@ def fitting_argparser():
         default=False,
         action="store_true",
         help="If True, weight contributions to MSE as proportional to SNR.",
+    )
+    sp.add_argument(
+        "--use_autocorrs_in_weights",
+        default=False,
+        action="store_true",
+        help="If True, use autocorrelations to derive relative SNR weights.",
     )
     return ap
 
