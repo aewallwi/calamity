@@ -9,3 +9,6 @@ CALAMITY: increasing the amity between fluctuations in the 21cm field and radio 
 
 ## Installation. 
 You can install `calamity` with `pip` by running `pip install git+https://github.com/aewallwi/calamity.git` in your terminal.
+
+## Getting Started.
+See this tutorial: https://github.com/aewallwi/calamity/blob/main/examples/Calamity_Tutorial.ipynb
