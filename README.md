@@ -3,8 +3,9 @@
 # CALAMITY -- A Radio Interferometer Calibration Tool that Requires No Redundancy and Minimal Prior Knowledge on Foregrounds and Beams
 
 ## Summary
-<span style="font-variant:small-caps;">calamity</span> is a frequency regulated self-cal strategy that simultaneously fits for calibration solutions with foregrounds that are described by a well understood / behaved set of  basis vectors. Examples of basis sets that do not incorporate inter-baseline correlations are DPSS vectors and DFT vectors. <span style="font-variant:small-caps;">calamity</span> can also handle fitting modes with inter-baseline correlations to reduce sample variance and potentially recover modes inside of the wedge.
+CALibration AMITY (CALAMITY) is a frequency regulated self-cal strategy that simultaneously fits for calibration solutions with foregrounds that are described by a well understood / behaved set of  basis vectors. Examples of basis sets that do not incorporate inter-baseline correlations are DPSS vectors and DFT vectors. CALAMITY can also handle fitting modes with inter-baseline correlations to reduce sample variance and potentially recover modes inside of the wedge.
 
+CALAMITY: increasing the amity between fluctuations in the 21cm field and radio interferometry.
 
 ## Installation. 
 You can install `calamity` with `pip` by running `pip install git+https://github.com/aewallwi/calamity.git` in your terminal.
