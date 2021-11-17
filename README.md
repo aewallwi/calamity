@@ -12,3 +12,7 @@ You can install `calamity` with `pip` by running `pip install git+https://github
 
 ## Getting Started.
 See this tutorial: https://github.com/aewallwi/calamity/blob/main/examples/Calamity_Tutorial.ipynb
+
+
+## Citing CALAMITY and Learning more.
+A detailed description of this method can be found at https://ui.adsabs.harvard.edu/abs/2021arXiv211011994E/abstract. 
