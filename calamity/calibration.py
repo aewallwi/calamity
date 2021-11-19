@@ -1168,7 +1168,7 @@ def calibrate_and_model_tensor(
             )
             bltsel = np.isclose(uvdata.time_array, time, atol=1e-7, rtol=0.0)
             frac_unflagged = np.count_nonzero(~uvdata.flag_array[bltsel, 0, :, polnum]) / (
-                uvdata.Ntimes * uvdata.Nfreqs
+                uvdata.Nbls * uvdata.Nfreqs
             )
             # check that fraction of unflagged data > skip_threshold.
             if frac_unflagged >= skip_threshold:
