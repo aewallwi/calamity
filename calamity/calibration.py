@@ -944,7 +944,7 @@ def get_auto_weights(uvdata, delay_extent=25.0):
                 dvec = tf.reshape(tf.convert_to_tensor(ds[fs].real), (nunflagged, 1))
                 model = dpss_components @ tf.linalg.lstsq(amat, dvec).numpy().squeeze()
                 auto_fit_dict[bl].append(model)
-            auto_fit_dict[bl] = np.atleast_2d(np.asarray(model))
+            auto_fit_dict[bl] = np.atleast_2d(np.asarray(auto_fit_dict[bl]))
     # from autocorrelation fits, weights
     for bl in bls:
         smooth_weights = 1.0 / (auto_fit_dict[bl[0], bl[0], bl[-1]] * auto_fit_dict[bl[1], bl[1], bl[-1]])
