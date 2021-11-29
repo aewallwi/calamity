@@ -973,7 +973,7 @@ def calibrate_and_model_tensor(
     use_redundancy=False,
     notebook_progressbar=False,
     correct_resid=False,
-    correct_model=False,
+    correct_model=True,
     weights=None,
     nsamples_in_weights=True,
     graph_mode=False,
