@@ -22,6 +22,7 @@ OPTIMIZERS = {
     "Nadam": tf.optimizers.Nadam,
     "SGD": tf.optimizers.SGD,
     "RMSprop": tf.optimizers.RMSprop,
+    "Adagrad": tf.optimizers.Adagrad
 }
 
 
