@@ -467,6 +467,7 @@ def fit_gains_and_foregrounds(
     sky_model_i=None,
     model_regularization=None,
     graph_args_dict=None,
+    epochs=1,
     **opt_kwargs,
 ):
     """Run optimization loop to fit gains and foreground components.
@@ -566,7 +567,6 @@ def fit_gains_and_foregrounds(
     echo(f"{datetime.datetime.now()} Provided the following opt_kwargs")
     for k in opt_kwargs:
         echo(f"{k}: {opt_kwargs[k]}")
-    opt = OPTIMIZERS[optimizer](**opt_kwargs)
     # set up history recording
     fit_history = {"loss": []}
     min_loss = 9e99
@@ -658,7 +658,7 @@ def fit_gains_and_foregrounds(
                 dtype=dtype,
             )
 
-    def train_step_code():
+    def train_step_code(opt):
         with tf.GradientTape() as tape:
             loss = loss_function()
         grads = tape.gradient(loss, vars)
@@ -668,13 +668,13 @@ def fit_gains_and_foregrounds(
     if graph_mode:
 
         @tf.function(**graph_args_dict)
-        def train_step():
-            return train_step_code()
+        def train_step(opt):
+            return train_step_code(opt)
 
     else:
 
-        def train_step():
-            return train_step_code()
+        def train_step(opt):
+            return train_step_code(opt)
 
     if n_profile_steps > 0:
         echo(f"{datetime.datetime.now()} Profiling with {n_profile_steps}. And writing output to {profile_log_dir}...")
@@ -688,31 +688,37 @@ def fit_gains_and_foregrounds(
         f"{datetime.datetime.now()} Building Computational Graph...\n",
         verbose=verbose,
     )
-    loss = train_step()
-    echo(
-        f"{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss:.2e}...\n",
-        verbose=verbose,
-    )
+    opt = OPTIMIZERS[optimizer](**opt_kwargs)
+    loss = train_step(opt)
+    for epoch in range(epochs):
+        opt = OPTIMIZERS[optimizer](**opt_kwargs)
+        echo(
+            f"{datetime.datetime.now()} Epoch {epoch}/{epochs}...\n",
+            verbose=verbose,
+        )
+        echo(
+            f"{datetime.datetime.now()} Performing Gradient Descent. Initial MSE of {loss:.2e}...\n",
+            verbose=verbose,
+        )
+        for step in PBARS[notebook_progressbar](range(maxsteps)):
+            loss = train_step(opt)
+            fit_history["loss"].append(loss.numpy())
+            if use_min and fit_history["loss"][-1] < min_loss:
+                # store the g_r, g_i, fg_r, fg_i values that minimize loss
+                # in case of overshoot.
+                min_loss = fit_history["loss"][-1]
+                g_r_opt = g_r.value()
+                g_i_opt = g_i.value()
+                if not freeze_model:
+                    fg_r_opt = [fgr.value() for fgr in fg_r]
+                    fg_i_opt = [fgi.value() for fgi in fg_i]
 
-    for step in PBARS[notebook_progressbar](range(maxsteps)):
-        loss = train_step()
-        fit_history["loss"].append(loss.numpy())
-        if use_min and fit_history["loss"][-1] < min_loss:
-            # store the g_r, g_i, fg_r, fg_i values that minimize loss
-            # in case of overshoot.
-            min_loss = fit_history["loss"][-1]
-            g_r_opt = g_r.value()
-            g_i_opt = g_i.value()
-            if not freeze_model:
-                fg_r_opt = [fgr.value() for fgr in fg_r]
-                fg_i_opt = [fgi.value() for fgi in fg_i]
-
-        if step >= 1 and np.abs(fit_history["loss"][-1] - fit_history["loss"][-2]) < tol:
-            echo(
-                f"Tolerance thresshold met with delta of {np.abs(fit_history['loss'][-1] - fit_history['loss'][-2]):.2e}. Terminating...\n ",
-                verbose=verbose,
-            )
-            break
+            if step >= 1 and np.abs(fit_history["loss"][-1] - fit_history["loss"][-2]) < tol:
+                echo(
+                    f"Tolerance thresshold met with delta of {np.abs(fit_history['loss'][-1] - fit_history['loss'][-2]):.2e}. Terminating...\n ",
+                    verbose=verbose,
+                )
+                break
 
     # if we dont use use_min, then the last
     # visited set of parameters will be used
