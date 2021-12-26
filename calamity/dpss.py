@@ -241,7 +241,7 @@ def dpss_operator(
     use_tensorflow=False,
     lobe_ordering_like_scipy=False,
     tf_method="eigh_sinc",
-    tensorflow_precision=np.float64,
+    dtype=np.float64,
 ):
     """
     Calculates DPSS operator with multiple delay windows to fit data. Frequencies
@@ -277,7 +277,7 @@ def dpss_operator(
         if True, set the sign of the first lobes of each dpss vector to be
         consistent with the ordering in scipy. This is for testing purposes only.
         default is False.
-    tensorflow_precision: np.dtype
+    dtype: np.dtype
         precision for tensorflow operations. Used if use_tensorflow is True.
     Returns
     ----------
@@ -325,8 +325,8 @@ def dpss_operator(
         df = np.abs(x[1] - x[0])
         xg, yg = np.meshgrid(x, x)
         if use_tensorflow:
-            xg = tf.convert_to_tensor(xg, dtype=tensorflow_precision)
-            yg = tf.convert_to_tensor(yg, dtype=tensorflow_precision)
+            xg = tf.convert_to_tensor(xg, dtype=dtype)
+            yg = tf.convert_to_tensor(yg, dtype=dtype)
         if xc is None:
             xc = x[nf // 2]
         # determine cutoffs
@@ -347,7 +347,7 @@ def dpss_operator(
                     nf,
                     lobe_ordering_like_scipy=lobe_ordering_like_scipy,
                     method=tf_method,
-                    dtype=tensorflow_precision,
+                    dtype=dtype,
                 )
                 smat = tf.experimental.numpy.sinc(2 * fw * (xg - yg)) * 2 * df * fw
                 evals = tf.reduce_sum((smat @ tf.transpose(dpss_vecs)) * tf.transpose(dpss_vecs), axis=0)

@@ -1379,7 +1379,7 @@ def calibrate_and_model_mixed(
     use_redundancy=False,
     use_tensorflow_to_derive_modeling_comps=False,
     eigenval_cutoff=1e-10,
-    dtype_matinv=np.float64,
+    components_dtype=np.float64,
     require_exact_angle_match=True,
     angle_match_tol=1e-3,
     grp_size_threshold=5,
@@ -1441,7 +1441,7 @@ def calibrate_and_model_mixed(
         of multi-baseline covariance matrices.
     eigenval_cutoff: float, optional
         threshold of eigenvectors to include in modeling components.
-    dtype_matinv: numpy.dtype, optional
+    components_dtype: numpy.dtype, optional
         data type to use for deriving modeling components.
         default is np.float64 (need higher precision for cov-mat like calculation)
     grp_size_threshold: int, optional
@@ -1494,7 +1494,7 @@ def calibrate_and_model_mixed(
             offset=offset,
             min_dly=min_dly,
             verbose=verbose,
-            dtype=dtype_matinv,
+            dtype=components_dtype,
             notebook_progressbar=notebook_progressbar,
             grp_size_threshold=grp_size_threshold,
         )
@@ -1524,6 +1524,9 @@ def calibrate_and_model_dpss(
     red_tol=1.0,
     notebook_progressbar=False,
     fg_model_comps_dict=None,
+    use_tensorflow_to_derive_modeling_comps=False,
+    eigenval_cutoff=1e-10,
+    components_dtype=np.float64,
     **fitting_kwargs,
 ):
     """Simultaneously solve for gains and model foregrounds with DPSS vectors.
@@ -1559,6 +1562,14 @@ def calibrate_and_model_dpss(
     fg_model_comps_dict: dict, optional
         dictionary containing precomputed foreground model components.
         Currently only supported if use_redundancy is False.
+    use_tensorflow_to_derive_modeling_comps: bool, optional
+        Use tensorflow methods to derive multi-baseline modeling components.
+        recommended if you have a GPU with enough memory to perform spectral decomposition
+        of multi-baseline covariance matrices.
+    eigenval_cutoff: float, optional
+        threshold of eigenvectors to include in modeling components.
+    components_dtype: numpy.dtype, optional
+        data type to use for deriving modeling components.
     fitting_kwargs: kwarg dict
         additional kwargs for calibrate_and_model_pbl.
         see docstring of calibrate_and_model_pbl.

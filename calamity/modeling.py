@@ -270,7 +270,9 @@ def yield_dpss_model_comps_bl_grp(
     min_dly=0.0,
     offset=0.0,
     operator_cache=None,
+    use_tensorflow=False,
     eigenval_cutoff=1e-10,
+    dtype=np.float64,
 ):
     """Get per-baseline DPSS modeling vectors
 
@@ -291,8 +293,14 @@ def yield_dpss_model_comps_bl_grp(
     operator_cache: dict, optional
       dictionary caching operator matrices
       default is None -> no caching
+    use_tensorflow: bool, optional
+        Use tensorflow methods to derive multi-baseline modeling components.
+        recommended if you have a GPU with enough memory to perform spectral decomposition
+        of multi-baseline covariance matrices.
     eigenval_cutoff: float, optional
-      default is 1e-10
+        threshold of eigenvectors to include in modeling components.
+    dtype: numpy.dtype, optional
+        data type to use for deriving modeling components.
 
     Returns
     -------
@@ -307,6 +315,8 @@ def yield_dpss_model_comps_bl_grp(
         filter_centers=[0.0],
         filter_half_widths=[dly],
         eigenval_cutoff=[eigenval_cutoff],
+        use_tensorflow=use_tensorflow,
+        dtype=dtype,
         cache=operator_cache,
     )[0].real
     return dpss_model_comps
@@ -320,7 +330,9 @@ def yield_pbl_dpss_model_comps(
     include_autos=False,
     use_redundancy=False,
     red_tol=1.0,
+    use_tensorflow=False,
     eigenval_cutoff=1e-10,
+    dtype=np.float64,
     notebook_progressbar=False,
     verbose=False,
 ):
@@ -351,9 +363,14 @@ def yield_pbl_dpss_model_comps(
         Tolerance for grouping baselines into a redudnant group.
         units of meters.
         default is 1.0
+    use_tensorflow: bool, optional
+        Use tensorflow methods to derive multi-baseline modeling components.
+        recommended if you have a GPU with enough memory to perform spectral decomposition
+        of multi-baseline covariance matrices.
     eigenval_cutoff: float, optional
-        minimum eigenval to keep in each modeling component group.
-        default is 1e-10.
+        threshold of eigenvectors to include in modeling components.
+    dtype: numpy.dtype, optional
+        data type to use for deriving modeling components.
     notebook_progressbar: bool, optional
         if True, use pretty progressbar that renders well in jupyter.
         default is False.
@@ -383,6 +400,8 @@ def yield_pbl_dpss_model_comps(
             horizon=horizon,
             min_dly=min_dly,
             operator_cache=operator_cache,
+            use_tensorflow=use_tensorflow,
+            dtype=components_dtype,
             eigenval_cutoff=eigenval_cutoff,
         )
     return modeling_vectors

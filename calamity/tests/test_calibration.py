@@ -579,12 +579,12 @@ def test_calibrate_and_model_dpss_with_rfi_flags(mwa_noise_sim_realistic_flags, 
 
 
 @pytest.mark.parametrize(
-    "noweights, perfect_data, use_min",
+    "noweights, perfect_data, use_min, use_tensorflow",
     [
-        (True, True, False),
-        (True, False, False),
-        (False, False, True),
-        (True, True, False),
+        (True, True, False, True),
+        (True, False, False, True),
+        (False, False, True, False),
+        (True, True, False, False),
     ],
 )
 def test_calibrate_and_model_dpss(
