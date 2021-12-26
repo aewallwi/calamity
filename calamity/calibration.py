@@ -693,7 +693,7 @@ def fit_gains_and_foregrounds(
     for epoch in range(epochs):
         opt = OPTIMIZERS[optimizer](**opt_kwargs)
         echo(
-            f"{datetime.datetime.now()} Epoch {epoch}/{epochs}...\n",
+            f"{datetime.datetime.now()} Epoch {epoch+1}/{epochs}...\n",
             verbose=verbose,
         )
         echo(
