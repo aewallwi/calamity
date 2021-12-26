@@ -64,7 +64,10 @@ def simple_cov_matrix(
         absdiff = tf.convert_to_tensor(absdiff, dtype=dtype)
     for uvw_ind in range(3):
         if use_tensorflow:
-            uvw_coord = tf.reshape(tf.experimental.numpy.outer(uvws[:, uvw_ind], freqs / 3e8), (nbls * nfreqs,))
+            uvw_coord = tf.reshape(
+                tf.experimental.numpy.outer(uvws[:, uvw_ind], freqs / 3e8),
+                (nbls * nfreqs,),
+            )
             cg0, cg1 = tf.meshgrid(uvw_coord, uvw_coord, indexing="ij")
             absdiff += tf.math.square(tf.math.abs(cg0 - cg1) * horizon)
         else:
@@ -73,7 +76,10 @@ def simple_cov_matrix(
             absdiff += np.abs(cg0 - cg1) ** 2.0
     if use_tensorflow:
         absdiff = tf.math.sqrt(absdiff)
-        fvals = tf.reshape(tf.experimental.numpy.outer(tf.ones(nbls, dtype=dtype), freqs), (nbls * nfreqs,))
+        fvals = tf.reshape(
+            tf.experimental.numpy.outer(tf.ones(nbls, dtype=dtype), freqs),
+            (nbls * nfreqs,),
+        )
         fg0, fg1 = tf.meshgrid(fvals, fvals, indexing="ij")
         dfg = tf.abs(fg0 - fg1) / 1e9
     else:

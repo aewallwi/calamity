@@ -10,7 +10,14 @@ def echo(message, verbose=True):
         print(message)
 
 
-def select_baselines(uvdata, bllen_min=0.0, bllen_max=np.inf, bl_ew_min=0.0, ex_ants=None, select_ants=None):
+def select_baselines(
+    uvdata,
+    bllen_min=0.0,
+    bllen_max=np.inf,
+    bl_ew_min=0.0,
+    ex_ants=None,
+    select_ants=None,
+):
     """ """
     if ex_ants is None:
         ex_ants = []

@@ -22,7 +22,7 @@ OPTIMIZERS = {
     "Nadam": tf.optimizers.Nadam,
     "SGD": tf.optimizers.SGD,
     "RMSprop": tf.optimizers.RMSprop,
-    "Adagrad": tf.optimizers.Adagrad
+    "Adagrad": tf.optimizers.Adagrad,
 }
 
 
@@ -157,7 +157,9 @@ def tensorize_fg_model_comps_dict(
     )
     # chunk foreground components.
     fg_model_comps_dict = chunk_fg_comp_dict_by_nbls(
-        fg_model_comps_dict, use_redundancy=use_redundancy, grp_size_threshold=grp_size_threshold
+        fg_model_comps_dict,
+        use_redundancy=use_redundancy,
+        grp_size_threshold=grp_size_threshold,
     )
     fg_model_comps = []
     corr_inds = []
@@ -308,7 +310,14 @@ def tensorize_data(
     return data_r, data_i, wgts
 
 
-def renormalize(uvdata_reference_model, uvdata_deconv, gains, polarization, time, additional_flags=None):
+def renormalize(
+    uvdata_reference_model,
+    uvdata_deconv,
+    gains,
+    polarization,
+    time,
+    additional_flags=None,
+):
 
     """Remove arbitrary phase and amplitude from deconvolved model and gains.
 
@@ -882,7 +891,10 @@ def tensorize_fg_coeffs(
         # pad with zeros
         for gnum in range(ngrps):
             nonzero_rows = np.where(
-                np.all(np.isclose(fg_model_comps[cnum][:, gnum].numpy().reshape(nvecs, ndata), 0.0), axis=1)
+                np.all(
+                    np.isclose(fg_model_comps[cnum][:, gnum].numpy().reshape(nvecs, ndata), 0.0),
+                    axis=1,
+                )
             )[0]
             if len(nonzero_rows) > 0:
                 nvecs_nonzero = np.min(nonzero_rows)
@@ -1168,9 +1180,7 @@ def calibrate_and_model_tensor(
                 verbose=verbose,
             )
             bltsel = np.isclose(uvdata.time_array, time, atol=1e-7, rtol=0.0)
-            frac_unflagged = np.count_nonzero(~uvdata.flag_array[bltsel, 0, :, polnum]) / (
-                uvdata.Nbls * uvdata.Nfreqs
-            )
+            frac_unflagged = np.count_nonzero(~uvdata.flag_array[bltsel, 0, :, polnum]) / (uvdata.Nbls * uvdata.Nfreqs)
             # check that fraction of unflagged data > skip_threshold.
             if frac_unflagged >= skip_threshold:
                 rmsdata = np.sqrt(
@@ -1192,7 +1202,10 @@ def calibrate_and_model_tensor(
                 )
 
                 if sky_model is not None:
-                    echo(f"{datetime.datetime.now()} Tensorizing sky model...\n", verbose=verbose)
+                    echo(
+                        f"{datetime.datetime.now()} Tensorizing sky model...\n",
+                        verbose=verbose,
+                    )
                     sky_model_r, sky_model_i, _ = tensorize_data(
                         sky_model,
                         corr_inds=corr_inds,
@@ -1207,7 +1220,10 @@ def calibrate_and_model_tensor(
                     sky_model_r, sky_model_i = None, None
                 if first_time or not init_guesses_from_previous_time_step:
                     first_time = False
-                    echo(f"{datetime.datetime.now()} Tensorizing Gains...\n", verbose=verbose)
+                    echo(
+                        f"{datetime.datetime.now()} Tensorizing Gains...\n",
+                        verbose=verbose,
+                    )
                     g_r, g_i = tensorize_gains(gains, dtype=dtype, time=time, polarization=pol)
                     # generate initial guess for foreground coeffs.
                     echo(
@@ -1607,12 +1623,31 @@ def mse(model_r, model_i, data_r, data_i, wgts):
     return tf.reduce_sum((tf.square(data_r - model_r) + tf.square(data_i - model_i)) * wgts)
 
 
-def mse_chunked(g_r, g_i, fg_r, fg_i, fg_comps, nchunks, data_r, data_i, wgts, ant0_inds, ant1_inds, dtype=np.float32):
+def mse_chunked(
+    g_r,
+    g_i,
+    fg_r,
+    fg_i,
+    fg_comps,
+    nchunks,
+    data_r,
+    data_i,
+    wgts,
+    ant0_inds,
+    ant1_inds,
+    dtype=np.float32,
+):
     cal_loss = [tf.constant(0.0, dtype) for cnum in range(nchunks)]
     # now deal with dense components
     for cnum in range(nchunks):
         model_r, model_i = data_model(
-            g_r, g_i, fg_r[cnum], fg_i[cnum], fg_comps[cnum], ant0_inds[cnum], ant1_inds[cnum]
+            g_r,
+            g_i,
+            fg_r[cnum],
+            fg_i[cnum],
+            fg_comps[cnum],
+            ant0_inds[cnum],
+            ant1_inds[cnum],
         )
         cal_loss[cnum] += mse(model_r, model_i, data_r[cnum], data_i[cnum], wgts[cnum])
     return tf.reduce_sum(tf.stack(cal_loss))
@@ -1640,7 +1675,13 @@ def mse_chunked_sum_regularized(
     # now deal with dense components
     for cnum in range(nchunks):
         model_r, model_i = data_model(
-            g_r, g_i, fg_r[cnum], fg_i[cnum], fg_comps[cnum], ant0_inds[cnum], ant1_inds[cnum]
+            g_r,
+            g_i,
+            fg_r[cnum],
+            fg_i[cnum],
+            fg_comps[cnum],
+            ant0_inds[cnum],
+            ant1_inds[cnum],
         )
         # compute sum of real and imag parts x weights for regularization.
         model_r_sum[cnum] += tf.reduce_sum(model_r * wgts[cnum])
@@ -1744,7 +1785,8 @@ def read_calibrate_and_model_dpss(
                 tf.config.set_visible_devices(gpus[gpu_index], "GPU")
             else:
                 tf.config.set_logical_device_configuration(
-                    gpus[gpu_index], [tf.config.LogicalDeviceConfiguration(memory_limit=gpu_memory_limit * 1024)]
+                    gpus[gpu_index],
+                    [tf.config.LogicalDeviceConfiguration(memory_limit=gpu_memory_limit * 1024)],
                 )
 
             logical_gpus = tf.config.list_logical_devices("GPU")
@@ -1762,7 +1804,12 @@ def read_calibrate_and_model_dpss(
     else:
         weights = None
     utils.select_baselines(
-        uvd, bllen_min=bllen_min, bllen_max=bllen_max, bl_ew_min=bl_ew_min, ex_ants=ex_ants, select_ants=select_ants
+        uvd,
+        bllen_min=bllen_min,
+        bllen_max=bllen_max,
+        bl_ew_min=bl_ew_min,
+        ex_ants=ex_ants,
+        select_ants=select_ants,
     )
 
     if isinstance(input_model_files, str):
@@ -1794,11 +1841,21 @@ def read_calibrate_and_model_dpss(
     if gpu_index is not None and gpus:
         with tf.device(f"/device:GPU:{gpus[gpu_index].name[-1]}"):
             model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
-                uvdata=uvd, sky_model=uvd_model, gains=uvc, dtype=dtype, weights=weights, **calibration_kwargs
+                uvdata=uvd,
+                sky_model=uvd_model,
+                gains=uvc,
+                dtype=dtype,
+                weights=weights,
+                **calibration_kwargs,
             )
     else:
         model_fit, resid_fit, gains_fit, fit_info = calibrate_and_model_dpss(
-            uvdata=uvd, sky_model=uvd_model, gains=uvc, dtype=dtype, weights=weights, **calibration_kwargs
+            uvdata=uvd,
+            sky_model=uvd_model,
+            gains=uvc,
+            dtype=dtype,
+            weights=weights,
+            **calibration_kwargs,
         )
 
     if resid_outfilename is not None:
@@ -1818,21 +1875,66 @@ def read_calibrate_and_model_dpss(
 def input_output_parser():
     ap = argparse.ArgumentParser()
     sp = ap.add_argument_group("Input and Output Arguments.")
-    sp.add_argument("--input_data_files", type=str, nargs="+", help="paths to data files to calibrate.", required=True)
     sp.add_argument(
-        "--input_model_files", type=str, nargs="+", help="paths to model files to set overal amplitude and phase."
-    )
-    sp.add_argument("--input_gain_files", type=str, nargs="+", help="paths to gains to use as a staring point.")
-    sp.add_argument("--resid_outfilename", type=str, default=None, help="postfix for resid output file.")
-    sp.add_argument("--model_outfilename", type=str, default=None, help="postfix for foreground model file.")
-    sp.add_argument("--gain_outfilename", type=str, default=None, help="path for writing fitted gains.")
-    sp.add_argument("--clobber", action="store_true", default="False", help="Overwrite existing outputs.")
-    sp.add_argument("--x_orientation", default="east", type=str, help="x_orientation of feeds to set in output gains.")
-    sp.add_argument(
-        "--bllen_min", default=0.0, type=float, help="minimum baseline length to include in calibration and outputs."
+        "--input_data_files",
+        type=str,
+        nargs="+",
+        help="paths to data files to calibrate.",
+        required=True,
     )
     sp.add_argument(
-        "--bllen_max", default=np.inf, type=float, help="maximum baseline length to include in calbration and outputs."
+        "--input_model_files",
+        type=str,
+        nargs="+",
+        help="paths to model files to set overal amplitude and phase.",
+    )
+    sp.add_argument(
+        "--input_gain_files",
+        type=str,
+        nargs="+",
+        help="paths to gains to use as a staring point.",
+    )
+    sp.add_argument(
+        "--resid_outfilename",
+        type=str,
+        default=None,
+        help="postfix for resid output file.",
+    )
+    sp.add_argument(
+        "--model_outfilename",
+        type=str,
+        default=None,
+        help="postfix for foreground model file.",
+    )
+    sp.add_argument(
+        "--gain_outfilename",
+        type=str,
+        default=None,
+        help="path for writing fitted gains.",
+    )
+    sp.add_argument(
+        "--clobber",
+        action="store_true",
+        default="False",
+        help="Overwrite existing outputs.",
+    )
+    sp.add_argument(
+        "--x_orientation",
+        default="east",
+        type=str,
+        help="x_orientation of feeds to set in output gains.",
+    )
+    sp.add_argument(
+        "--bllen_min",
+        default=0.0,
+        type=float,
+        help="minimum baseline length to include in calibration and outputs.",
+    )
+    sp.add_argument(
+        "--bllen_max",
+        default=np.inf,
+        type=float,
+        help="maximum baseline length to include in calbration and outputs.",
     )
     sp.add_argument(
         "--bl_ew_min",
@@ -1841,7 +1943,11 @@ def input_output_parser():
         help="minimum EW baseline component to include in calibration and outputs.",
     )
     sp.add_argument(
-        "--ex_ants", default=None, type=int, nargs="+", help="Antennas to exclude from calibration and modeling."
+        "--ex_ants",
+        default=None,
+        type=int,
+        nargs="+",
+        help="Antennas to exclude from calibration and modeling.",
     )
     sp.add_argument(
         "--select_ants",
@@ -1850,8 +1956,18 @@ def input_output_parser():
         nargs="+",
         help="Antennas to select exclusively for calibration and modeling.",
     )
-    sp.add_argument("--gpu_index", default=None, type=int, help="Index of GPU to run on (if on a multi-GPU machine).")
-    sp.add_argument("--gpu_memory_limit", default=None, type=int, help="Limit GPU memory use to this many GBytes.")
+    sp.add_argument(
+        "--gpu_index",
+        default=None,
+        type=int,
+        help="Index of GPU to run on (if on a multi-GPU machine).",
+    )
+    sp.add_argument(
+        "--gpu_memory_limit",
+        default=None,
+        type=int,
+        help="Limit GPU memory use to this many GBytes.",
+    )
     sp.add_argument("--precision", default=32, type=int, help="Number of bits to keep track of.")
     return ap
 
@@ -1866,9 +1982,17 @@ def fitting_argparser():
         help="Stop gradient descent after cost function converges to within this value.",
     )
     sp.add_argument(
-        "--optimizer", type=str, default="Adamax", help="First order optimizer to use for gradient descent."
+        "--optimizer",
+        type=str,
+        default="Adamax",
+        help="First order optimizer to use for gradient descent.",
     )
-    sp.add_argument("--maxsteps", type=int, default=10000, help="Max number of steps to iterate during optimization.")
+    sp.add_argument(
+        "--maxsteps",
+        type=int,
+        default=10000,
+        help="Max number of steps to iterate during optimization.",
+    )
     sp.add_argument("--verbose", default=False, action="store_true", help="lots of text ouputs.")
     sp.add_argument(
         "--use_min",
@@ -1883,10 +2007,16 @@ def fitting_argparser():
         help="Model redundant visibilities with the same set of foreground parameters.",
     )
     sp.add_argument(
-        "--correct_model", default=True, action="store_true", help="Remove gain effects from foreground model."
+        "--correct_model",
+        default=True,
+        action="store_true",
+        help="Remove gain effects from foreground model.",
     )
     sp.add_argument(
-        "--correct_resid", default=False, action="store_true", help="Apply fitted gains to the fitted residuals."
+        "--correct_resid",
+        default=False,
+        action="store_true",
+        help="Apply fitted gains to the fitted residuals.",
     )
     sp.add_argument(
         "--graph_mode",
@@ -1900,9 +2030,17 @@ def fitting_argparser():
         action="store_true",
         help="initialize gain and foreground guesses from previous time step when calibrating multiple times.",
     )
-    sp.add_argument("--learning_rate", type=float, default=1e-2, help="gradient descent learning rate.")
     sp.add_argument(
-        "--red_tol", type=float, default=1.0, help="Tolerance for determining redundancy between baselines [meters]."
+        "--learning_rate",
+        type=float,
+        default=1e-2,
+        help="gradient descent learning rate.",
+    )
+    sp.add_argument(
+        "--red_tol",
+        type=float,
+        default=1.0,
+        help="Tolerance for determining redundancy between baselines [meters].",
     )
     sp.add_argument(
         "--skip_threshold",
@@ -1912,7 +2050,10 @@ def fitting_argparser():
     )
     sp.add_argument("--model_regularization", type=str, default="post_hoc")
     sp.add_argument(
-        "--nsamples_in_weights", default=False, action="store_true", help="Weight contributions to MSE by nsamples."
+        "--nsamples_in_weights",
+        default=False,
+        action="store_true",
+        help="Weight contributions to MSE by nsamples.",
     )
     sp.add_argument(
         "--use_model_snr_weights",
@@ -1932,9 +2073,22 @@ def fitting_argparser():
 def dpss_fit_argparser():
     ap = fitting_argparser()
     sp = ap.add_argument_group("DPSS Specific Fitting Arguments.")
-    sp.add_argument("--horizon", default=1.0, type=float, help="Fraction of horizon delay to model with DPSS modes.")
-    sp.add_argument("--min_dly", default=0.0, type=float, help="Minimum delay [ns] to model with DPSS modes.")
     sp.add_argument(
-        "--offset", default=0.0, type=float, help="Offset from horizon delay [ns] to model with DPSS modes."
+        "--horizon",
+        default=1.0,
+        type=float,
+        help="Fraction of horizon delay to model with DPSS modes.",
+    )
+    sp.add_argument(
+        "--min_dly",
+        default=0.0,
+        type=float,
+        help="Minimum delay [ns] to model with DPSS modes.",
+    )
+    sp.add_argument(
+        "--offset",
+        default=0.0,
+        type=float,
+        help="Offset from horizon delay [ns] to model with DPSS modes.",
     )
     return ap

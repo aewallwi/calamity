@@ -18,15 +18,27 @@ def sky_model():
 
 
 def test_get_uv_overlapping_grps_conjugated(sky_model):
-    fitting_grps, fitting_vec_centers, connections, grp_labels = modeling.get_uv_overlapping_grps_conjugated(
-        uvdata=sky_model, red_tol_freq=0.5, n_angle_bins=200
-    )
+    (
+        fitting_grps,
+        fitting_vec_centers,
+        connections,
+        grp_labels,
+    ) = modeling.get_uv_overlapping_grps_conjugated(uvdata=sky_model, red_tol_freq=0.5, n_angle_bins=200)
     assert fitting_grps == [
         [((0, 1),)],
         [((3, 4),)],
         [((1, 2),)],
         [((0, 2),)],
         [((4, 5),)],
-        [((2, 3),), ((3, 5),), ((2, 4),), ((1, 3),), ((0, 3),), ((1, 4),), ((0, 4),), ((2, 5),)],
+        [
+            ((2, 3),),
+            ((3, 5),),
+            ((2, 4),),
+            ((1, 3),),
+            ((0, 3),),
+            ((1, 4),),
+            ((0, 4),),
+            ((2, 5),),
+        ],
         [((1, 5),), ((0, 5),)],
     ]

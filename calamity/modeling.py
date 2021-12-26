@@ -1,10 +1,10 @@
 import numpy as np
-from uvtools import dspec
 import datetime
 import tensorflow as tf
 from . import simple_cov
 from .utils import echo
 from .utils import PBARS
+from . import dpss
 
 
 def get_redundant_grps_data(uvdata, remove_redundancy=False, tol=1.0, include_autos=False):
@@ -145,7 +145,14 @@ def get_uv_overlapping_grps_conjugated(
     for red_grp, vbc in zip(red_grps, vec_bin_centers):
         vbc_hash[tuple(red_grp)] = vbc
         if np.abs(vbc[0]) > 0.0:
-            bin_index = int(np.min([np.round((np.arctan(vbc[1] / vbc[0]) + np.pi / 2) / dangle), n_angle_bins - 2]))
+            bin_index = int(
+                np.min(
+                    [
+                        np.round((np.arctan(vbc[1] / vbc[0]) + np.pi / 2) / dangle),
+                        n_angle_bins - 2,
+                    ]
+                )
+            )
         else:
             bin_index = n_angle_bins - 1
         grp_nums[bin_index].append(grp_num)
@@ -210,7 +217,11 @@ def get_uv_overlapping_grps_conjugated(
         red_grps_sorted.append(red_grp)
     # sort now
     red_grps_sorted = sorted(
-        red_grps_sorted, key=lambda x: (bl_angles[red_grps_sorted.index(x)], bl_lengths[red_grps_sorted.index(x)])
+        red_grps_sorted,
+        key=lambda x: (
+            bl_angles[red_grps_sorted.index(x)],
+            bl_lengths[red_grps_sorted.index(x)],
+        ),
     )  # ['c003', 'd004', 'b002', 'a001', 'e005']
 
     for red_grp in PBARS[notebook_progressbar](red_grps_sorted):
@@ -291,7 +302,7 @@ def yield_dpss_model_comps_bl_grp(
     if operator_cache is None:
         operator_cache = {}
     dly = np.ceil(max(min_dly, length / 0.3 * horizon + offset)) / 1e9
-    dpss_model_comps = dspec.dpss_operator(
+    dpss_model_comps = dpss.dpss_operator(
         freqs,
         filter_centers=[0.0],
         filter_half_widths=[dly],
@@ -351,7 +362,10 @@ def yield_pbl_dpss_model_comps(
     """
     operator_cache = {}
     _, red_grps, vec_bin_centers, _ = get_redundant_grps_data(
-        uvdata, remove_redundancy=not (use_redundancy), tol=red_tol, include_autos=include_autos
+        uvdata,
+        remove_redundancy=not (use_redundancy),
+        tol=red_tol,
+        include_autos=include_autos,
     )
     fitting_grps = [(tuple(red_grp),) for red_grp in red_grps]
     modeling_vectors = {}
