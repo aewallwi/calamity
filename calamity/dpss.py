@@ -1,5 +1,5 @@
 import tensorflow as tf
-import scipy.signal as signal
+import scipy.signal.windows as windows
 import numpy as np
 
 
@@ -142,7 +142,7 @@ def tensorflow_dpss(
     nfw,
     nwindows=None,
     lobe_ordering_like_scipy=False,
-    method="sinc_inversion",
+    method="eigh_sinc",
     dtype=np.float64,
 ):
     """
@@ -309,7 +309,7 @@ def dpss_operator(
         # try placing x on a uniform grid.
         # x is a version of x with the in-between grid values filled in and inserted is a boolean vector
         # set to True wherever a value for x was inserted and False otherwise.
-        x, _, _, inserted = dpss.place_data_on_uniform_grid(x, np.zeros(len(x)), np.ones(len(x)))
+        x, _, _, inserted = place_data_on_uniform_grid(x, np.zeros(len(x)), np.ones(len(x)))
         # if this is not successful, then throw a value error..
         if not np.allclose(
             np.diff(x),

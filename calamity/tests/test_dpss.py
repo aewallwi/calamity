@@ -3,12 +3,12 @@ from pyuvdata import UVData
 import os
 from .. import dpss
 import scipy.signal.windows as windows
-
+import numpy as np
 
 @pytest.mark.parametrize(
-    "use_tensorflow",
-    "tf_method",
-    [(True, True), (True, False), (False, True), (False, False)],
+    "use_tensorflow, tf_method",
+    [(True, 'eigh_tridiagonal'),
+    (False, 'eigh_tridiagonal')],
 )
 def test_dpss_operator(use_tensorflow, tf_method):
     # test that an error is thrown when we specify more then one
@@ -42,7 +42,7 @@ def test_dpss_operator(use_tensorflow, tf_method):
     tarr = np.arange(-nf / 2, nf / 2) * dt
     filter_centers = [0.0]
     filter_half_widths = [0.004]
-    amat1, ncol1 = dspec.dpss_operator(
+    amat1, ncol1 = dpss.dpss_operator(
         tarr,
         [0.0],
         filter_half_widths,

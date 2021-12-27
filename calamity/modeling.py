@@ -401,7 +401,7 @@ def yield_pbl_dpss_model_comps(
             min_dly=min_dly,
             operator_cache=operator_cache,
             use_tensorflow=use_tensorflow,
-            dtype=components_dtype,
+            dtype=dtype,
             eigenval_cutoff=eigenval_cutoff,
         )
     return modeling_vectors

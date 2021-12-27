@@ -596,6 +596,7 @@ def test_calibrate_and_model_dpss(
     noweights,
     perfect_data,
     use_min,
+    use_tensorflow,
 ):
     if noweights:
         weight = None
@@ -617,6 +618,7 @@ def test_calibrate_and_model_dpss(
             correct_model=True,
             weights=weight,
             use_min=use_min,
+            use_tensorflow_to_derive_modeling_comps=use_tensorflow,
         )
     else:
         model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
