@@ -116,10 +116,6 @@ def place_data_on_uniform_grid(x, data, weights, xtol=1e-3):
         dout = data
         wout = weights
         inserted = np.zeros(len(x), dtype=bool)
-        warn(
-            "Data cannot be placed on equally spaced grid! No values inserted.",
-            RuntimeWarning,
-        )
         return xout, dout, wout, inserted
     # if the array is on a grid, then construct filled in grid.
     grid_size = int(np.round((x[-1] - x[0]) / dx)) + 1
