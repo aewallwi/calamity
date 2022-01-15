@@ -269,9 +269,9 @@ def tensorize_data(
                     pol_ind = pol_ind[1]
 
                 dind = dinds[np.where(np.isclose(uvdata.time_array[dinds], time, rtol=0.0, atol=1e-7))[0][0]]
-                data = uvdata.data_array[dind, 0, :, pol_ind]
-                iflags = ~uvdata.flag_array[dind, 0, :, pol_ind]
-                nsamples = uvdata.nsample_array[dind, 0, :, pol_ind]
+                data = uvdata.data_array[dind, 0, :, pol_ind].squeeze()
+                iflags = ~uvdata.flag_array[dind, 0, :, pol_ind].squeeze()
+                nsamples = uvdata.nsample_array[dind, 0, :, pol_ind].squeeze()
                 data /= data_scale_factor
                 if conjugate:
                     data = np.conj(data)
