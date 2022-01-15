@@ -1954,6 +1954,12 @@ def input_output_parser():
         help="minimum EW baseline component to include in calibration and outputs.",
     )
     sp.add_argument(
+        "--use_tensorflow_to_derive_modeling_comps",
+        default=False,
+        action="store_true",
+        help="Use tensorflow to derive DPSS components.",
+    )
+    sp.add_argument(
         "--ex_ants",
         default=None,
         type=int,
@@ -2018,8 +2024,8 @@ def fitting_argparser():
         help="Model redundant visibilities with the same set of foreground parameters.",
     )
     sp.add_argument(
-        "--correct_model",
-        default=True,
+        "--dont_correct_model",
+        default=False,
         action="store_true",
         help="Remove gain effects from foreground model.",
     )
