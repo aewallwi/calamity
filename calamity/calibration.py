@@ -279,10 +279,9 @@ def tensorize_data(
                 data_r[i, j] = data.real.astype(dtype)
                 data_i[i, j] = data.imag.astype(dtype)
                 if weights is None:
+                    wgts[i, j] = iflags
                     if nsamples_in_weights:
-                        wgts[i, j] = iflags * nsamples
-                    else:
-                        wgts[i, j] = iflags
+                        wgts[i, j] *= nsamples
                 else:
                     if ap in weights.get_antpairs():
                         dinds = weights.antpair2ind(*ap)
@@ -294,6 +293,8 @@ def tensorize_data(
                         == uvutils.polstr2num(polarization, x_orientation=weights.x_orientation)
                     )[0][0]
                     wgts[i, j] = weights.weights_array[dind, 0, :, polnum].astype(dtype) * iflags
+                    if nsamples_in_weights:
+                        wgts[i, j] *= nsamples
 
                 wgtsum += np.sum(wgts[i, j])
     data_r = tf.convert_to_tensor(data_r, dtype=dtype)
