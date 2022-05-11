@@ -61,7 +61,7 @@ setup(
                       'tensorflow>=2.4.0',
                       'scipy',
                       'tqdm',
-                      'uvtools @ git+git://github.com/HERA-Team/uvtools',
+                      'uvtools @ git+http://github.com/HERA-Team/uvtools',
                       ],
     include_package_data=True,
     scripts = ['scripts/calibrate_and_model_dpss.py'],
