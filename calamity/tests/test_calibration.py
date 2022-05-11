@@ -31,7 +31,12 @@ def sky_model():
 @pytest.fixture
 def sky_model_redundant():
     uvd = UVData()
-    uvd.read_uvh5(os.path.join(DATA_PATH, "garray_3ant_2_copies_ntimes_1compressed_False_autosTrue_eor_0.0dB.uvh5"))
+    uvd.read_uvh5(
+        os.path.join(
+            DATA_PATH,
+            "garray_3ant_2_copies_ntimes_1compressed_False_autosTrue_eor_0.0dB.uvh5",
+        )
+    )
     uvd.select(bls=[ap for ap in uvd.get_antpairs() if ap[0] != ap[1]], inplace=True)
     return uvd
 
@@ -124,7 +129,11 @@ def dpss_vectors(sky_model):
 def mixed_vectors(sky_model):
     fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(sky_model)
     return modeling.yield_mixed_comps(
-        fitting_grps, blvecs, sky_model.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1
+        fitting_grps,
+        blvecs,
+        sky_model.freq_array[0],
+        ant_dly=2.0 / 0.3,
+        grp_size_threshold=1,
     )
 
 
@@ -132,7 +141,11 @@ def mixed_vectors(sky_model):
 def mixed_vectors_redundant(sky_model_redundant):
     fitting_grps, blvecs, _, _ = modeling.get_uv_overlapping_grps_conjugated(sky_model_redundant)
     return modeling.yield_mixed_comps(
-        fitting_grps, blvecs, sky_model_redundant.freq_array[0], ant_dly=2.0 / 0.3, grp_size_threshold=1
+        fitting_grps,
+        blvecs,
+        sky_model_redundant.freq_array[0],
+        ant_dly=2.0 / 0.3,
+        grp_size_threshold=1,
     )
 
 
@@ -232,7 +245,10 @@ def test_renormalize(sky_model, gains):
 
 def test_tensorize_gains(gains_antscale):
     gains_r, gains_i = calibration.tensorize_gains(
-        gains_antscale, polarization="xx", time=gains_antscale.time_array[0], dtype=np.float64
+        gains_antscale,
+        polarization="xx",
+        time=gains_antscale.time_array[0],
+        dtype=np.float64,
     )
     assert gains_r.dtype == np.float64
     assert gains_i.dtype == np.float64
@@ -332,7 +348,10 @@ def test_tensorize_fg_model_comps_mixed(
                     fg_comps_dict_mat = fg_comps_dict[fitgrps[bl]].T
                     redgrpnum = fitgrps[bl].index(redgrps[bl])
                     dslice = slice(redgrpnum * nfreqs, (redgrpnum + 1) * nfreqs)
-                    assert np.allclose(fg_comps_dict_mat[:, dslice], fg_comps_tensor[: fg_comps_dict_mat.shape[0]])
+                    assert np.allclose(
+                        fg_comps_dict_mat[:, dslice],
+                        fg_comps_tensor[: fg_comps_dict_mat.shape[0]],
+                    )
                     assert np.allclose(0.0, fg_comps_tensor[fg_comps_dict_mat.shape[0] :])
                 else:
                     assert np.allclose(fg_comps_tensor, 0.0)
@@ -373,7 +392,7 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
     nfreqs = sky_model.Nfreqs
     nants = sky_model.Nants_data
 
-    fg_comp_tensors_chunked, corr_inds_chunked = calibration.tensorize_fg_model_comps_dict(
+    (fg_comp_tensors_chunked, corr_inds_chunked,) = calibration.tensorize_fg_model_comps_dict(
         fg_model_comps_dict=fg_comps_dict,
         ants_map=ants_map,
         dtype=np.float64,
@@ -381,7 +400,12 @@ def test_yield_fg_model_and_fg_coeffs_mixed(
         use_redundancy=redundant_modeling,
     )
     data_r, data_i, wgts = calibration.tensorize_data(
-        sky_model, corr_inds_chunked, ants_map, polarization="xx", time=sky_model.time_array[0], dtype=np.float64
+        sky_model,
+        corr_inds_chunked,
+        ants_map,
+        polarization="xx",
+        time=sky_model.time_array[0],
+        dtype=np.float64,
     )
 
     fg_coeffs_chunked_re = calibration.tensorize_fg_coeffs(data_r, wgts, fg_comp_tensors_chunked)
@@ -443,10 +467,18 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
     nants = sky_model_projected.Nants_data
     nfreqs = sky_model_projected.Nfreqs
     model_r = calibration.yield_fg_model_array(
-        fg_model_comps=fg_comps_tensor, fg_coeffs=fg_coeffs_re, nants=nants, nfreqs=nfreqs, corr_inds=corr_inds
+        fg_model_comps=fg_comps_tensor,
+        fg_coeffs=fg_coeffs_re,
+        nants=nants,
+        nfreqs=nfreqs,
+        corr_inds=corr_inds,
     )
     model_i = calibration.yield_fg_model_array(
-        fg_model_comps=fg_comps_tensor, fg_coeffs=fg_coeffs_im, nants=nants, nfreqs=nfreqs, corr_inds=corr_inds
+        fg_model_comps=fg_comps_tensor,
+        fg_coeffs=fg_coeffs_im,
+        nants=nants,
+        nfreqs=nfreqs,
+        corr_inds=corr_inds,
     )
     # insert tensors
     calibration.insert_model_into_uvdata_tensor(
@@ -473,7 +505,12 @@ def test_insert_model_into_uvdata_tensor(redundant_groups, dpss_vectors, sky_mod
     ],
 )
 def test_calibrate_and_model_dpss_multitime(
-    uvdata_multitime, sky_model_projected_multitime, gains_randomized_multitime, gains_multitime, perfect_data, use_min
+    uvdata_multitime,
+    sky_model_projected_multitime,
+    gains_randomized_multitime,
+    gains_multitime,
+    perfect_data,
+    use_min,
 ):
     # check that resid is much smaller then model and original data.
     if perfect_data:
@@ -542,16 +579,24 @@ def test_calibrate_and_model_dpss_with_rfi_flags(mwa_noise_sim_realistic_flags, 
 
 
 @pytest.mark.parametrize(
-    "noweights, perfect_data, use_min",
+    "noweights, perfect_data, use_min, use_tensorflow",
     [
-        (True, True, False),
-        (True, False, False),
-        (False, False, True),
-        (True, True, False),
+        (True, True, False, True),
+        (True, False, False, True),
+        (False, False, True, False),
+        (True, True, False, False),
     ],
 )
 def test_calibrate_and_model_dpss(
-    uvdata, sky_model_projected, gains_randomized, gains, weights, noweights, perfect_data, use_min
+    uvdata,
+    sky_model_projected,
+    gains_randomized,
+    gains,
+    weights,
+    noweights,
+    perfect_data,
+    use_min,
+    use_tensorflow,
 ):
     if noweights:
         weight = None
@@ -573,6 +618,7 @@ def test_calibrate_and_model_dpss(
             correct_model=True,
             weights=weight,
             use_min=use_min,
+            use_tensorflow_to_derive_modeling_comps=use_tensorflow,
         )
     else:
         model, resid, gains, fit_history = calibration.calibrate_and_model_dpss(
@@ -603,8 +649,17 @@ def test_flag_poltime(sky_model_projected_multitime, sky_model_projected, gains_
     assert not np.any(uvd.flag_array[uvd.Nbls : 2 * uvd.Nbls])
     assert np.allclose(uvd.data_array[: uvd.Nbls], 0.0)
     sky_model_projected_multitime.select(times=[np.unique(sky_model_projected.time_array)[-1]])
-    assert np.allclose(uvd.data_array[uvd.Nbls : 2 * uvd.Nbls], sky_model_projected_multitime.data_array)
-    pytest.raises(ValueError, calibration.flag_poltime, data_object="blarghle", time=0, polarization="xx")
+    assert np.allclose(
+        uvd.data_array[uvd.Nbls : 2 * uvd.Nbls],
+        sky_model_projected_multitime.data_array,
+    )
+    pytest.raises(
+        ValueError,
+        calibration.flag_poltime,
+        data_object="blarghle",
+        time=0,
+        polarization="xx",
+    )
 
 
 @pytest.mark.parametrize("flagtime", [0, 1])
@@ -655,7 +710,12 @@ def test_calibrate_and_model_dpss_flagged(sky_model_projected_multitime, gains_m
 
 @pytest.mark.parametrize(
     "use_redundancy, graph_mode, nsamples_in_weights, use_model_snr_weights",
-    [(True, False, True, False), (False, False, False, False), (True, True, True, False), (False, True, False, True)],
+    [
+        (True, False, True, False),
+        (False, False, False, False),
+        (True, True, True, False),
+        (False, True, False, True),
+    ],
 )
 def test_calibrate_and_model_dpss_redundant(
     uvdata_redundant,
@@ -750,7 +810,12 @@ def test_calibrate_and_model_dpss_freeze_model(uvdata, sky_model_projected, gain
         sky_model_projected.data_array,
         atol=1e-5 * np.mean(np.abs(model.data_array) ** 2.0) ** 0.5,
     )
-    assert np.allclose(np.abs(gains.gain_array), np.abs(gains_randomized.gain_array), rtol=0.0, atol=1e-4)
+    assert np.allclose(
+        np.abs(gains.gain_array),
+        np.abs(gains_randomized.gain_array),
+        rtol=0.0,
+        atol=1e-4,
+    )
     assert len(fit_history) == 1
     assert len(fit_history[0]) == 1
 
@@ -767,7 +832,11 @@ def test_dpss_fit_argparser():
 
 @pytest.mark.parametrize(
     "use_tensorflow, n_profile_steps, model_regularization, graph_mode",
-    [(True, 10, "post_hoc", True), (False, 0, "post_hoc", True), (True, 0, "sum", False)],
+    [
+        (True, 10, "post_hoc", True),
+        (False, 0, "post_hoc", True),
+        (True, 0, "sum", False),
+    ],
 )
 def test_calibrate_and_model_mixed(
     tmpdir,

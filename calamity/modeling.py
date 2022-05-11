@@ -1,10 +1,10 @@
 import numpy as np
-from uvtools import dspec
 import datetime
 import tensorflow as tf
 from . import simple_cov
 from .utils import echo
 from .utils import PBARS
+from . import dpss
 
 
 def get_redundant_grps_data(uvdata, remove_redundancy=False, tol=1.0, include_autos=False):
@@ -145,7 +145,14 @@ def get_uv_overlapping_grps_conjugated(
     for red_grp, vbc in zip(red_grps, vec_bin_centers):
         vbc_hash[tuple(red_grp)] = vbc
         if np.abs(vbc[0]) > 0.0:
-            bin_index = int(np.min([np.round((np.arctan(vbc[1] / vbc[0]) + np.pi / 2) / dangle), n_angle_bins - 2]))
+            bin_index = int(
+                np.min(
+                    [
+                        np.round((np.arctan(vbc[1] / vbc[0]) + np.pi / 2) / dangle),
+                        n_angle_bins - 2,
+                    ]
+                )
+            )
         else:
             bin_index = n_angle_bins - 1
         grp_nums[bin_index].append(grp_num)
@@ -210,7 +217,11 @@ def get_uv_overlapping_grps_conjugated(
         red_grps_sorted.append(red_grp)
     # sort now
     red_grps_sorted = sorted(
-        red_grps_sorted, key=lambda x: (bl_angles[red_grps_sorted.index(x)], bl_lengths[red_grps_sorted.index(x)])
+        red_grps_sorted,
+        key=lambda x: (
+            bl_angles[red_grps_sorted.index(x)],
+            bl_lengths[red_grps_sorted.index(x)],
+        ),
     )  # ['c003', 'd004', 'b002', 'a001', 'e005']
 
     for red_grp in PBARS[notebook_progressbar](red_grps_sorted):
@@ -259,7 +270,9 @@ def yield_dpss_model_comps_bl_grp(
     min_dly=0.0,
     offset=0.0,
     operator_cache=None,
+    use_tensorflow=False,
     eigenval_cutoff=1e-10,
+    dtype=np.float64,
 ):
     """Get per-baseline DPSS modeling vectors
 
@@ -280,8 +293,14 @@ def yield_dpss_model_comps_bl_grp(
     operator_cache: dict, optional
       dictionary caching operator matrices
       default is None -> no caching
+    use_tensorflow: bool, optional
+        Use tensorflow methods to derive multi-baseline modeling components.
+        recommended if you have a GPU with enough memory to perform spectral decomposition
+        of multi-baseline covariance matrices.
     eigenval_cutoff: float, optional
-      default is 1e-10
+        threshold of eigenvectors to include in modeling components.
+    dtype: numpy.dtype, optional
+        data type to use for deriving modeling components.
 
     Returns
     -------
@@ -291,11 +310,13 @@ def yield_dpss_model_comps_bl_grp(
     if operator_cache is None:
         operator_cache = {}
     dly = np.ceil(max(min_dly, length / 0.3 * horizon + offset)) / 1e9
-    dpss_model_comps = dspec.dpss_operator(
+    dpss_model_comps = dpss.dpss_operator(
         freqs,
         filter_centers=[0.0],
         filter_half_widths=[dly],
         eigenval_cutoff=[eigenval_cutoff],
+        use_tensorflow=use_tensorflow,
+        dtype=dtype,
         cache=operator_cache,
     )[0].real
     return dpss_model_comps
@@ -309,7 +330,9 @@ def yield_pbl_dpss_model_comps(
     include_autos=False,
     use_redundancy=False,
     red_tol=1.0,
+    use_tensorflow=False,
     eigenval_cutoff=1e-10,
+    dtype=np.float64,
     notebook_progressbar=False,
     verbose=False,
 ):
@@ -340,9 +363,14 @@ def yield_pbl_dpss_model_comps(
         Tolerance for grouping baselines into a redudnant group.
         units of meters.
         default is 1.0
+    use_tensorflow: bool, optional
+        Use tensorflow methods to derive multi-baseline modeling components.
+        recommended if you have a GPU with enough memory to perform spectral decomposition
+        of multi-baseline covariance matrices.
     eigenval_cutoff: float, optional
-        minimum eigenval to keep in each modeling component group.
-        default is 1e-10.
+        threshold of eigenvectors to include in modeling components.
+    dtype: numpy.dtype, optional
+        data type to use for deriving modeling components.
     notebook_progressbar: bool, optional
         if True, use pretty progressbar that renders well in jupyter.
         default is False.
@@ -351,7 +379,10 @@ def yield_pbl_dpss_model_comps(
     """
     operator_cache = {}
     _, red_grps, vec_bin_centers, _ = get_redundant_grps_data(
-        uvdata, remove_redundancy=not (use_redundancy), tol=red_tol, include_autos=include_autos
+        uvdata,
+        remove_redundancy=not (use_redundancy),
+        tol=red_tol,
+        include_autos=include_autos,
     )
     fitting_grps = [(tuple(red_grp),) for red_grp in red_grps]
     modeling_vectors = {}
@@ -369,6 +400,8 @@ def yield_pbl_dpss_model_comps(
             horizon=horizon,
             min_dly=min_dly,
             operator_cache=operator_cache,
+            use_tensorflow=use_tensorflow,
+            dtype=dtype,
             eigenval_cutoff=eigenval_cutoff,
         )
     return modeling_vectors

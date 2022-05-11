@@ -56,7 +56,13 @@ def construct_version_info():
     git_description = ""
     git_branch = ""
 
-    version_info = {"version": version, "git_origin": "", "git_hash": "", "git_description": "", "git_branch": ""}
+    version_info = {
+        "version": version,
+        "git_origin": "",
+        "git_hash": "",
+        "git_description": "",
+        "git_branch": "",
+    }
 
     try:
         version_info["git_origin"] = _get_git_output(["config", "--get", "remote.origin.url"], capture_stderr=True)
