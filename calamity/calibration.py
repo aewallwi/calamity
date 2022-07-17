@@ -12,7 +12,7 @@ from .utils import PBARS
 from . import cal_utils
 from . import modeling
 import re
-
+import tensorflow_addons as tfa
 
 OPTIMIZERS = {
     "Adadelta": tf.optimizers.Adadelta,
@@ -22,7 +22,8 @@ OPTIMIZERS = {
     "Nadam": tf.optimizers.Nadam,
     "SGD": tf.optimizers.SGD,
     "RMSprop": tf.optimizers.RMSprop,
-    "Adagrad": tf.optimizers.Adagrad
+    "Adagrad": tf.optimizers.Adagrad,
+    "LAMB": tfa.optimizers.LAMB
 }
 
 
