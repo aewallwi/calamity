@@ -1,5 +1,5 @@
 import numpy as np
-from uvtools import dspec
+from hera_filters import dspec
 import datetime
 import tensorflow as tf
 from . import simple_cov
