@@ -1217,7 +1217,7 @@ def calibrate_and_model_tensor(
                         verbose=verbose,
                     )
                     fg_r = tensorize_fg_coeffs(
-                        data=data_r,
+                        data=sky_model_r,
                         wgts=wgts,
                         fg_model_comps=fg_model_comps,
                         verbose=verbose,
@@ -1225,7 +1225,7 @@ def calibrate_and_model_tensor(
                     )
 
                     fg_i = tensorize_fg_coeffs(
-                        data=data_i,
+                        data=sky_model_i,
                         wgts=wgts,
                         fg_model_comps=fg_model_comps,
                         verbose=verbose,
